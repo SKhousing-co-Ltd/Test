@@ -2,6 +2,23 @@
 
 Vite の標準構成に近い React + TypeScript プロジェクトです。Vercel では通常、Framework Preset に `Vite`、Build Command に `npm run build`、Output Directory に `dist` を指定すると扱いやすい構成です。
 
+
+## ディレクトリ構成
+
+React アプリ内の主なディレクトリと役割は次の通りです。
+
+| ディレクトリ | 役割 |
+| --- | --- |
+| `src/components/` | 複数の画面や機能から利用する共通 UI コンポーネントを配置します。 |
+| `src/features/` | 業務機能ごとのコンポーネント、フック、状態管理、API 呼び出しなどをまとめます。 |
+| `src/lib/` | Supabase など、外部サービスやライブラリとの接続設定を配置します。 |
+| `src/pages/` | 画面単位のコンポーネントを配置します。 |
+| `src/routes/` | ルーティング定義や画面遷移に関する設定を配置します。 |
+| `src/types/` | アプリ全体で共有する TypeScript 型定義を配置します。 |
+| `src/utils/` | 特定の機能に依存しない汎用関数を配置します。 |
+
+各ディレクトリには、初期状態でも Git 管理できるように `.gitkeep` を配置しています。
+
 ## セットアップ
 
 ```sh
