@@ -19,6 +19,20 @@ React アプリ内の主なディレクトリと役割は次の通りです。
 
 各ディレクトリには、初期状態でも Git 管理できるように `.gitkeep` を配置しています。
 
+
+## Supabase 連携
+
+このアプリは `@supabase/supabase-js` を使って Supabase Auth と連携しています。`src/lib/supabase.ts` で Vite の環境変数から Supabase クライアントを作成し、`src/App.tsx` でセッション確認、メールアドレス・パスワードによるログイン、新規登録、ログアウトを実行します。
+
+ローカルでは `.env.local` を作成し、以下を設定してください。
+
+```dotenv
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
+Supabase 側では Authentication > Providers で Email provider を有効化してください。メール確認を有効にしている場合、新規登録後に確認メールのリンクを開くまでログインできないことがあります。
+
 ## セットアップ
 
 ```sh
