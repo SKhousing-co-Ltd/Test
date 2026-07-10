@@ -177,3 +177,118 @@ code {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+
+.database-check {
+  width: min(100%, 40rem);
+  margin: 2rem auto 0;
+  padding: 1.25rem;
+  border: 1px solid rgb(148 163 184 / 20%);
+  border-radius: 1.5rem;
+  background: rgb(15 23 42 / 70%);
+  text-align: left;
+}
+
+.database-check-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.database-check h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.section-label {
+  margin: 0 0 0.25rem;
+  color: #38bdf8;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.secondary-button {
+  cursor: pointer;
+  border: 1px solid rgb(148 163 184 / 35%);
+  border-radius: 999px;
+  background: transparent;
+  color: #e0f2fe;
+  font-weight: 700;
+  padding: 0.65rem 0.9rem;
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.database-result {
+  margin: 1rem 0;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.85rem;
+  color: #cbd5e1;
+}
+
+.database-result-success {
+  background: rgb(20 184 166 / 14%);
+  color: #99f6e4;
+}
+
+.database-result-error,
+.database-result-mismatch {
+  background: rgb(244 63 94 / 14%);
+  color: #fecdd3;
+}
+
+.database-result-loading,
+.database-result-idle {
+  background: rgb(14 165 233 / 12%);
+  color: #bae6fd;
+}
+
+.database-result-not-configured {
+  background: rgb(245 158 11 / 12%);
+  color: #fde68a;
+}
+
+.database-table-wrapper {
+  overflow-x: auto;
+}
+
+.database-check table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.database-check th,
+.database-check td {
+  padding: 0.7rem;
+  border-bottom: 1px solid rgb(148 163 184 / 18%);
+  text-align: left;
+}
+
+.database-check th {
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.database-check td {
+  color: #e2e8f0;
+}
+
+.checked-at {
+  margin: 1rem 0 0;
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 480px) {
+  .database-check-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

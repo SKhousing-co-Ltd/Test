@@ -70,3 +70,14 @@ npm config get https-proxy
 ```
 
 社内 proxy や CI のネットワーク制限がある環境では、許可済みの npm registry を使うか、proxy 設定を管理者に確認してから依存関係をインストールしてください。
+
+
+## Supabase のデータ取得確認
+
+トップページは、`connection_check_samples` テーブルに保存するダミーデータを読み取り、件数と内容が期待値に一致するかを表示します。
+
+1. `supabase/migrations/20260710000000_create_connection_check_samples.sql` を Supabase CLI で適用するか、Supabase Dashboard の SQL Editor で実行します。
+2. `.env.local`、GitHub Pages、Vercel のそれぞれに `VITE_SUPABASE_URL` と `VITE_SUPABASE_ANON_KEY` を設定します。
+3. トップページで「ダミーデータを期待値どおりに取得できました。」と表示されることを確認します。
+
+このテーブルは接続確認専用の公開ダミーデータです。業務データは同じ公開ポリシーを使わず、要件に応じた Row Level Security ポリシーを設定してください。

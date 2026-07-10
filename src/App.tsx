@@ -3,6 +3,32 @@ import type { Session } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
 type AuthMode = 'sign-in' | 'sign-up';
+type DatabaseCheckStatus = 'idle' | 'loading' | 'success' | 'mismatch' | 'error' | 'not-configured';
+
+type ConnectionCheckSample = {
+  key: string;
+  label: string;
+  expected_value: string;
+  sort_order: number;
+};
+
+const expectedSamples = [
+  {
+    key: 'database_connection',
+    label: 'データベース接続',
+    expected_value: '接続確認用ダミーデータ',
+  },
+  {
+    key: 'rls_read_access',
+    label: 'RLS 読み取り権限',
+    expected_value: 'anon と authenticated で参照可能',
+  },
+  {
+    key: 'sample_version',
+    label: 'サンプルデータ版',
+    expected_value: 'v1',
+  },
+] as const;
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -11,10 +37,62 @@ function App() {
   const [mode, setMode] = useState<AuthMode>('sign-in');
   const [statusMessage, setStatusMessage] = useState('Supabase の接続状態を確認しています...');
   const [isLoading, setIsLoading] = useState(false);
+  const [databaseCheckStatus, setDatabaseCheckStatus] = useState<DatabaseCheckStatus>('idle');
+  const [databaseCheckMessage, setDatabaseCheckMessage] = useState('');
+  const [databaseSamples, setDatabaseSamples] = useState<ConnectionCheckSample[]>([]);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+
+  const checkDatabase = async () => {
+    if (!supabase) {
+      setDatabaseCheckStatus('not-configured');
+      setDatabaseCheckMessage('Supabase の環境変数を設定すると、データベース接続を確認できます。');
+      setDatabaseSamples([]);
+      setCheckedAt(null);
+      return;
+    }
+
+    setDatabaseCheckStatus('loading');
+    setDatabaseCheckMessage('connection_check_samples を取得しています...');
+
+    const { data, error } = await supabase
+      .from('connection_check_samples')
+      .select('key, label, expected_value, sort_order')
+      .order('sort_order');
+
+    if (error) {
+      setDatabaseCheckStatus('error');
+      setDatabaseCheckMessage(`取得に失敗しました: ${error.message}`);
+      setDatabaseSamples([]);
+      setCheckedAt(null);
+      return;
+    }
+
+    const samples = (data ?? []) as ConnectionCheckSample[];
+    const isExactMatch =
+      samples.length === expectedSamples.length &&
+      expectedSamples.every((expectedSample, index) => {
+        const sample = samples[index];
+        return (
+          sample?.key === expectedSample.key &&
+          sample.label === expectedSample.label &&
+          sample.expected_value === expectedSample.expected_value
+        );
+      });
+
+    setDatabaseSamples(samples);
+    setDatabaseCheckStatus(isExactMatch ? 'success' : 'mismatch');
+    setDatabaseCheckMessage(
+      isExactMatch
+        ? 'ダミーデータを期待値どおりに取得できました。'
+        : 'データは取得できましたが、件数または内容が期待値と一致しません。',
+    );
+    setCheckedAt(new Date().toLocaleString('ja-JP'));
+  };
 
   useEffect(() => {
     if (!supabase) {
       setStatusMessage('Supabase の環境変数が未設定です。');
+      void checkDatabase();
       return;
     }
 
@@ -44,6 +122,8 @@ function App() {
         nextSession ? 'ログイン状態を同期しました。' : 'ログアウトしました。',
       );
     });
+
+    void checkDatabase();
 
     return () => {
       isMounted = false;
@@ -98,15 +178,58 @@ function App() {
     <main className="app-shell">
       <section className="hero-card">
         <p className="eyebrow">Vite + React + TypeScript + Supabase</p>
-        <h1>Supabase と連携した認証スターター</h1>
+        <h1>Supabase 接続・データ取得確認</h1>
         <p className="description">
-          Supabase Auth のセッション取得、メールアドレスでのログイン・登録、ログアウトを
-          Vite アプリから実行できます。
+          Supabase の設定状態、認証状態、接続確認用ダミーデータの取得結果を確認できます。
         </p>
 
         <div className={isSupabaseConfigured ? 'status status-ready' : 'status status-warning'}>
           {statusMessage}
         </div>
+
+        <section className="database-check" aria-labelledby="database-check-heading">
+          <div className="database-check-heading">
+            <div>
+              <p className="section-label">Database check</p>
+              <h2 id="database-check-heading">ダミーデータ取得確認</h2>
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void checkDatabase()}
+              disabled={!isSupabaseConfigured || databaseCheckStatus === 'loading'}
+            >
+              {databaseCheckStatus === 'loading' ? '確認中...' : '再確認'}
+            </button>
+          </div>
+
+          <p className={`database-result database-result-${databaseCheckStatus}`}>
+            {databaseCheckMessage}
+          </p>
+
+          {databaseSamples.length > 0 && (
+            <div className="database-table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>確認項目</th>
+                    <th>取得値</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {databaseSamples.map((sample) => (
+                    <tr key={sample.key}>
+                      <td>{sample.label}</td>
+                      <td>{sample.expected_value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {checkedAt && <p className="checked-at">最終確認: {checkedAt}</p>}
+        </section>
 
         {session ? (
           <div className="auth-panel">
