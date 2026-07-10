@@ -85,3 +85,95 @@ code {
   background: rgb(15 23 42 / 80%);
   color: #e0f2fe;
 }
+
+.status {
+  margin: 1.5rem auto 0;
+  padding: 0.85rem 1rem;
+  border-radius: 1rem;
+  font-weight: 700;
+}
+
+.status-ready {
+  border: 1px solid rgb(45 212 191 / 35%);
+  background: rgb(20 184 166 / 12%);
+  color: #99f6e4;
+}
+
+.status-warning {
+  border: 1px solid rgb(251 191 36 / 35%);
+  background: rgb(245 158 11 / 12%);
+  color: #fde68a;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 28rem);
+  margin: 2rem auto 0;
+  padding: 1.25rem;
+  border: 1px solid rgb(148 163 184 / 20%);
+  border-radius: 1.5rem;
+  background: rgb(15 23 42 / 70%);
+  text-align: left;
+}
+
+.auth-panel label {
+  display: grid;
+  gap: 0.4rem;
+  color: #cbd5e1;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.auth-panel input {
+  width: 100%;
+  border: 1px solid rgb(148 163 184 / 30%);
+  border-radius: 0.9rem;
+  background: rgb(2 6 23 / 70%);
+  color: #f8fafc;
+  padding: 0.85rem 1rem;
+}
+
+.auth-panel button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0ea5e9, #14b8a6);
+  color: white;
+  font-weight: 800;
+  padding: 0.85rem 1.1rem;
+}
+
+.auth-panel button:disabled,
+.mode-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  padding: 0.35rem;
+  border-radius: 999px;
+  background: rgb(2 6 23 / 60%);
+}
+
+.mode-switch button {
+  background: transparent;
+  color: #cbd5e1;
+}
+
+.mode-switch button.active {
+  background: rgb(14 165 233 / 25%);
+  color: #f8fafc;
+}
+
+.signed-in-label {
+  margin: 0;
+  color: #99f6e4;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
