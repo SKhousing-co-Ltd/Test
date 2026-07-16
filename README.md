@@ -1,5 +1,17 @@
 # Vite + React + TypeScript
 
+## Lease-management initial import
+
+Apply `supabase/migrations/20260716000000_create_lease_management.sql` to add property, wing, unit, tenant, and contract-history management.
+
+Run a dry-run before writing any workbook data. It produces a JSON report with extracted rows and review items such as special layouts, combined units, and multiple tenant codes.
+
+```powershell
+python scripts/import_rent_roll.py "賃貸借状況表（最新）【改定版】.xlsx" --report rent_roll_import_report.json
+```
+
+After reviewing the report, set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` and add `--apply`. The importer matches source names to the existing `property_master`; it never creates unmatched properties.
+
 Vite の標準構成に近い React + TypeScript プロジェクトです。Vercel では通常、Framework Preset に `Vite`、Build Command に `npm run build`、Output Directory に `dist` を指定すると扱いやすい構成です。
 
 
