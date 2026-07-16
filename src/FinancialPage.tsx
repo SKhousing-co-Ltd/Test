@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 
 type Property = { property_id: string; property_name: string; short_name: string | null };
@@ -16,7 +15,7 @@ const monthValue = (date = new Date()) => `${date.getFullYear()}-${String(date.g
 const fiscalYear = (date = new Date()) => date.getMonth() < 3 ? date.getFullYear() - 1 : date.getFullYear();
 const fiscalMonths = (year: number) => Array.from({ length: 12 }, (_, index) => `${index < 9 ? year : year + 1}-${String((index + 3) % 12 + 1).padStart(2, '0')}-01`);
 
-export function FinancialPage({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
+export function FinancialPage() {
   const [tab, setTab] = useState<Tab>('dashboard');
   const [properties, setProperties] = useState<Property[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -36,7 +35,7 @@ export function FinancialPage({ session, onSignOut }: { session: Session; onSign
   };
   useEffect(() => { void loadMasters(); }, []);
   const selectedProperty = properties.find((property) => property.property_id === selectedPropertyId);
-  return <main className="portal-shell"><header className="app-header"><div><p className="eyebrow">SK HOUSING</p><h1>ビル収支管理</h1></div><div className="header-user"><span>{session.user.email}</span><button onClick={onSignOut}>ログアウト</button></div></header><nav className="tabs"><button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>年度ダッシュボード</button><button className={tab === 'recurring' ? 'active' : ''} onClick={() => setTab('recurring')}>定期収支管理</button><button className={tab === 'monthly' ? 'active' : ''} onClick={() => setTab('monthly')}>月次収支入力</button></nav><section className="toolbar"><label>対象ビル<select value={selectedPropertyId} onChange={(e) => setSelectedPropertyId(e.target.value)}>{properties.map((property) => <option value={property.property_id} key={property.property_id}>{property.short_name || property.property_name}</option>)}</select></label>{tab === 'dashboard' && <label>年度<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{[year - 1, year, year + 1].map((value) => <option value={value} key={value}>{value}年度（4月〜3月）</option>)}</select></label>}<span className="selected-property">{selectedProperty?.property_name}</span></section>{notice && <p className="notice">{notice}</p>}{tab === 'dashboard' && <FinancialDashboard properties={properties} selectedPropertyId={selectedPropertyId} year={year} />}{tab === 'recurring' && <RecurringManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'monthly' && <MonthlyManager propertyId={selectedPropertyId} accounts={accounts} />}</main>;
+  return <section className="financial-page"><nav className="tabs"><button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>年度ダッシュボード</button><button className={tab === 'recurring' ? 'active' : ''} onClick={() => setTab('recurring')}>定期収支管理</button><button className={tab === 'monthly' ? 'active' : ''} onClick={() => setTab('monthly')}>月次収支入力</button></nav><section className="toolbar"><label>対象ビル<select value={selectedPropertyId} onChange={(e) => setSelectedPropertyId(e.target.value)}>{properties.map((property) => <option value={property.property_id} key={property.property_id}>{property.short_name || property.property_name}</option>)}</select></label>{tab === 'dashboard' && <label>年度<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{[year - 1, year, year + 1].map((value) => <option value={value} key={value}>{value}年度（4月〜3月）</option>)}</select></label>}<span className="selected-property">{selectedProperty?.property_name}</span></section>{notice && <p className="notice">{notice}</p>}{tab === 'dashboard' && <FinancialDashboard properties={properties} selectedPropertyId={selectedPropertyId} year={year} />}{tab === 'recurring' && <RecurringManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'monthly' && <MonthlyManager propertyId={selectedPropertyId} accounts={accounts} />}</section>;
 }
 
 function FinancialDashboard({ properties, selectedPropertyId, year }: { properties: Property[]; selectedPropertyId: string; year: number }) {
