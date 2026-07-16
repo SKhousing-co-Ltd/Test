@@ -108,7 +108,7 @@ function App() {
         <Route element={<ProtectedRoute session={session} profile={profile} isLoading={isLoading} />}>
           <Route element={<PortalLayout profile={profile!} onSignOut={signOut} />}>
             <Route path="/dashboard" element={<Dashboard contracts={contracts} userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
-            <Route path="/financial" element={<FinancialPage session={session!} onSignOut={signOut} />} />
+            <Route path="/financial" element={<FinancialPage />} />
             <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={profile?.role !== 'viewer'} />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
           </Route>
