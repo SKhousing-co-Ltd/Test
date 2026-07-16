@@ -11,116 +11,244 @@ import {
   useNavigate,
 } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
+import { FinancialPage } from './FinancialPage';
 
-type Property = { property_id: string; property_name: string; short_name: string | null };
-type Account = { account_id: string; account_name: string; income_expense_type: '収入' | '支出' };
-type Summary = { property_id: string; accounting_month: string; contract_rent_income: number; contract_common_charge_income: number; other_income: number; recurring_expense: number; variable_expense: number; income_total: number; expense_total: number; balance: number };
-type RecurringItem = { recurring_item_id: string; property_id: string; account_id: string; item_name: string; monthly_amount: number; effective_from_month: string; effective_to_month: string | null; counterparty_name: string | null; notes: string | null; is_active: boolean; account?: Pick<Account, 'account_name' | 'income_expense_type'> | null };
-type MonthlyEntry = { financial_entry_id: string; property_id: string; account_id: string; accounting_month: string; amount: number; entry_date: string | null; description: string; counterparty_name: string | null; notes: string | null; account?: Pick<Account, 'account_name' | 'income_expense_type'> | null };
-type Detail = { source_type: string; source_id: string; account_id: string; account_name: string; income_expense_type: '収入' | '支出'; amount: number; description: string; counterparty_name: string | null };
-type Tab = 'dashboard' | 'recurring' | 'monthly';
+type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
+type ContractType = '新規' | '更新';
+type ViewMode = 'table' | 'board';
 
-const yen = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
-const monthLabel = (value: string) => new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'short' }).format(new Date(`${value.slice(0, 7)}-01T00:00:00`));
-const monthValue = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
-const fiscalYear = (date = new Date()) => date.getMonth() < 3 ? date.getFullYear() - 1 : date.getFullYear();
-const fiscalMonths = (year: number) => Array.from({ length: 12 }, (_, index) => `${index < 9 ? year : year + 1}-${String((index + 3) % 12 + 1).padStart(2, '0')}-01`);
+type Contract = {
+  id: string;
+  property: string;
+  tenant: string;
+  type: ContractType;
+  startDate: string;
+  endDate: string;
+  assignee: string;
+  status: ContractStatus;
+  note: string;
+  updatedAt: string;
+};
+
+type ContractDraft = Omit<Contract, 'id' | 'updatedAt'>;
+
+type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
+type AccountStatus = 'pending' | 'active' | 'suspended';
+
+type Employee = {
+  employee_id: string;
+  employee_name: string;
+  email: string | null;
+  employment_status: 'active' | 'inactive';
+  department?: { department_name: string } | null;
+};
+
+type UserProfile = {
+  user_id: string;
+  employee_id: string | null;
+  email: string;
+  role: AccountRole;
+  account_status: AccountStatus;
+  approved_at: string | null;
+  created_at: string;
+  employee?: Pick<Employee, 'employee_name'> | null;
+};
+
+const statuses: ContractStatus[] = ['起案', '審査', '契約書作成', '締結', '完了'];
+const properties = ['三共小山ビル', '三共仙台ビル', '三共横浜ビル', '三共梅田ビル', '三共福岡ビル'];
+const assignees = ['本庄 幸人', '武田 敬介', '岡部 克則', '金藤 蒼月斗'];
+
+const initialContracts: Contract[] = [
+  { id: 'CT-26071', property: '三共横浜ビル', tenant: '株式会社オービット', type: '更新', startDate: '2026-09-01', endDate: '2028-08-31', assignee: '本庄 幸人', status: '契約書作成', note: '賃料改定の合意済み。契約書最終確認中。', updatedAt: '今日 10:24' },
+  { id: 'CT-26072', property: '三共仙台ビル', tenant: '東北ソリューションズ株式会社', type: '新規', startDate: '2026-10-01', endDate: '2028-09-30', assignee: '武田 敬介', status: '審査', note: '社内稟議の承認待ち。', updatedAt: '今日 09:48' },
+  { id: 'CT-26073', property: '三共梅田ビル', tenant: '株式会社フルスケール', type: '更新', startDate: '2026-08-01', endDate: '2028-07-31', assignee: '岡部 克則', status: '締結', note: '先方署名済み。原本到着待ち。', updatedAt: '昨日 16:12' },
+  { id: 'CT-26074', property: '三共福岡ビル', tenant: '九州デジタル株式会社', type: '新規', startDate: '2026-11-01', endDate: '2029-10-31', assignee: '金藤 蒼月斗', status: '起案', note: '申込書を受領、条件精査を開始。', updatedAt: '昨日 14:31' },
+  { id: 'CT-26068', property: '三共小山ビル', tenant: '北関東ロジスティクス株式会社', type: '更新', startDate: '2026-07-01', endDate: '2028-06-30', assignee: '本庄 幸人', status: '完了', note: '電子契約を締結し、保管登録済み。', updatedAt: '7月11日' },
+  { id: 'CT-26069', property: '三共横浜ビル', tenant: 'アーバンデザイン合同会社', type: '新規', startDate: '2026-08-15', endDate: '2029-08-14', assignee: '武田 敬介', status: '審査', note: '与信資料の追加提出依頼中。', updatedAt: '7月10日' },
+];
+
+const blankDraft = (): ContractDraft => ({
+  property: properties[0], tenant: '', type: '新規', startDate: '', endDate: '', assignee: assignees[0], status: '起案', note: '',
+});
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
-  const [loadingSession, setLoadingSession] = useState(true);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [contracts, setContracts] = useState<Contract[]>(initialContracts);
+
+  const loadProfile = async (nextSession: Session | null) => {
+    setSession(nextSession);
+    if (!nextSession || !supabase) { setProfile(null); setIsLoading(false); return; }
+    setIsLoading(true);
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('user_id, employee_id, email, role, account_status, approved_at, created_at, employee:employee_master(employee_name)')
+      .eq('user_id', nextSession.user.id)
+      .maybeSingle();
+    setProfile(error ? null : data as UserProfile | null);
+    setIsLoading(false);
+  };
 
   useEffect(() => {
-    if (!supabase) { setLoadingSession(false); return; }
-    void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoadingSession(false); });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
+    if (!supabase) { setIsLoading(false); return; }
+    void supabase.auth.getSession().then(({ data }) => void loadProfile(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => void loadProfile(nextSession));
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  if (!isSupabaseConfigured) return <ConfigurationRequired />;
-  if (loadingSession) return <main className="state-screen"><p>ログイン状態を確認しています…</p></main>;
-  return session ? <FinancialPortal session={session} onSignOut={() => void supabase?.auth.signOut()} /> : <Login />;
+  const signOut = async () => { await supabase?.auth.signOut(); setSession(null); setProfile(null); };
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
+        <Route path="/login" element={session && profile?.account_status === 'active' ? <Navigate to="/dashboard" replace /> : <AuthPage mode="login" />} />
+        <Route path="/signup" element={session && profile?.account_status === 'active' ? <Navigate to="/dashboard" replace /> : <AuthPage mode="signup" />} />
+        <Route element={<ProtectedRoute session={session} profile={profile} isLoading={isLoading} />}>
+          <Route element={<PortalLayout profile={profile!} onSignOut={signOut} />}>
+            <Route path="/dashboard" element={<Dashboard contracts={contracts} userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
+            <Route path="/financial" element={<FinancialPage session={session!} onSignOut={signOut} />} />
+            <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={profile?.role !== 'viewer'} />} />
+            <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
+          </Route>
+        </Route>
+        <Route path="*" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-function Login() {
+function ProtectedRoute({ session, profile, isLoading }: { session: Session | null; profile: UserProfile | null; isLoading: boolean }) {
+  const location = useLocation();
+  if (!isSupabaseConfigured) return <ConfigurationRequired />;
+  if (isLoading) return <main className="state-screen"><div className="state-card"><span className="loading-mark" /><h1>アカウント情報を確認しています</h1><p>しばらくお待ちください。</p></div></main>;
+  if (!session) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  if (!profile) return <AccountStatePage state="profile-missing" />;
+  if (profile.account_status !== 'active') return <AccountStatePage state={profile.account_status} />;
+  return <Outlet />;
+}
+
+function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
+  const navigate = useNavigate();
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [message, setMessage] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!supabase) return;
-    setSubmitting(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setMessage(error ? error.message : 'ログインしました。');
-    setSubmitting(false);
-  };
-  return <main className="login-shell"><form className="login-card" onSubmit={submit}><p className="eyebrow">SK HOUSING</p><h1>ビル収支管理</h1><p>ログインして、物件ごとの年度収支を確認します。</p><label>メールアドレス<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>パスワード<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>{message && <p className="form-message">{message}</p>}<button className="primary-button" disabled={submitting}>{submitting ? 'ログイン中…' : 'ログイン'}</button></form></main>;
-}
-
-function FinancialPortal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
-  const [tab, setTab] = useState<Tab>('dashboard');
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selectedPropertyId, setSelectedPropertyId] = useState('');
-  const [year, setYear] = useState(fiscalYear());
-  const [notice, setNotice] = useState('');
-  const loadMasters = async () => {
-    if (!supabase) return;
-    const [propertyResult, accountResult] = await Promise.all([
-      supabase.from('property_master').select('property_id, property_name, short_name').order('property_name'),
-      supabase.from('income_expense_account_master').select('account_id, account_name, income_expense_type').order('account_id'),
-    ]);
-    if (propertyResult.error || accountResult.error) { setNotice(propertyResult.error?.message ?? accountResult.error?.message ?? 'マスタの取得に失敗しました。'); return; }
-    const nextProperties = (propertyResult.data ?? []) as Property[];
-    setProperties(nextProperties); setAccounts((accountResult.data ?? []) as Account[]);
-    setSelectedPropertyId((current) => current || nextProperties[0]?.property_id || '');
-  };
-  useEffect(() => { void loadMasters(); }, []);
-  const selectedProperty = properties.find((property) => property.property_id === selectedPropertyId);
-  return <main className="portal-shell"><header className="app-header"><div><p className="eyebrow">SK HOUSING</p><h1>ビル収支管理</h1></div><div className="header-user"><span>{session.user.email}</span><button onClick={onSignOut}>ログアウト</button></div></header><nav className="tabs"><button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>年度ダッシュボード</button><button className={tab === 'recurring' ? 'active' : ''} onClick={() => setTab('recurring')}>定期収支管理</button><button className={tab === 'monthly' ? 'active' : ''} onClick={() => setTab('monthly')}>月次収支入力</button></nav><section className="toolbar"><label>対象ビル<select value={selectedPropertyId} onChange={(e) => setSelectedPropertyId(e.target.value)}>{properties.map((property) => <option value={property.property_id} key={property.property_id}>{property.short_name || property.property_name}</option>)}</select></label>{tab === 'dashboard' && <label>年度<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{[year - 1, year, year + 1].map((value) => <option value={value} key={value}>{value}年度（4月〜3月）</option>)}</select></label>}<span className="selected-property">{selectedProperty?.property_name}</span></section>{notice && <p className="notice">{notice}</p>}{tab === 'dashboard' && <Dashboard properties={properties} selectedPropertyId={selectedPropertyId} year={year} />}{tab === 'recurring' && <RecurringManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'monthly' && <MonthlyManager propertyId={selectedPropertyId} accounts={accounts} />}</main>;
-}
-
-function Dashboard({ properties, selectedPropertyId, year }: { properties: Property[]; selectedPropertyId: string; year: number }) {
-  const [summaries, setSummaries] = useState<Summary[]>([]);
-  const [details, setDetails] = useState<Detail[]>([]);
-  const [detailMonth, setDetailMonth] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const months = useMemo(() => fiscalMonths(year), [year]);
-  useEffect(() => { void (async () => { if (!supabase) return; setError(''); const { data, error: queryError } = await supabase.from('property_monthly_income_expense_summary').select('*').gte('accounting_month', months[0]).lte('accounting_month', months[11]); if (queryError) setError(queryError.message); else setSummaries((data ?? []) as Summary[]); })(); }, [year]);
-  const propertyTotals = properties.map((property) => ({ property, values: summaries.filter((summary) => summary.property_id === property.property_id), }));
-  const selectedValues = summaries.filter((summary) => summary.property_id === selectedPropertyId);
-  const totalFor = (key: keyof Pick<Summary, 'income_total' | 'expense_total' | 'balance'>) => selectedValues.reduce((sum, value) => sum + Number(value[key]), 0);
-  const showDetails = async (month: string) => { if (!supabase) return; const { data, error: queryError } = await supabase.from('property_monthly_income_expense_detail').select('source_type, source_id, account_id, account_name, income_expense_type, amount, description, counterparty_name').eq('property_id', selectedPropertyId).eq('accounting_month', month).order('income_expense_type').order('account_id'); if (queryError) { setError(queryError.message); return; } setDetails((data ?? []) as Detail[]); setDetailMonth(month); };
-  return <section className="content"><div className="section-heading"><div><h2>年度収支ダッシュボード</h2><p>物件ごとの発生ベース収支を確認します。</p></div></div>{error && <p className="notice">{error}</p>}<div className="metric-grid"><Metric label="収入合計" value={totalFor('income_total')} tone="income" /><Metric label="支出合計" value={totalFor('expense_total')} tone="expense" /><Metric label="収支" value={totalFor('balance')} tone="balance" /></div><section className="panel"><h3>全ビルの年度収支</h3><div className="table-scroll"><table><thead><tr><th>ビル</th><th>収入合計</th><th>支出合計</th><th>収支</th></tr></thead><tbody>{propertyTotals.map(({ property, values }) => <tr key={property.property_id}><td>{property.short_name || property.property_name}</td><td>{yen.format(values.reduce((sum, value) => sum + Number(value.income_total), 0))}</td><td>{yen.format(values.reduce((sum, value) => sum + Number(value.expense_total), 0))}</td><td className="amount-balance">{yen.format(values.reduce((sum, value) => sum + Number(value.balance), 0))}</td></tr>)}</tbody></table></div></section><section className="panel"><h3>{year}年度の月別収支</h3><div className="table-scroll"><table><thead><tr><th>月</th><th>契約収入</th><th>その他収入</th><th>準固定支出</th><th>変動支出</th><th>収支</th><th></th></tr></thead><tbody>{months.map((month) => { const value = selectedValues.find((summary) => summary.accounting_month === month); const contractIncome = Number(value?.contract_rent_income ?? 0) + Number(value?.contract_common_charge_income ?? 0); return <tr key={month}><td>{monthLabel(month)}</td><td>{yen.format(contractIncome)}</td><td>{yen.format(Number(value?.other_income ?? 0))}</td><td>{yen.format(Number(value?.recurring_expense ?? 0))}</td><td>{yen.format(Number(value?.variable_expense ?? 0))}</td><td className="amount-balance">{yen.format(Number(value?.balance ?? 0))}</td><td><button className="link-button" onClick={() => void showDetails(month)}>明細</button></td></tr>; })}</tbody></table></div></section>{detailMonth && <DetailDialog month={detailMonth} details={details} onClose={() => setDetailMonth(null)} />}</section>;
+  const isSignUp = mode === 'signup';
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [notice, setNotice] = useState('');
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isSignUp && !name.trim()) return setError('氏名を入力してください。');
+    if (!email.includes('@')) return setError('メールアドレスを正しく入力してください。');
+    if (password.length < 6) return setError('パスワードは6文字以上で入力してください。');
+    if (!supabase) return setError('Supabaseの接続情報が設定されていません。');
+    setError(''); setNotice(''); setIsSubmitting(true);
+    const result = isSignUp
+      ? await supabase.auth.signUp({ email: email.trim(), password, options: { data: { display_name: name.trim() } } })
+      : await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    setIsSubmitting(false);
+    if (result.error) return setError(result.error.message);
+    if (isSignUp && !result.data.session) setNotice('確認メールを送信しました。メールのリンクを開いて登録を完了してください。');
+    else navigate('/dashboard', { replace: true });
+  };
+
+  return <main className="auth-screen">
+    <section className="auth-showcase">
+      <div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div>
+      <div className="auth-message"><p className="eyebrow">PROPERTY OPERATIONS</p><h1>契約業務を、<br />もっと見通しよく。</h1><p>契約の進捗、対応期限、チームの動きを一つのポータルで管理します。</p></div>
+      <div className="auth-preview"><span>本日の業務状況</span><strong>8<span>件</span></strong><p>対応が必要な契約があります</p></div>
+    </section>
+    <section className="auth-form-area">
+      <div className="auth-form-wrap">
+        <div className="mobile-brand brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div>
+        <p className="eyebrow">WELCOME</p><h2>{isSignUp ? 'アカウントを作成' : 'おかえりなさい'}</h2><p className="muted">{isSignUp ? '必要事項を入力して利用を開始してください。' : 'ログインして業務をはじめましょう。'}</p>
+        <form onSubmit={submit} noValidate>
+          {isSignUp && <label>氏名<input value={name} onChange={(e) => setName(e.target.value)} placeholder="例）山田 太郎" autoComplete="name" /></label>}
+          <label>メールアドレス<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" autoComplete="email" /></label>
+          <label>パスワード<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6文字以上" autoComplete={isSignUp ? 'new-password' : 'current-password'} /></label>
+          {error && <p className="form-error">{error}</p>}
+          {notice && <p className="form-notice">{notice}</p>}
+          <button className="primary-button full" type="submit" disabled={isSubmitting || !isSupabaseConfigured}>{isSubmitting ? '処理中…' : isSignUp ? 'アカウントを作成' : 'ログインする'} <span>→</span></button>
+        </form>
+        <p className="auth-switch">{isSignUp ? 'すでにアカウントをお持ちですか？' : 'アカウントをお持ちでない方'} <NavLink to={isSignUp ? '/login' : '/signup'}>{isSignUp ? 'ログイン' : '新規登録'}</NavLink></p>
+        <p className="demo-note">登録済みの従業員メールアドレスは担当者へ自動紐づけされます。</p>
+      </div>
+    </section>
+  </main>;
 }
 
-function Metric({ label, value, tone }: { label: string; value: number; tone: string }) { return <article className={`metric ${tone}`}><span>{label}</span><strong>{yen.format(value)}</strong></article>; }
-
-function RecurringManager({ propertyId, accounts }: { propertyId: string; accounts: Account[] }) {
-  const [items, setItems] = useState<RecurringItem[]>([]); const [editing, setEditing] = useState<RecurringItem | null>(null); const [error, setError] = useState('');
-  const load = async () => { if (!supabase || !propertyId) return; const { data, error: queryError } = await supabase.from('property_recurring_financial_item').select('*, account:income_expense_account_master(account_name, income_expense_type)').eq('property_id', propertyId).order('effective_from_month', { ascending: false }); if (queryError) setError(queryError.message); else setItems((data ?? []) as RecurringItem[]); };
-  useEffect(() => { void load(); }, [propertyId]);
-  const remove = async (id: string) => { if (!supabase || !confirm('この定期明細を削除しますか？')) return; const { error: deleteError } = await supabase.from('property_recurring_financial_item').delete().eq('recurring_item_id', id); if (deleteError) setError(deleteError.message); else void load(); };
-  return <section className="content"><div className="section-heading"><div><h2>定期収支管理</h2><p>BM費・通信費・看板料など、適用期間のある月額項目を管理します。</p></div><button className="primary-button" onClick={() => setEditing({ recurring_item_id: '', property_id: propertyId, account_id: accounts[0]?.account_id ?? '', item_name: '', monthly_amount: 0, effective_from_month: monthValue(), effective_to_month: null, counterparty_name: null, notes: null, is_active: true })}>定期明細を登録</button></div>{error && <p className="notice">{error}</p>}<section className="panel"><div className="table-scroll"><table><thead><tr><th>科目</th><th>明細名</th><th>月額</th><th>適用期間</th><th>相手先</th><th></th></tr></thead><tbody>{items.map((item) => <tr key={item.recurring_item_id}><td><span className={`tag ${item.account?.income_expense_type === '収入' ? 'income' : 'expense'}`}>{item.account?.account_name}</span></td><td>{item.item_name}</td><td>{yen.format(Number(item.monthly_amount))}</td><td>{monthLabel(item.effective_from_month)}〜{item.effective_to_month ? monthLabel(item.effective_to_month) : '終了未定'}</td><td>{item.counterparty_name || '—'}</td><td><button className="link-button" onClick={() => setEditing(item)}>編集</button><button className="danger-button" onClick={() => void remove(item.recurring_item_id)}>削除</button></td></tr>)}{!items.length && <tr><td colSpan={6} className="empty">登録済みの定期明細はありません。</td></tr>}</tbody></table></div></section>{editing && <RecurringDialog item={editing} accounts={accounts} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}</section>;
+function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut: () => Promise<void> }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const pageTitle = location.pathname === '/contracts' ? '契約業務フロー' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/financial' ? '収支管理' : 'ダッシュボード';
+  const logout = async () => { await onSignOut(); navigate('/login', { replace: true }); };
+  const userName = profile.employee?.employee_name ?? profile.email;
+  return <div className="portal-shell">
+    <aside className="sidebar"><div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div><p className="workspace-label">WORKSPACE</p>
+      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink>{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
+      <p className="workspace-label">COMING SOON</p><nav className="disabled-nav"><span><i>▤</i>物件管理</span><span><i>◫</i>収支管理</span><span><i>♙</i>マスタ管理</span></nav>
+      <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
+    </aside>
+    <main className="portal-main"><header className="topbar"><div><p className="breadcrumb">ホーム / {pageTitle}</p><h1>{pageTitle}</h1></div><div className="user-menu"><button className="notification" aria-label="通知">♧<b>3</b></button><div className="avatar">{userName.slice(0, 1)}</div><div className="user-name"><strong>{userName}</strong><small>{roleLabel(profile.role)}</small></div><button className="logout-button" onClick={() => void logout()}>ログアウト</button></div></header><div className="page-content"><Outlet /></div></main>
+  </div>;
 }
 
-function MonthlyManager({ propertyId, accounts }: { propertyId: string; accounts: Account[] }) {
-  const [month, setMonth] = useState(monthValue()); const [items, setItems] = useState<MonthlyEntry[]>([]); const [editing, setEditing] = useState<MonthlyEntry | null>(null); const [error, setError] = useState('');
-  const load = async () => { if (!supabase || !propertyId) return; const { data, error: queryError } = await supabase.from('property_monthly_financial_entry').select('*, account:income_expense_account_master(account_name, income_expense_type)').eq('property_id', propertyId).eq('accounting_month', month).order('entry_date', { ascending: false }); if (queryError) setError(queryError.message); else setItems((data ?? []) as MonthlyEntry[]); };
-  useEffect(() => { void load(); }, [propertyId, month]);
-  const remove = async (id: string) => { if (!supabase || !confirm('この月次明細を削除しますか？')) return; const { error: deleteError } = await supabase.from('property_monthly_financial_entry').delete().eq('financial_entry_id', id); if (deleteError) setError(deleteError.message); else void load(); };
-  return <section className="content"><div className="section-heading"><div><h2>月次収支入力</h2><p>修繕費・消耗品費などの実績を月ごとに入力します。</p></div><button className="primary-button" onClick={() => setEditing({ financial_entry_id: '', property_id: propertyId, account_id: accounts.find((account) => account.income_expense_type === '支出')?.account_id ?? accounts[0]?.account_id ?? '', accounting_month: month, amount: 0, entry_date: month, description: '', counterparty_name: null, notes: null })}>月次明細を入力</button></div><div className="inline-filter"><label>計上月<input type="month" value={month.slice(0, 7)} onChange={(e) => setMonth(`${e.target.value}-01`)} /></label></div>{error && <p className="notice">{error}</p>}<section className="panel"><div className="table-scroll"><table><thead><tr><th>科目</th><th>内容</th><th>金額</th><th>発生日</th><th>相手先</th><th></th></tr></thead><tbody>{items.map((item) => <tr key={item.financial_entry_id}><td><span className={`tag ${item.account?.income_expense_type === '収入' ? 'income' : 'expense'}`}>{item.account?.account_name}</span></td><td>{item.description}</td><td>{yen.format(Number(item.amount))}</td><td>{item.entry_date || '—'}</td><td>{item.counterparty_name || '—'}</td><td><button className="link-button" onClick={() => setEditing(item)}>編集</button><button className="danger-button" onClick={() => void remove(item.financial_entry_id)}>削除</button></td></tr>)}{!items.length && <tr><td colSpan={6} className="empty">この月の明細はありません。</td></tr>}</tbody></table></div></section>{editing && <MonthlyDialog item={editing} accounts={accounts} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}</section>;
+function ConfigurationRequired() { return <main className="state-screen"><div className="state-card"><p className="eyebrow">CONFIGURATION REQUIRED</p><h1>Supabaseの接続設定が必要です</h1><p><code>VITE_SUPABASE_URL</code> と <code>VITE_SUPABASE_ANON_KEY</code> を <code>.env.local</code> に設定してください。</p></div></main>; }
+
+function AccountStatePage({ state }: { state: 'pending' | 'suspended' | 'profile-missing' }) {
+  const navigate = useNavigate();
+  const content = state === 'pending'
+    ? { title: '管理者の承認待ちです', body: '登録は完了しました。担当者との紐づけと権限設定が完了すると、業務ポータルを利用できます。' }
+    : state === 'suspended'
+      ? { title: 'このアカウントは利用停止中です', body: '利用を再開するには、システム管理者へお問い合わせください。' }
+      : { title: 'プロフィールを確認できません', body: 'アカウント情報の作成が完了していません。システム管理者へお問い合わせください。' };
+  return <main className="state-screen"><div className="state-card"><p className="eyebrow">ACCOUNT STATUS</p><h1>{content.title}</h1><p>{content.body}</p><button className="secondary-button" onClick={() => navigate('/login')}>ログイン画面へ戻る</button></div></main>;
 }
 
-function RecurringDialog({ item, accounts, onClose, onSaved }: { item: RecurringItem; accounts: Account[]; onClose: () => void; onSaved: () => void }) { const [draft, setDraft] = useState(item); const [error, setError] = useState(''); const save = async (event: FormEvent) => { event.preventDefault(); if (!supabase) return; const payload = { property_id: draft.property_id, account_id: draft.account_id, item_name: draft.item_name, monthly_amount: Number(draft.monthly_amount), effective_from_month: draft.effective_from_month, effective_to_month: draft.effective_to_month || null, counterparty_name: draft.counterparty_name || null, notes: draft.notes || null, is_active: draft.is_active }; const result = draft.recurring_item_id ? await supabase.from('property_recurring_financial_item').update(payload).eq('recurring_item_id', draft.recurring_item_id) : await supabase.from('property_recurring_financial_item').insert(payload); if (result.error) setError(result.error.message); else onSaved(); }; return <Dialog title={item.recurring_item_id ? '定期明細を編集' : '定期明細を登録'} onClose={onClose}><form onSubmit={save} className="form-grid"><Field label="科目"><select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>{accounts.map((account) => <option value={account.account_id} key={account.account_id}>{account.income_expense_type}｜{account.account_name}</option>)}</select></Field><Field label="明細名"><input value={draft.item_name} onChange={(e) => setDraft({ ...draft, item_name: e.target.value })} required /></Field><Field label="月額（円）"><input type="number" min="1" value={draft.monthly_amount || ''} onChange={(e) => setDraft({ ...draft, monthly_amount: Number(e.target.value) })} required /></Field><Field label="相手先"><input value={draft.counterparty_name ?? ''} onChange={(e) => setDraft({ ...draft, counterparty_name: e.target.value })} /></Field><Field label="適用開始月"><input type="month" value={draft.effective_from_month.slice(0, 7)} onChange={(e) => setDraft({ ...draft, effective_from_month: `${e.target.value}-01` })} required /></Field><Field label="適用終了月"><input type="month" value={draft.effective_to_month?.slice(0, 7) ?? ''} onChange={(e) => setDraft({ ...draft, effective_to_month: e.target.value ? `${e.target.value}-01` : null })} /></Field><Field label="備考"><textarea value={draft.notes ?? ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field><label className="check"><input type="checkbox" checked={draft.is_active} onChange={(e) => setDraft({ ...draft, is_active: e.target.checked })} />利用中</label>{error && <p className="notice">{error}</p>}<div className="form-actions"><button type="button" onClick={onClose}>取消</button><button className="primary-button">保存</button></div></form></Dialog>; }
+function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
+  const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selected, setSelected] = useState<UserProfile | null>(null);
+  const [filter, setFilter] = useState<AccountStatus | 'all'>('all');
+  const [message, setMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
 
-function MonthlyDialog({ item, accounts, onClose, onSaved }: { item: MonthlyEntry; accounts: Account[]; onClose: () => void; onSaved: () => void }) { const [draft, setDraft] = useState(item); const [error, setError] = useState(''); const save = async (event: FormEvent) => { event.preventDefault(); if (!supabase) return; const payload = { property_id: draft.property_id, account_id: draft.account_id, accounting_month: draft.accounting_month, amount: Number(draft.amount), entry_date: draft.entry_date || null, description: draft.description, counterparty_name: draft.counterparty_name || null, notes: draft.notes || null }; const result = draft.financial_entry_id ? await supabase.from('property_monthly_financial_entry').update(payload).eq('financial_entry_id', draft.financial_entry_id) : await supabase.from('property_monthly_financial_entry').insert(payload); if (result.error) setError(result.error.message); else onSaved(); }; return <Dialog title={item.financial_entry_id ? '月次明細を編集' : '月次明細を入力'} onClose={onClose}><form onSubmit={save} className="form-grid"><Field label="科目"><select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>{accounts.map((account) => <option value={account.account_id} key={account.account_id}>{account.income_expense_type}｜{account.account_name}</option>)}</select></Field><Field label="計上月"><input type="month" value={draft.accounting_month.slice(0, 7)} onChange={(e) => setDraft({ ...draft, accounting_month: `${e.target.value}-01` })} required /></Field><Field label="内容"><input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} required /></Field><Field label="金額（円）"><input type="number" min="1" value={draft.amount || ''} onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) })} required /></Field><Field label="発生日／請求日"><input type="date" value={draft.entry_date ?? ''} onChange={(e) => setDraft({ ...draft, entry_date: e.target.value || null })} /></Field><Field label="相手先"><input value={draft.counterparty_name ?? ''} onChange={(e) => setDraft({ ...draft, counterparty_name: e.target.value })} /></Field><Field label="備考"><textarea value={draft.notes ?? ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field>{error && <p className="notice">{error}</p>}<div className="form-actions"><button type="button" onClick={onClose}>取消</button><button className="primary-button">保存</button></div></form></Dialog>; }
+  const loadData = async () => {
+    if (!supabase) return;
+    setIsLoading(true);
+    const [profileResult, employeeResult] = await Promise.all([
+      supabase.from('user_profiles').select('user_id, employee_id, email, role, account_status, approved_at, created_at, employee:employee_master(employee_name)').order('created_at', { ascending: false }),
+      supabase.from('employee_master').select('employee_id, employee_name, email, employment_status, department:department_master(department_name)').order('employee_name'),
+    ]);
+    if (profileResult.error || employeeResult.error) setMessage('アカウント情報を読み込めませんでした。権限とRLS設定を確認してください。');
+    else { setProfiles(profileResult.data as unknown as UserProfile[]); setEmployees(employeeResult.data as unknown as Employee[]); }
+    setIsLoading(false);
+  };
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
-function Dialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) { return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true"><header><h2>{title}</h2><button onClick={onClose} aria-label="閉じる">×</button></header>{children}</section></div>; }
-function DetailDialog({ month, details, onClose }: { month: string; details: Detail[]; onClose: () => void }) { return <Dialog title={`${monthLabel(month)}の収支明細`} onClose={onClose}><div className="detail-list">{details.map((detail) => <div className="detail-row" key={`${detail.source_type}-${detail.source_id}-${detail.account_id}`}><div><span className={`tag ${detail.income_expense_type === '収入' ? 'income' : 'expense'}`}>{detail.account_name}</span><strong>{detail.description}</strong><small>{detail.source_type}{detail.counterparty_name ? `｜${detail.counterparty_name}` : ''}</small></div><b>{yen.format(Number(detail.amount))}</b></div>)}{!details.length && <p className="empty">明細はありません。</p>}</div></Dialog>; }
-function ConfigurationRequired() { return <main className="state-screen"><section className="login-card"><h1>接続設定が必要です</h1><p><code>VITE_SUPABASE_URL</code> と <code>VITE_SUPABASE_ANON_KEY</code> を設定してください。</p></section></main>; }
+  useEffect(() => { void loadData(); }, []);
+  const filteredProfiles = profiles.filter((profile) => filter === 'all' || profile.account_status === filter);
+  const save = async (draft: Pick<UserProfile, 'employee_id' | 'role' | 'account_status'>) => {
+    if (!supabase || !selected) return;
+    if (draft.account_status === 'active' && !draft.employee_id) { setMessage('有効化するには担当者を選択してください。'); return; }
+    const approval = draft.account_status === 'active' ? { approved_at: new Date().toISOString(), approved_by: currentUserId } : { approved_at: null, approved_by: null };
+    const { error } = await supabase.from('user_profiles').update({ ...draft, ...approval }).eq('user_id', selected.user_id);
+    if (error) { setMessage(`保存できませんでした: ${error.message}`); return; }
+    setSelected(null); setMessage('アカウント情報を更新しました。'); await loadData();
+  };
+
+  return <>
+    <section className="page-heading"><div><p className="section-kicker">ADMINISTRATION</p><h2>アカウント管理</h2><p>ログインアカウント、担当者の紐づけ、権限、利用状態を管理します。</p></div></section>
+    {message && <div className="account-message">{message}<button onClick={() => setMessage('')}>×</button></div>}
+    <section className="account-summary"><SummaryCard label="承認待ち" value={profiles.filter((profile) => profile.account_status === 'pending').length} tone="orange" /><SummaryCard label="有効なアカウント" value={profiles.filter((profile) => profile.account_status === 'active').length} tone="green" /><SummaryCard label="利用停止中" value={profiles.filter((profile) => profile.account_status === 'suspended').length} tone="gray" /></section>
+    <section className="account-panel"><header><div><h3>アカウント一覧</h3><p>未照合アカウントは、担当者を設定して承認してください。</p></div><select value={filter} onChange={(event) => setFilter(event.target.value as AccountStatus | 'all')}><option value="all">すべての状態</option><option value="pending">承認待ち</option><option value="active">有効</option><option value="suspended">利用停止</option></select></header>
+      {isLoading ? <div className="empty-state"><strong>読み込み中です…</strong></div> : <div className="table-wrap"><table className="account-table"><thead><tr><th>メールアドレス</th><th>担当者・部門</th><th>ロール</th><th>状態</th><th>登録日時</th><th /></tr></thead><tbody>{filteredProfiles.map((profile) => { const employee = employees.find((item) => item.employee_id === profile.employee_id); return <tr key={profile.user_id}><td><strong>{profile.email}</strong></td><td>{employee ? <><strong>{employee.employee_name}</strong><small>{employee.department?.department_name ?? '部門未設定'}</small></> : <span className="unlinked">未紐づけ</span>}</td><td><span className="role-pill">{roleLabel(profile.role)}</span></td><td><AccountStatusBadge status={profile.account_status} /></td><td>{new Date(profile.created_at).toLocaleDateString('ja-JP')}</td><td><button className="row-action" onClick={() => setSelected(profile)}>{profile.account_status === 'pending' ? '承認・設定' : '編集'}</button></td></tr>; })}</tbody></table></div>}
+    </section>
+    {selected && <AccountModal profile={selected} employees={employees} profiles={profiles} onClose={() => setSelected(null)} onSave={save} />}
+  </>;
+}
 
 function SummaryCard({ label, value, tone }: { label: string; value: number; tone: string }) { return <article className={`summary-card ${tone}`}><p>{label}</p><strong>{value}<small>件</small></strong></article>; }
 function AccountStatusBadge({ status }: { status: AccountStatus }) { const label = status === 'pending' ? '承認待ち' : status === 'active' ? '有効' : '利用停止'; return <span className={`account-status ${status}`}>{label}</span>; }
