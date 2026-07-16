@@ -14,22 +14,15 @@ create table if not exists public.income_expense_account_master (
 
 alter table public.income_expense_account_master enable row level security;
 
-comment on table public.income_expense_account_master is '収支科目の基本情報';
-comment on column public.income_expense_account_master.account_id is '収支科目 ID（例: M01）';
-comment on column public.income_expense_account_master.income_expense_type is '収入または支出';
-
-insert into public.income_expense_account_master (
-  account_id, account_name, income_expense_type
-) values
-  ('M01', '賃料収入', '収入'),
-  ('M02', '共益費収入', '収入'),
-  ('M03', 'その他収入', '収入'),
-  ('M04', 'BM費（管理費）', '支出'),
-  ('M05', '電気代', '支出'),
-  ('M06', '水道代', '支出'),
-  ('M07', '固定資産税', '支出'),
-  ('M08', 'その他支出', '支出')
+insert into public.income_expense_account_master (account_id, account_name, income_expense_type) values
+  ('M01', '賃料収入', '収入'), ('M02', '共益費収入', '収入'), ('M03', 'その他収入', '収入'),
+  ('M04', 'BM費（管理費）', '支出'), ('M05', '電気代', '支出'), ('M06', '水道代', '支出'),
+  ('M07', '固定資産税', '支出'), ('M08', 'その他支出', '支出')
 on conflict (account_id) do update set
   account_name = excluded.account_name,
   income_expense_type = excluded.income_expense_type,
   updated_at = now();
+
+grant select on public.income_expense_account_master to authenticated;
+create policy "authenticated users can read income expense accounts"
+  on public.income_expense_account_master for select to authenticated using (true);
