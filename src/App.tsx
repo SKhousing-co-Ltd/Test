@@ -32,6 +32,17 @@ type Contract = {
 
 type ContractDraft = Omit<Contract, 'id' | 'updatedAt'>;
 
+type LeaseContractRow = {
+  lease_contract_id: string;
+  contract_status: 'draft' | 'active' | 'terminated' | 'expired';
+  contract_type: string | null;
+  contract_start_date: string | null;
+  contract_end_date: string | null;
+  updated_at: string;
+  tenant: { tenant_name: string } | null;
+  contract_units: Array<{ unit: { property: { property_name: string } | null } | null }> | null;
+};
+
 type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
 type AccountStatus = 'pending' | 'active' | 'suspended';
 
@@ -75,7 +86,8 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [contracts, setContracts] = useState<Contract[]>(initialContracts);
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [contractLoadError, setContractLoadError] = useState('');
 
   const loadProfile = async (nextSession: Session | null) => {
     setSession(nextSession);
@@ -97,6 +109,43 @@ function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const client = supabase;
+    if (!session || !client) {
+      setContracts([]);
+      return;
+    }
+
+    const loadContracts = async () => {
+      setContractLoadError('');
+      const { data, error } = await client
+        .from('lease_contract')
+        .select('lease_contract_id, contract_status, contract_type, contract_start_date, contract_end_date, updated_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(unit:unit_master(property:property_master(property_name)))')
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        setContracts([]);
+        setContractLoadError(`契約データを読み込めませんでした: ${error.message}`);
+        return;
+      }
+
+      const statusByLeaseStatus: Record<LeaseContractRow['contract_status'], ContractStatus> = {
+        draft: statuses[0], active: statuses[2], terminated: statuses[3], expired: statuses[4],
+      };
+      setContracts(((data ?? []) as unknown as LeaseContractRow[]).map((contract) => ({
+        id: contract.lease_contract_id,
+        property: contract.contract_units?.[0]?.unit?.property?.property_name ?? '未設定',
+        tenant: contract.tenant?.tenant_name ?? '未設定',
+        type: contract.contract_type === 'renewal' ? initialContracts[0].type : initialContracts[1].type,
+        startDate: contract.contract_start_date ?? '', endDate: contract.contract_end_date ?? '', assignee: '未設定',
+        status: statusByLeaseStatus[contract.contract_status], note: '',
+        updatedAt: new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium' }).format(new Date(contract.updated_at)),
+      })));
+    };
+
+    void loadContracts();
+  }, [session?.user.id]);
+
   const signOut = async () => { await supabase?.auth.signOut(); setSession(null); setProfile(null); };
 
   return (
@@ -109,7 +158,7 @@ function App() {
           <Route element={<PortalLayout profile={profile!} onSignOut={signOut} />}>
             <Route path="/dashboard" element={<Dashboard contracts={contracts} userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
             <Route path="/financial" element={<FinancialPage />} />
-            <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={profile?.role !== 'viewer'} />} />
+            <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={false} loadError={contractLoadError} />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
           </Route>
         </Route>
@@ -281,13 +330,14 @@ function Dashboard({ contracts, userName }: { contracts: Contract[]; userName: s
 
 function Metric({ label, value, unit, detail, icon, tone }: { label: string; value: number; unit: string; detail: string; icon: string; tone: string }) { return <article className="metric-card"><div><p>{label}</p><strong>{value}<small>{unit}</small></strong><span className={tone === 'red' ? 'negative' : ''}>{tone === 'blue' ? '↗ ' : ''}{detail}</span></div><i className={`metric-icon ${tone}`}>{icon}</i></article>; }
 
-function ContractsPage({ contracts, setContracts, canEdit }: { contracts: Contract[]; setContracts: React.Dispatch<React.SetStateAction<Contract[]>>; canEdit: boolean }) {
+function ContractsPage({ contracts, setContracts, canEdit, loadError }: { contracts: Contract[]; setContracts: React.Dispatch<React.SetStateAction<Contract[]>>; canEdit: boolean; loadError: string }) {
   const [view, setView] = useState<ViewMode>('table'); const [query, setQuery] = useState(''); const [property, setProperty] = useState(''); const [type, setType] = useState(''); const [status, setStatus] = useState(''); const [editing, setEditing] = useState<Contract | null>(null); const [isCreating, setIsCreating] = useState(false); const [toast, setToast] = useState('');
   const filtered = useMemo(() => contracts.filter((contract) => (!query || [contract.id, contract.tenant, contract.property, contract.assignee].some((value) => value.toLowerCase().includes(query.toLowerCase()))) && (!property || contract.property === property) && (!type || contract.type === type) && (!status || contract.status === status)), [contracts, query, property, type, status]);
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2800); };
   const save = (draft: ContractDraft, id?: string) => { if (id) { setContracts((items) => items.map((item) => item.id === id ? { ...item, ...draft, updatedAt: 'たった今' } : item)); notify('契約情報を更新しました。'); } else { const nextId = `CT-26${String(75 + contracts.length).padStart(2, '0')}`; setContracts((items) => [{ id: nextId, ...draft, updatedAt: 'たった今' }, ...items]); notify('新しい契約を追加しました。'); } setEditing(null); setIsCreating(false); };
   const move = (contract: Contract, next: ContractStatus) => { setContracts((items) => items.map((item) => item.id === contract.id ? { ...item, status: next, updatedAt: 'たった今' } : item)); notify(`「${contract.tenant}」を${next}へ移動しました。`); };
   return <>
+    {loadError && <div className="account-message">{loadError}</div>}
     <section className="page-heading"><div><p>賃貸借契約の進捗と担当状況を管理します。</p></div>{canEdit && <button className="primary-button" onClick={() => setIsCreating(true)}>＋ 契約を追加</button>}</section>
     <section className="filter-panel"><div className="search-box"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="契約ID・テナント名・物件名で検索" /></div><select value={property} onChange={(e) => setProperty(e.target.value)}><option value="">すべての物件</option>{properties.map((value) => <option key={value}>{value}</option>)}</select><select value={type} onChange={(e) => setType(e.target.value)}><option value="">契約種別</option><option>新規</option><option>更新</option></select><select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">すべてのステータス</option>{statuses.map((value) => <option key={value}>{value}</option>)}</select><button className="clear-button" onClick={() => { setQuery(''); setProperty(''); setType(''); setStatus(''); }}>条件をクリア</button></section>
     <section className="contracts-toolbar"><p><strong>{filtered.length}</strong> 件の契約</p><div className="view-switch"><button className={view === 'table' ? 'selected' : ''} onClick={() => setView('table')}>☷ 一覧</button><button className={view === 'board' ? 'selected' : ''} onClick={() => setView('board')}>▦ ボード</button></div></section>
