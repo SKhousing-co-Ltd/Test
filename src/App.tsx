@@ -1,300 +1,115 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 
-type AuthMode = 'sign-in' | 'sign-up';
-type DatabaseCheckStatus = 'idle' | 'loading' | 'success' | 'mismatch' | 'error' | 'not-configured';
+type Property = { property_id: string; property_name: string; short_name: string | null };
+type Account = { account_id: string; account_name: string; income_expense_type: '収入' | '支出' };
+type Summary = { property_id: string; accounting_month: string; contract_rent_income: number; contract_common_charge_income: number; other_income: number; recurring_expense: number; variable_expense: number; income_total: number; expense_total: number; balance: number };
+type RecurringItem = { recurring_item_id: string; property_id: string; account_id: string; item_name: string; monthly_amount: number; effective_from_month: string; effective_to_month: string | null; counterparty_name: string | null; notes: string | null; is_active: boolean; account?: Pick<Account, 'account_name' | 'income_expense_type'> | null };
+type MonthlyEntry = { financial_entry_id: string; property_id: string; account_id: string; accounting_month: string; amount: number; entry_date: string | null; description: string; counterparty_name: string | null; notes: string | null; account?: Pick<Account, 'account_name' | 'income_expense_type'> | null };
+type Detail = { source_type: string; source_id: string; account_id: string; account_name: string; income_expense_type: '収入' | '支出'; amount: number; description: string; counterparty_name: string | null };
+type Tab = 'dashboard' | 'recurring' | 'monthly';
 
-type ConnectionCheckSample = {
-  key: string;
-  label: string;
-  expected_value: string;
-  sort_order: number;
-};
-
-const expectedSamples = [
-  {
-    key: 'database_connection',
-    label: 'データベース接続',
-    expected_value: '接続確認用ダミーデータ',
-  },
-  {
-    key: 'rls_read_access',
-    label: 'RLS 読み取り権限',
-    expected_value: 'anon と authenticated で参照可能',
-  },
-  {
-    key: 'sample_version',
-    label: 'サンプルデータ版',
-    expected_value: 'v1',
-  },
-] as const;
+const yen = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
+const monthLabel = (value: string) => new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'short' }).format(new Date(`${value.slice(0, 7)}-01T00:00:00`));
+const monthValue = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+const fiscalYear = (date = new Date()) => date.getMonth() < 3 ? date.getFullYear() - 1 : date.getFullYear();
+const fiscalMonths = (year: number) => Array.from({ length: 12 }, (_, index) => `${index < 9 ? year : year + 1}-${String((index + 3) % 12 + 1).padStart(2, '0')}-01`);
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [mode, setMode] = useState<AuthMode>('sign-in');
-  const [statusMessage, setStatusMessage] = useState('Supabase の接続状態を確認しています...');
-  const [isLoading, setIsLoading] = useState(false);
-  const [databaseCheckStatus, setDatabaseCheckStatus] = useState<DatabaseCheckStatus>('idle');
-  const [databaseCheckMessage, setDatabaseCheckMessage] = useState('');
-  const [databaseSamples, setDatabaseSamples] = useState<ConnectionCheckSample[]>([]);
-  const [checkedAt, setCheckedAt] = useState<string | null>(null);
-
-  const checkDatabase = async () => {
-    if (!supabase) {
-      setDatabaseCheckStatus('not-configured');
-      setDatabaseCheckMessage('Supabase の環境変数を設定すると、データベース接続を確認できます。');
-      setDatabaseSamples([]);
-      setCheckedAt(null);
-      return;
-    }
-
-    setDatabaseCheckStatus('loading');
-    setDatabaseCheckMessage('connection_check_samples を取得しています...');
-
-    const { data, error } = await supabase
-      .from('connection_check_samples')
-      .select('key, label, expected_value, sort_order')
-      .order('sort_order');
-
-    if (error) {
-      setDatabaseCheckStatus('error');
-      setDatabaseCheckMessage(`取得に失敗しました: ${error.message}`);
-      setDatabaseSamples([]);
-      setCheckedAt(null);
-      return;
-    }
-
-    const samples = (data ?? []) as ConnectionCheckSample[];
-    const isExactMatch =
-      samples.length === expectedSamples.length &&
-      expectedSamples.every((expectedSample, index) => {
-        const sample = samples[index];
-        return (
-          sample?.key === expectedSample.key &&
-          sample.label === expectedSample.label &&
-          sample.expected_value === expectedSample.expected_value
-        );
-      });
-
-    setDatabaseSamples(samples);
-    setDatabaseCheckStatus(isExactMatch ? 'success' : 'mismatch');
-    setDatabaseCheckMessage(
-      isExactMatch
-        ? 'ダミーデータを期待値どおりに取得できました。'
-        : 'データは取得できましたが、件数または内容が期待値と一致しません。',
-    );
-    setCheckedAt(new Date().toLocaleString('ja-JP'));
-  };
+  const [loadingSession, setLoadingSession] = useState(true);
 
   useEffect(() => {
-    if (!supabase) {
-      setStatusMessage('Supabase の環境変数が未設定です。');
-      void checkDatabase();
-      return;
-    }
-
-    let isMounted = true;
-
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!isMounted) {
-        return;
-      }
-
-      if (error) {
-        setStatusMessage(`セッション取得に失敗しました: ${error.message}`);
-        return;
-      }
-
-      setSession(data.session);
-      setStatusMessage(
-        data.session
-          ? 'Supabase Auth に接続済みです。'
-          : 'Supabase Auth に接続しました。ログインできます。',
-      );
-    });
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setStatusMessage(
-        nextSession ? 'ログイン状態を同期しました。' : 'ログアウトしました。',
-      );
-    });
-
-    void checkDatabase();
-
-    return () => {
-      isMounted = false;
-      authListener.subscription.unsubscribe();
-    };
+    if (!supabase) { setLoadingSession(false); return; }
+    void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setLoadingSession(false); });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
+    return () => listener.subscription.unsubscribe();
   }, []);
 
-  const handleAuth = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!supabase) {
-      setStatusMessage('Supabase の URL と anon key を設定してください。');
-      return;
-    }
-
-    setIsLoading(true);
-    setStatusMessage(mode === 'sign-in' ? 'ログインしています...' : 'アカウントを作成しています...');
-
-    const authRequest =
-      mode === 'sign-in'
-        ? supabase.auth.signInWithPassword({ email, password })
-        : supabase.auth.signUp({ email, password });
-
-    const { error } = await authRequest;
-
-    if (error) {
-      setStatusMessage(error.message);
-    } else {
-      setStatusMessage(
-        mode === 'sign-in'
-          ? 'ログインしました。'
-          : '確認メールが有効な場合は、メールを確認して登録を完了してください。',
-      );
-      setPassword('');
-    }
-
-    setIsLoading(false);
-  };
-
-  const handleSignOut = async () => {
-    if (!supabase) {
-      return;
-    }
-
-    setIsLoading(true);
-    const { error } = await supabase.auth.signOut();
-    setStatusMessage(error ? error.message : 'ログアウトしました。');
-    setIsLoading(false);
-  };
-
-  return (
-    <main className="app-shell">
-      <section className="hero-card">
-        <p className="eyebrow">Vite + React + TypeScript + Supabase</p>
-        <h1>Supabase 接続・データ取得確認</h1>
-        <p className="description">
-          Supabase の設定状態、認証状態、接続確認用ダミーデータの取得結果を確認できます。
-        </p>
-
-        <div className={isSupabaseConfigured ? 'status status-ready' : 'status status-warning'}>
-          {statusMessage}
-        </div>
-
-        <section className="database-check" aria-labelledby="database-check-heading">
-          <div className="database-check-heading">
-            <div>
-              <p className="section-label">Database check</p>
-              <h2 id="database-check-heading">ダミーデータ取得確認</h2>
-            </div>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => void checkDatabase()}
-              disabled={!isSupabaseConfigured || databaseCheckStatus === 'loading'}
-            >
-              {databaseCheckStatus === 'loading' ? '確認中...' : '再確認'}
-            </button>
-          </div>
-
-          <p className={`database-result database-result-${databaseCheckStatus}`}>
-            {databaseCheckMessage}
-          </p>
-
-          {databaseSamples.length > 0 && (
-            <div className="database-table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>確認項目</th>
-                    <th>取得値</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {databaseSamples.map((sample) => (
-                    <tr key={sample.key}>
-                      <td>{sample.label}</td>
-                      <td>{sample.expected_value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {checkedAt && <p className="checked-at">最終確認: {checkedAt}</p>}
-        </section>
-
-        {session ? (
-          <div className="auth-panel">
-            <p className="signed-in-label">ログイン中</p>
-            <strong>{session.user.email}</strong>
-            <button type="button" onClick={handleSignOut} disabled={isLoading}>
-              ログアウト
-            </button>
-          </div>
-        ) : (
-          <form className="auth-panel" onSubmit={handleAuth}>
-            <div className="mode-switch" aria-label="認証モード">
-              <button
-                type="button"
-                className={mode === 'sign-in' ? 'active' : ''}
-                onClick={() => setMode('sign-in')}
-              >
-                ログイン
-              </button>
-              <button
-                type="button"
-                className={mode === 'sign-up' ? 'active' : ''}
-                onClick={() => setMode('sign-up')}
-              >
-                新規登録
-              </button>
-            </div>
-
-            <label>
-              メールアドレス
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@example.com"
-                required
-                disabled={!isSupabaseConfigured || isLoading}
-              />
-            </label>
-
-            <label>
-              パスワード
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                minLength={6}
-                required
-                disabled={!isSupabaseConfigured || isLoading}
-              />
-            </label>
-
-            <button type="submit" disabled={!isSupabaseConfigured || isLoading}>
-              {isLoading ? '処理中...' : mode === 'sign-in' ? 'ログインする' : '登録する'}
-            </button>
-          </form>
-        )}
-
-        <div className="actions" aria-label="Required environment variables">
-          <code>VITE_SUPABASE_URL</code>
-          <code>VITE_SUPABASE_ANON_KEY</code>
-        </div>
-      </section>
-    </main>
-  );
+  if (!isSupabaseConfigured) return <ConfigurationRequired />;
+  if (loadingSession) return <main className="state-screen"><p>ログイン状態を確認しています…</p></main>;
+  return session ? <FinancialPortal session={session} onSignOut={() => void supabase?.auth.signOut()} /> : <Login />;
 }
+
+function Login() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setSubmitting(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setMessage(error ? error.message : 'ログインしました。');
+    setSubmitting(false);
+  };
+  return <main className="login-shell"><form className="login-card" onSubmit={submit}><p className="eyebrow">SK HOUSING</p><h1>ビル収支管理</h1><p>ログインして、物件ごとの年度収支を確認します。</p><label>メールアドレス<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label><label>パスワード<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>{message && <p className="form-message">{message}</p>}<button className="primary-button" disabled={submitting}>{submitting ? 'ログイン中…' : 'ログイン'}</button></form></main>;
+}
+
+function FinancialPortal({ session, onSignOut }: { session: Session; onSignOut: () => void }) {
+  const [tab, setTab] = useState<Tab>('dashboard');
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedPropertyId, setSelectedPropertyId] = useState('');
+  const [year, setYear] = useState(fiscalYear());
+  const [notice, setNotice] = useState('');
+  const loadMasters = async () => {
+    if (!supabase) return;
+    const [propertyResult, accountResult] = await Promise.all([
+      supabase.from('property_master').select('property_id, property_name, short_name').order('property_name'),
+      supabase.from('income_expense_account_master').select('account_id, account_name, income_expense_type').order('account_id'),
+    ]);
+    if (propertyResult.error || accountResult.error) { setNotice(propertyResult.error?.message ?? accountResult.error?.message ?? 'マスタの取得に失敗しました。'); return; }
+    const nextProperties = (propertyResult.data ?? []) as Property[];
+    setProperties(nextProperties); setAccounts((accountResult.data ?? []) as Account[]);
+    setSelectedPropertyId((current) => current || nextProperties[0]?.property_id || '');
+  };
+  useEffect(() => { void loadMasters(); }, []);
+  const selectedProperty = properties.find((property) => property.property_id === selectedPropertyId);
+  return <main className="portal-shell"><header className="app-header"><div><p className="eyebrow">SK HOUSING</p><h1>ビル収支管理</h1></div><div className="header-user"><span>{session.user.email}</span><button onClick={onSignOut}>ログアウト</button></div></header><nav className="tabs"><button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>年度ダッシュボード</button><button className={tab === 'recurring' ? 'active' : ''} onClick={() => setTab('recurring')}>定期収支管理</button><button className={tab === 'monthly' ? 'active' : ''} onClick={() => setTab('monthly')}>月次収支入力</button></nav><section className="toolbar"><label>対象ビル<select value={selectedPropertyId} onChange={(e) => setSelectedPropertyId(e.target.value)}>{properties.map((property) => <option value={property.property_id} key={property.property_id}>{property.short_name || property.property_name}</option>)}</select></label>{tab === 'dashboard' && <label>年度<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{[year - 1, year, year + 1].map((value) => <option value={value} key={value}>{value}年度（4月〜3月）</option>)}</select></label>}<span className="selected-property">{selectedProperty?.property_name}</span></section>{notice && <p className="notice">{notice}</p>}{tab === 'dashboard' && <Dashboard properties={properties} selectedPropertyId={selectedPropertyId} year={year} />}{tab === 'recurring' && <RecurringManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'monthly' && <MonthlyManager propertyId={selectedPropertyId} accounts={accounts} />}</main>;
+}
+
+function Dashboard({ properties, selectedPropertyId, year }: { properties: Property[]; selectedPropertyId: string; year: number }) {
+  const [summaries, setSummaries] = useState<Summary[]>([]);
+  const [details, setDetails] = useState<Detail[]>([]);
+  const [detailMonth, setDetailMonth] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const months = useMemo(() => fiscalMonths(year), [year]);
+  useEffect(() => { void (async () => { if (!supabase) return; setError(''); const { data, error: queryError } = await supabase.from('property_monthly_income_expense_summary').select('*').gte('accounting_month', months[0]).lte('accounting_month', months[11]); if (queryError) setError(queryError.message); else setSummaries((data ?? []) as Summary[]); })(); }, [year]);
+  const propertyTotals = properties.map((property) => ({ property, values: summaries.filter((summary) => summary.property_id === property.property_id), }));
+  const selectedValues = summaries.filter((summary) => summary.property_id === selectedPropertyId);
+  const totalFor = (key: keyof Pick<Summary, 'income_total' | 'expense_total' | 'balance'>) => selectedValues.reduce((sum, value) => sum + Number(value[key]), 0);
+  const showDetails = async (month: string) => { if (!supabase) return; const { data, error: queryError } = await supabase.from('property_monthly_income_expense_detail').select('source_type, source_id, account_id, account_name, income_expense_type, amount, description, counterparty_name').eq('property_id', selectedPropertyId).eq('accounting_month', month).order('income_expense_type').order('account_id'); if (queryError) { setError(queryError.message); return; } setDetails((data ?? []) as Detail[]); setDetailMonth(month); };
+  return <section className="content"><div className="section-heading"><div><h2>年度収支ダッシュボード</h2><p>物件ごとの発生ベース収支を確認します。</p></div></div>{error && <p className="notice">{error}</p>}<div className="metric-grid"><Metric label="収入合計" value={totalFor('income_total')} tone="income" /><Metric label="支出合計" value={totalFor('expense_total')} tone="expense" /><Metric label="収支" value={totalFor('balance')} tone="balance" /></div><section className="panel"><h3>全ビルの年度収支</h3><div className="table-scroll"><table><thead><tr><th>ビル</th><th>収入合計</th><th>支出合計</th><th>収支</th></tr></thead><tbody>{propertyTotals.map(({ property, values }) => <tr key={property.property_id}><td>{property.short_name || property.property_name}</td><td>{yen.format(values.reduce((sum, value) => sum + Number(value.income_total), 0))}</td><td>{yen.format(values.reduce((sum, value) => sum + Number(value.expense_total), 0))}</td><td className="amount-balance">{yen.format(values.reduce((sum, value) => sum + Number(value.balance), 0))}</td></tr>)}</tbody></table></div></section><section className="panel"><h3>{year}年度の月別収支</h3><div className="table-scroll"><table><thead><tr><th>月</th><th>契約収入</th><th>その他収入</th><th>準固定支出</th><th>変動支出</th><th>収支</th><th></th></tr></thead><tbody>{months.map((month) => { const value = selectedValues.find((summary) => summary.accounting_month === month); const contractIncome = Number(value?.contract_rent_income ?? 0) + Number(value?.contract_common_charge_income ?? 0); return <tr key={month}><td>{monthLabel(month)}</td><td>{yen.format(contractIncome)}</td><td>{yen.format(Number(value?.other_income ?? 0))}</td><td>{yen.format(Number(value?.recurring_expense ?? 0))}</td><td>{yen.format(Number(value?.variable_expense ?? 0))}</td><td className="amount-balance">{yen.format(Number(value?.balance ?? 0))}</td><td><button className="link-button" onClick={() => void showDetails(month)}>明細</button></td></tr>; })}</tbody></table></div></section>{detailMonth && <DetailDialog month={detailMonth} details={details} onClose={() => setDetailMonth(null)} />}</section>;
+}
+
+function Metric({ label, value, tone }: { label: string; value: number; tone: string }) { return <article className={`metric ${tone}`}><span>{label}</span><strong>{yen.format(value)}</strong></article>; }
+
+function RecurringManager({ propertyId, accounts }: { propertyId: string; accounts: Account[] }) {
+  const [items, setItems] = useState<RecurringItem[]>([]); const [editing, setEditing] = useState<RecurringItem | null>(null); const [error, setError] = useState('');
+  const load = async () => { if (!supabase || !propertyId) return; const { data, error: queryError } = await supabase.from('property_recurring_financial_item').select('*, account:income_expense_account_master(account_name, income_expense_type)').eq('property_id', propertyId).order('effective_from_month', { ascending: false }); if (queryError) setError(queryError.message); else setItems((data ?? []) as RecurringItem[]); };
+  useEffect(() => { void load(); }, [propertyId]);
+  const remove = async (id: string) => { if (!supabase || !confirm('この定期明細を削除しますか？')) return; const { error: deleteError } = await supabase.from('property_recurring_financial_item').delete().eq('recurring_item_id', id); if (deleteError) setError(deleteError.message); else void load(); };
+  return <section className="content"><div className="section-heading"><div><h2>定期収支管理</h2><p>BM費・通信費・看板料など、適用期間のある月額項目を管理します。</p></div><button className="primary-button" onClick={() => setEditing({ recurring_item_id: '', property_id: propertyId, account_id: accounts[0]?.account_id ?? '', item_name: '', monthly_amount: 0, effective_from_month: monthValue(), effective_to_month: null, counterparty_name: null, notes: null, is_active: true })}>定期明細を登録</button></div>{error && <p className="notice">{error}</p>}<section className="panel"><div className="table-scroll"><table><thead><tr><th>科目</th><th>明細名</th><th>月額</th><th>適用期間</th><th>相手先</th><th></th></tr></thead><tbody>{items.map((item) => <tr key={item.recurring_item_id}><td><span className={`tag ${item.account?.income_expense_type === '収入' ? 'income' : 'expense'}`}>{item.account?.account_name}</span></td><td>{item.item_name}</td><td>{yen.format(Number(item.monthly_amount))}</td><td>{monthLabel(item.effective_from_month)}〜{item.effective_to_month ? monthLabel(item.effective_to_month) : '終了未定'}</td><td>{item.counterparty_name || '—'}</td><td><button className="link-button" onClick={() => setEditing(item)}>編集</button><button className="danger-button" onClick={() => void remove(item.recurring_item_id)}>削除</button></td></tr>)}{!items.length && <tr><td colSpan={6} className="empty">登録済みの定期明細はありません。</td></tr>}</tbody></table></div></section>{editing && <RecurringDialog item={editing} accounts={accounts} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}</section>;
+}
+
+function MonthlyManager({ propertyId, accounts }: { propertyId: string; accounts: Account[] }) {
+  const [month, setMonth] = useState(monthValue()); const [items, setItems] = useState<MonthlyEntry[]>([]); const [editing, setEditing] = useState<MonthlyEntry | null>(null); const [error, setError] = useState('');
+  const load = async () => { if (!supabase || !propertyId) return; const { data, error: queryError } = await supabase.from('property_monthly_financial_entry').select('*, account:income_expense_account_master(account_name, income_expense_type)').eq('property_id', propertyId).eq('accounting_month', month).order('entry_date', { ascending: false }); if (queryError) setError(queryError.message); else setItems((data ?? []) as MonthlyEntry[]); };
+  useEffect(() => { void load(); }, [propertyId, month]);
+  const remove = async (id: string) => { if (!supabase || !confirm('この月次明細を削除しますか？')) return; const { error: deleteError } = await supabase.from('property_monthly_financial_entry').delete().eq('financial_entry_id', id); if (deleteError) setError(deleteError.message); else void load(); };
+  return <section className="content"><div className="section-heading"><div><h2>月次収支入力</h2><p>修繕費・消耗品費などの実績を月ごとに入力します。</p></div><button className="primary-button" onClick={() => setEditing({ financial_entry_id: '', property_id: propertyId, account_id: accounts.find((account) => account.income_expense_type === '支出')?.account_id ?? accounts[0]?.account_id ?? '', accounting_month: month, amount: 0, entry_date: month, description: '', counterparty_name: null, notes: null })}>月次明細を入力</button></div><div className="inline-filter"><label>計上月<input type="month" value={month.slice(0, 7)} onChange={(e) => setMonth(`${e.target.value}-01`)} /></label></div>{error && <p className="notice">{error}</p>}<section className="panel"><div className="table-scroll"><table><thead><tr><th>科目</th><th>内容</th><th>金額</th><th>発生日</th><th>相手先</th><th></th></tr></thead><tbody>{items.map((item) => <tr key={item.financial_entry_id}><td><span className={`tag ${item.account?.income_expense_type === '収入' ? 'income' : 'expense'}`}>{item.account?.account_name}</span></td><td>{item.description}</td><td>{yen.format(Number(item.amount))}</td><td>{item.entry_date || '—'}</td><td>{item.counterparty_name || '—'}</td><td><button className="link-button" onClick={() => setEditing(item)}>編集</button><button className="danger-button" onClick={() => void remove(item.financial_entry_id)}>削除</button></td></tr>)}{!items.length && <tr><td colSpan={6} className="empty">この月の明細はありません。</td></tr>}</tbody></table></div></section>{editing && <MonthlyDialog item={editing} accounts={accounts} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}</section>;
+}
+
+function RecurringDialog({ item, accounts, onClose, onSaved }: { item: RecurringItem; accounts: Account[]; onClose: () => void; onSaved: () => void }) { const [draft, setDraft] = useState(item); const [error, setError] = useState(''); const save = async (event: FormEvent) => { event.preventDefault(); if (!supabase) return; const payload = { property_id: draft.property_id, account_id: draft.account_id, item_name: draft.item_name, monthly_amount: Number(draft.monthly_amount), effective_from_month: draft.effective_from_month, effective_to_month: draft.effective_to_month || null, counterparty_name: draft.counterparty_name || null, notes: draft.notes || null, is_active: draft.is_active }; const result = draft.recurring_item_id ? await supabase.from('property_recurring_financial_item').update(payload).eq('recurring_item_id', draft.recurring_item_id) : await supabase.from('property_recurring_financial_item').insert(payload); if (result.error) setError(result.error.message); else onSaved(); }; return <Dialog title={item.recurring_item_id ? '定期明細を編集' : '定期明細を登録'} onClose={onClose}><form onSubmit={save} className="form-grid"><Field label="科目"><select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>{accounts.map((account) => <option value={account.account_id} key={account.account_id}>{account.income_expense_type}｜{account.account_name}</option>)}</select></Field><Field label="明細名"><input value={draft.item_name} onChange={(e) => setDraft({ ...draft, item_name: e.target.value })} required /></Field><Field label="月額（円）"><input type="number" min="1" value={draft.monthly_amount || ''} onChange={(e) => setDraft({ ...draft, monthly_amount: Number(e.target.value) })} required /></Field><Field label="相手先"><input value={draft.counterparty_name ?? ''} onChange={(e) => setDraft({ ...draft, counterparty_name: e.target.value })} /></Field><Field label="適用開始月"><input type="month" value={draft.effective_from_month.slice(0, 7)} onChange={(e) => setDraft({ ...draft, effective_from_month: `${e.target.value}-01` })} required /></Field><Field label="適用終了月"><input type="month" value={draft.effective_to_month?.slice(0, 7) ?? ''} onChange={(e) => setDraft({ ...draft, effective_to_month: e.target.value ? `${e.target.value}-01` : null })} /></Field><Field label="備考"><textarea value={draft.notes ?? ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field><label className="check"><input type="checkbox" checked={draft.is_active} onChange={(e) => setDraft({ ...draft, is_active: e.target.checked })} />利用中</label>{error && <p className="notice">{error}</p>}<div className="form-actions"><button type="button" onClick={onClose}>取消</button><button className="primary-button">保存</button></div></form></Dialog>; }
+
+function MonthlyDialog({ item, accounts, onClose, onSaved }: { item: MonthlyEntry; accounts: Account[]; onClose: () => void; onSaved: () => void }) { const [draft, setDraft] = useState(item); const [error, setError] = useState(''); const save = async (event: FormEvent) => { event.preventDefault(); if (!supabase) return; const payload = { property_id: draft.property_id, account_id: draft.account_id, accounting_month: draft.accounting_month, amount: Number(draft.amount), entry_date: draft.entry_date || null, description: draft.description, counterparty_name: draft.counterparty_name || null, notes: draft.notes || null }; const result = draft.financial_entry_id ? await supabase.from('property_monthly_financial_entry').update(payload).eq('financial_entry_id', draft.financial_entry_id) : await supabase.from('property_monthly_financial_entry').insert(payload); if (result.error) setError(result.error.message); else onSaved(); }; return <Dialog title={item.financial_entry_id ? '月次明細を編集' : '月次明細を入力'} onClose={onClose}><form onSubmit={save} className="form-grid"><Field label="科目"><select value={draft.account_id} onChange={(e) => setDraft({ ...draft, account_id: e.target.value })}>{accounts.map((account) => <option value={account.account_id} key={account.account_id}>{account.income_expense_type}｜{account.account_name}</option>)}</select></Field><Field label="計上月"><input type="month" value={draft.accounting_month.slice(0, 7)} onChange={(e) => setDraft({ ...draft, accounting_month: `${e.target.value}-01` })} required /></Field><Field label="内容"><input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} required /></Field><Field label="金額（円）"><input type="number" min="1" value={draft.amount || ''} onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value) })} required /></Field><Field label="発生日／請求日"><input type="date" value={draft.entry_date ?? ''} onChange={(e) => setDraft({ ...draft, entry_date: e.target.value || null })} /></Field><Field label="相手先"><input value={draft.counterparty_name ?? ''} onChange={(e) => setDraft({ ...draft, counterparty_name: e.target.value })} /></Field><Field label="備考"><textarea value={draft.notes ?? ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field>{error && <p className="notice">{error}</p>}<div className="form-actions"><button type="button" onClick={onClose}>取消</button><button className="primary-button">保存</button></div></form></Dialog>; }
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
+function Dialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) { return <div className="dialog-backdrop" role="presentation"><section className="dialog" role="dialog" aria-modal="true"><header><h2>{title}</h2><button onClick={onClose} aria-label="閉じる">×</button></header>{children}</section></div>; }
+function DetailDialog({ month, details, onClose }: { month: string; details: Detail[]; onClose: () => void }) { return <Dialog title={`${monthLabel(month)}の収支明細`} onClose={onClose}><div className="detail-list">{details.map((detail) => <div className="detail-row" key={`${detail.source_type}-${detail.source_id}-${detail.account_id}`}><div><span className={`tag ${detail.income_expense_type === '収入' ? 'income' : 'expense'}`}>{detail.account_name}</span><strong>{detail.description}</strong><small>{detail.source_type}{detail.counterparty_name ? `｜${detail.counterparty_name}` : ''}</small></div><b>{yen.format(Number(detail.amount))}</b></div>)}{!details.length && <p className="empty">明細はありません。</p>}</div></Dialog>; }
+function ConfigurationRequired() { return <main className="state-screen"><section className="login-card"><h1>接続設定が必要です</h1><p><code>VITE_SUPABASE_URL</code> と <code>VITE_SUPABASE_ANON_KEY</code> を設定してください。</p></section></main>; }
 
 export default App;
