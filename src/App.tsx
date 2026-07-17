@@ -12,6 +12,7 @@ import {
 } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { FinancialPage } from './FinancialPage';
+import { LeasingMapPage } from './LeasingMapPage';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
 type ContractType = '新規' | '更新';
@@ -158,6 +159,7 @@ function App() {
           <Route element={<PortalLayout profile={profile!} onSignOut={signOut} />}>
             <Route path="/dashboard" element={<Dashboard contracts={contracts} userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
             <Route path="/financial" element={<FinancialPage />} />
+            <Route path="/leasing-map" element={<LeasingMapPage />} />
             <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={false} loadError={contractLoadError} />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
           </Route>
@@ -232,12 +234,12 @@ function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
 function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut: () => Promise<void> }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const pageTitle = location.pathname === '/contracts' ? '契約業務フロー' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/financial' ? '収支管理' : 'ダッシュボード';
+  const pageTitle = location.pathname === '/contracts' ? '契約業務フロー' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/financial' ? '収支管理' : location.pathname === '/leasing-map' ? 'リーシング図面' : 'ダッシュボード';
   const logout = async () => { await onSignOut(); navigate('/login', { replace: true }); };
   const userName = profile.employee?.employee_name ?? profile.email;
   return <div className="portal-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div><p className="workspace-label">WORKSPACE</p>
-      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink>{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
+      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
       <p className="workspace-label">COMING SOON</p><nav className="disabled-nav"><span><i>▤</i>物件管理</span><span><i>◫</i>収支管理</span><span><i>♙</i>マスタ管理</span></nav>
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
     </aside>

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",
+    "pdfjs-dist": "^5.4.54",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "^7.18.1"
