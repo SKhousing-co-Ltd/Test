@@ -13,6 +13,7 @@ import {
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { FinancialPage } from './FinancialPage';
 import { LeasingMapPage } from './LeasingMapPage';
+import { ContractDocumentPage } from './ContractDocumentPage';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
 type ContractType = '新規' | '更新';
@@ -161,6 +162,8 @@ function App() {
             <Route path="/financial" element={<FinancialPage />} />
             <Route path="/leasing-map" element={<LeasingMapPage />} />
             <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={false} loadError={contractLoadError} />} />
+            <Route path="/contract-documents" element={<Navigate to="/contracts/demo-ordinary-lease/document" replace />} />
+            <Route path="/contracts/:contractId/document" element={<ContractDocumentPage />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
           </Route>
         </Route>
@@ -234,12 +237,12 @@ function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
 function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut: () => Promise<void> }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const pageTitle = location.pathname === '/contracts' ? '契約業務フロー' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/financial' ? '収支管理' : location.pathname === '/leasing-map' ? 'リーシング図面' : 'ダッシュボード';
+  const pageTitle = location.pathname === '/contracts' ? '契約業務フロー' : location.pathname.startsWith('/contract-documents') || location.pathname.endsWith('/document') ? '契約書作成' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/financial' ? '収支管理' : location.pathname === '/leasing-map' ? 'リーシング図面' : 'ダッシュボード';
   const logout = async () => { await onSignOut(); navigate('/login', { replace: true }); };
   const userName = profile.employee?.employee_name ?? profile.email;
   return <div className="portal-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div><p className="workspace-label">WORKSPACE</p>
-      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
+      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/contract-documents" className="nav-item"><span>▤</span>契約書作成</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
       <p className="workspace-label">COMING SOON</p><nav className="disabled-nav"><span><i>▤</i>物件管理</span><span><i>◫</i>収支管理</span><span><i>♙</i>マスタ管理</span></nav>
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
     </aside>
@@ -354,7 +357,7 @@ function ContractsPage({ contracts, setContracts, canEdit, loadError }: { contra
   </>;
 }
 
-function ContractTable({ contracts, onEdit, canEdit }: { contracts: Contract[]; onEdit: (contract: Contract) => void; canEdit: boolean }) { return <div className="table-panel"><div className="table-wrap"><table><thead><tr><th>契約ID</th><th>テナント・物件</th><th>種別</th><th>契約期間</th><th>担当者</th><th>ステータス</th>{canEdit && <th aria-label="操作" />}</tr></thead><tbody>{contracts.map((contract) => <tr key={contract.id}><td><strong className="contract-id">{contract.id}</strong></td><td><strong>{contract.tenant}</strong><small>{contract.property}</small></td><td><span className={`type-pill ${contract.type === '新規' ? 'new' : ''}`}>{contract.type}</span></td><td>{formatDate(contract.startDate)}<span className="date-separator">〜</span>{formatDate(contract.endDate)}</td><td><span className="table-person">{contract.assignee.slice(0, 1)}</span>{contract.assignee}</td><td><StatusBadge status={contract.status} /></td>{canEdit && <td><button className="row-action" onClick={() => onEdit(contract)}>編集</button></td>}</tr>)}</tbody></table></div>{contracts.length === 0 && <EmptyState />}</div>; }
+function ContractTable({ contracts, onEdit, canEdit }: { contracts: Contract[]; onEdit: (contract: Contract) => void; canEdit: boolean }) { return <div className="table-panel"><div className="table-wrap"><table><thead><tr><th>契約ID</th><th>テナント・物件</th><th>種別</th><th>契約期間</th><th>担当者</th><th>ステータス</th><th aria-label="契約書" />{canEdit && <th aria-label="操作" />}</tr></thead><tbody>{contracts.map((contract) => <tr key={contract.id}><td><strong className="contract-id">{contract.id}</strong></td><td><strong>{contract.tenant}</strong><small>{contract.property}</small></td><td><span className={`type-pill ${contract.type === '新規' ? 'new' : ''}`}>{contract.type}</span></td><td>{formatDate(contract.startDate)}<span className="date-separator">〜</span>{formatDate(contract.endDate)}</td><td><span className="table-person">{contract.assignee.slice(0, 1)}</span>{contract.assignee}</td><td><StatusBadge status={contract.status} /></td><td><NavLink className="row-action" to={`/contracts/${contract.id}/document`}>契約書作成</NavLink></td>{canEdit && <td><button className="row-action" onClick={() => onEdit(contract)}>編集</button></td>}</tr>)}</tbody></table></div>{contracts.length === 0 && <EmptyState />}</div>; }
 
 function ContractBoard({ contracts, onEdit, onMove, canEdit }: { contracts: Contract[]; onEdit: (contract: Contract) => void; onMove: (contract: Contract, status: ContractStatus) => void; canEdit: boolean }) { return <div className="board">{statuses.map((status) => <section className="board-column" key={status}><header><div><span className={`dot dot-${statusClass(status)}`} />{status}</div><b>{contracts.filter((item) => item.status === status).length}</b></header><div className="board-cards">{contracts.filter((item) => item.status === status).map((contract) => <article className="board-card" key={contract.id}><div className="board-card-head"><span className={`type-pill ${contract.type === '新規' ? 'new' : ''}`}>{contract.type}</span>{canEdit && <button onClick={() => onEdit(contract)}>•••</button>}</div><h3>{contract.tenant}</h3><p>{contract.property}</p><div className="board-dates">◷ {formatDate(contract.startDate)}〜</div><footer><span className="table-person">{contract.assignee.slice(0, 1)}</span>{canEdit ? <select aria-label={`${contract.tenant} のステータス`} value={contract.status} onChange={(e) => onMove(contract, e.target.value as ContractStatus)}>{statuses.map((value) => <option key={value}>{value}</option>)}</select> : <StatusBadge status={contract.status} />}</footer></article>)}</div></section>)}</div>; }
 
