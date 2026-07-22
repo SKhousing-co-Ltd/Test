@@ -1,0 +1,27 @@
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 3px solid rgb(38 117 217 / 45%);
+  outline-offset: 2px;
+}
+
+button:not(:disabled), select, input[type='checkbox'], input[type='radio'] { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .58; }
+
+.primary-button, .secondary-button, .row-action, .map-tools button, .status-editor button, .view-switch button {
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.primary-button:not(:disabled):hover, .secondary-button:not(:disabled):hover { transform: translateY(-1px); }
+.row-action { min-height: 30px; }
+.filter-panel select, .filter-panel .clear-button { min-height: 36px; }
+.document-message, .leasing-notice, .account-message { line-height: 1.55; }
+.map-tools button, .status-editor button { min-height: 32px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+
+@media (max-width: 760px) {
+  .row-action { min-height: 36px; }
+  .map-tools button, .status-editor button { min-height: 38px; }
+  .document-message, .leasing-notice { position: sticky; top: 8px; z-index: 3; }
+}
