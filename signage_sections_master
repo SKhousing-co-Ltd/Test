@@ -1,0 +1,12 @@
+-- 看板区画マスタテーブルの作成
+CREATE TABLE IF NOT EXISTS signage_sections_master (
+    signage_section_id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- 看板区画ID (uid)
+    signage_id UUID NOT NULL,                                       -- 看板ID (FK)
+    section_number TEXT NOT NULL,                                   -- 区画番号 (例: "1", "A区画" など)
+    
+    -- 看板マスタ (signages_master) との紐づけ（外部キー制約）
+    CONSTRAINT fk_signages
+        FOREIGN KEY (signage_id) 
+        REFERENCES signages_master (signage_id)
+        ON DELETE CASCADE
+);
