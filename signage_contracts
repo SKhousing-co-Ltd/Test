@@ -1,0 +1,20 @@
+-- 看板契約テーブルの作成
+CREATE TABLE IF NOT EXISTS signage_contracts (
+    signage_contract_id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- 看板契約ID (uid)
+    signage_section_id UUID NOT NULL,                                -- 看板区画ID (FK)
+    tenant_client_id UUID NOT NULL,                                  -- 借主取引先ID (FK)
+    rent_amount NUMERIC(10, 0),                                      -- 賃料 (金額)
+    deposit_amount NUMERIC(10, 0),                                   -- 敷金 (金額)
+    contract_start_date DATE,                                        -- 契約開始日
+    
+    -- 外部キー制約 (関連テーブルとの紐づけ)
+    CONSTRAINT fk_signage_sections
+        FOREIGN KEY (signage_section_id) 
+        REFERENCES signage_sections_master (signage_section_id)
+        ON DELETE RESTRICT,
+        
+    CONSTRAINT fk_tenant_clients
+        FOREIGN KEY (tenant_client_id) 
+        REFERENCES clients (client_id)
+        ON DELETE RESTRICT
+);
