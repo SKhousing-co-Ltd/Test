@@ -1,0 +1,18 @@
+-- 既存のテーブルを削除してリセット（必要に応じて）
+DROP TABLE IF EXISTS signages_master CASCADE;
+
+-- 看板マスタテーブルの作成
+CREATE TABLE signages_master (
+    signage_id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- 看板ID (uid)
+    property_id UUID,                                      -- 物件ID (FK想定)
+    signage_types_id BIGINT,                               -- 看板種別ID (FK)
+    total_sections INTEGER DEFAULT 0,                      -- 総区画数
+    height_mm NUMERIC(8, 2),                               -- 縦 (mm)
+    width_mm NUMERIC(8, 2),                                -- 横 (mm)
+    
+    -- 看板種別マスタ (signage_types_master) との紐づけ（外部キー制約）
+    CONSTRAINT fk_signage_types
+        FOREIGN KEY (signage_types_id) 
+        REFERENCES signage_types_master (signage_types_id)
+        ON DELETE SET NULL
+);
