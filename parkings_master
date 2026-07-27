@@ -1,0 +1,13 @@
+-- 駐車場マスタテーブルの作成
+CREATE TABLE IF NOT EXISTS parkings_master (
+    parking_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,  -- 駐車場ID (uid)
+    property_id UUID,                                       -- 物件ID (必要に応じてFK設定可)
+    parking_types_id BIGINT,                                -- 駐車場種別ID (FK)
+    total_capacity INTEGER DEFAULT 0,                        -- 総台数
+    
+    -- 駐車場種別マスタ (parking_types_master) との紐づけ（外部キー制約）
+    CONSTRAINT fk_parking_types
+        FOREIGN KEY (parking_types_id) 
+        REFERENCES parking_types_master (parking_types_id)
+        ON DELETE SET NULL
+);
