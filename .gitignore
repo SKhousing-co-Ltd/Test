@@ -10,6 +10,7 @@ pnpm-debug.log*
 gcm-diagnose.log
 rent_roll_import_report.json
 outputs/
+jpn.traineddata
 scripts/__pycache__/
 .DS_Store
 
