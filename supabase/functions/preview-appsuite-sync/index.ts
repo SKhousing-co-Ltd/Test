@@ -1,4 +1,4 @@
-import { adminClient, changed, corsHeaders, fetchRecords, json, listApplications, requireActiveUser } from '../_shared/appsuite.ts';
+import { adminClient, changed, corsHeaders, enrichRingiNumbers, fetchRecords, json, listApplications, requireActiveUser } from '../_shared/appsuite.ts';
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -21,14 +21,15 @@ Deno.serve(async (request) => {
     if (!application || !application.is_sync_enabled) return json({ error: '同期対象として有効なアプリを選択してください' }, 400);
     const admin = adminClient();
     const records = await fetchRecords(appId);
-    const { data: stored, error } = await admin.from('appsuite_record').select('data_id, revision, raw_payload, is_present').eq('app_id', appId);
+    const { data: stored, error } = await admin.from('appsuite_record').select('data_id, revision, raw_payload, is_present, ringi_number').eq('app_id', appId);
     if (error) throw error;
     const existing = new Map((stored ?? []).map((row) => [row.data_id, row]));
-    const items = records.map((record) => ({ ...record, change_type: !existing.has(record.data_id) ? '追加' : changed(record, existing.get(record.data_id)) ? '更新' : '未変更', previous_payload: existing.get(record.data_id)?.raw_payload ?? null }));
-    const fetchedIds = new Set(records.map((record) => record.data_id));
+    const enrichedRecords = await enrichRingiNumbers(records, existing);
+    const items = enrichedRecords.map((record) => ({ ...record, change_type: !existing.has(record.data_id) ? '追加' : changed(record, existing.get(record.data_id)) ? '更新' : '未変更', previous_payload: existing.get(record.data_id)?.raw_payload ?? null }));
+    const fetchedIds = new Set(enrichedRecords.map((record) => record.data_id));
     const missing = (stored ?? []).filter((row) => row.is_present && !fetchedIds.has(row.data_id)).map((row) => ({ data_id: row.data_id, change_type: 'ソース未検出', previous_payload: row.raw_payload }));
     const summary = { fetched: records.length, inserted: items.filter((item) => item.change_type === '追加').length, updated: items.filter((item) => item.change_type === '更新').length, unchanged: items.filter((item) => item.change_type === '未変更').length, missing: missing.length };
-    const snapshot = { records, missing_data_ids: missing.map((item) => item.data_id) };
+    const snapshot = { records: enrichedRecords, missing_data_ids: missing.map((item) => item.data_id) };
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     const { data: preview, error: previewError } = await admin.from('appsuite_sync_preview').insert({ app_id: appId, created_by: user.id, status: 'pending', expires_at: expiresAt, snapshot, summary }).select('appsuite_sync_preview_id, expires_at').single();
     if (previewError) throw previewError;
