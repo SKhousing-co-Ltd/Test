@@ -12,10 +12,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",
+    "@tesseract.js-data/jpn": "^1.0.0",
     "pdfjs-dist": "^5.4.54",
     "react": "latest",
     "react-dom": "latest",
-    "react-router-dom": "^7.18.1"
+    "react-router-dom": "^7.18.1",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/react": "latest",
