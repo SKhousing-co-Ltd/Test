@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const encoder = new TextEncoder();
@@ -38,6 +39,19 @@ function makePdf(values: Record<string, unknown>) {
   return encoder.encode(pdf);
 }
 
+async function appendPlanPages(basePdf: Uint8Array, snapshots: Uint8Array[]) {
+  const pdf = await PDFDocument.load(basePdf);
+  for (const snapshot of snapshots) {
+    const image = await pdf.embedPng(snapshot);
+    const page = pdf.addPage([595, 842]);
+    const margin = 30; const maxWidth = 595 - margin * 2; const maxHeight = 842 - margin * 2;
+    const scale = Math.min(maxWidth / image.width, maxHeight / image.height);
+    const width = image.width * scale; const height = image.height * scale;
+    page.drawImage(image, { x: (595 - width) / 2, y: (842 - height) / 2, width, height });
+  }
+  return await pdf.save();
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: corsHeaders });
@@ -48,12 +62,24 @@ Deno.serve(async (request) => {
   if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
   const body = await request.json(); const leaseContractId = body.leaseContractId as string;
   if (!leaseContractId) return new Response(JSON.stringify({ error: 'leaseContractId は必須です。' }), { status: 400, headers: corsHeaders });
-  const { data: document, error } = await userClient.from('lease_contract_document').select('field_values').eq('lease_contract_id', leaseContractId).maybeSingle();
+  const { data: document, error } = await userClient.from('lease_contract_document').select('lease_contract_document_id, field_values').eq('lease_contract_id', leaseContractId).maybeSingle();
   if (error || !document) return new Response(JSON.stringify({ error: '契約書データを先に保存してください。' }), { status: 400, headers: corsHeaders });
   const values = document.field_values as Record<string, unknown>;
   for (const key of ['propertyName', 'tenantName', 'contractStartDate', 'contractEndDate']) if (!values[key]) return new Response(JSON.stringify({ error: `必須項目「${key}」を入力してください。` }), { status: 400, headers: corsHeaders });
-  const admin = createClient(url, serviceKey); const path = `${leaseContractId}/ordinary_lease.pdf`;
-  const { error: uploadError } = await admin.storage.from('contract-documents').upload(path, makePdf(values), { contentType: 'application/pdf', upsert: true });
+  const admin = createClient(url, serviceKey);
+  const { data: planRows, error: planError } = await userClient.from('lease_contract_document_plan').select('snapshot_file_path').eq('lease_contract_document_id', document.lease_contract_document_id).order('created_at');
+  if (planError) return new Response(JSON.stringify({ error: `対象区画図を確認できませんでした: ${planError.message}` }), { status: 400, headers: corsHeaders });
+  if (!planRows?.length) return new Response(JSON.stringify({ error: '対象区画を選択して保存してからPDFを生成してください。' }), { status: 400, headers: corsHeaders });
+  const snapshots: Uint8Array[] = [];
+  for (const plan of planRows) {
+    const { data: snapshot, error: snapshotError } = await admin.storage.from('contract-documents').download(plan.snapshot_file_path);
+    if (snapshotError || !snapshot) return new Response(JSON.stringify({ error: `保存済み対象区画図を取得できませんでした: ${snapshotError?.message ?? ''}` }), { status: 400, headers: corsHeaders });
+    snapshots.push(new Uint8Array(await snapshot.arrayBuffer()));
+  }
+  let outputPdf: Uint8Array;
+  try { outputPdf = await appendPlanPages(makePdf(values), snapshots); } catch (pdfError) { return new Response(JSON.stringify({ error: `対象区画図をPDFへ追加できませんでした: ${pdfError instanceof Error ? pdfError.message : String(pdfError)}` }), { status: 500, headers: corsHeaders }); }
+  const path = `${leaseContractId}/ordinary_lease.pdf`;
+  const { error: uploadError } = await admin.storage.from('contract-documents').upload(path, outputPdf, { contentType: 'application/pdf', upsert: true });
   if (uploadError) return new Response(JSON.stringify({ error: `PDFを保存できませんでした: ${uploadError.message}` }), { status: 500, headers: corsHeaders });
   const generatedAt = new Date().toISOString();
   const { error: updateError } = await admin.from('lease_contract_document').update({ pdf_file_path: path, pdf_generated_at: generatedAt }).eq('lease_contract_id', leaseContractId);
