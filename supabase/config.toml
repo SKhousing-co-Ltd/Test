@@ -1,0 +1,2 @@
+[functions.sync-appsuite-records]
+verify_jwt = false
