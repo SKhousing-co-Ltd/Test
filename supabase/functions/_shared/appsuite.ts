@@ -8,8 +8,11 @@ export const corsHeaders = {
 export type AppsuiteRecord = {
   app_id: string; data_id: string; revision: string | null; workflow_type: string; approval_status: string | null;
   property_name: string | null; tenant_name: string | null; source_created_at: string | null; source_updated_at: string | null;
+  ringi_number: string | null;
   raw_payload: Record<string, unknown>;
 };
+
+type StoredAppsuiteRecord = { data_id: string; revision: string | null; raw_payload: unknown; is_present: boolean; ringi_number: string | null };
 
 export function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -79,10 +82,33 @@ export async function fetchRecords(appId: string): Promise<AppsuiteRecord[]> {
       const requirement = value(payload, '申請の要件');
       const dataId = value(payload, 'データID');
       if (!dataId) continue;
-      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), raw_payload: payload });
+      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: null, raw_payload: payload });
     }
   }
   return results;
+}
+
+async function fetchRingiNumber(appId: string, dataId: string) {
+  const body = await postAppsuite({ action: 'get_data', app_id: appId, data_id: dataId });
+  return value((body.record ?? {}) as Record<string, unknown>, '稟議番号');
+}
+
+// list_data does not contain the generated approval number. Fetch the detail
+// only for changed/new records, plus one-time backfill records missing the value.
+export async function enrichRingiNumbers(records: AppsuiteRecord[], existing: Map<string, StoredAppsuiteRecord>) {
+  const enriched = Array<AppsuiteRecord>(records.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < records.length) {
+      const index = nextIndex++;
+      const record = records[index];
+      const stored = existing.get(record.data_id);
+      const shouldFetchDetail = !stored || !stored.ringi_number || changed(record, stored);
+      enriched[index] = { ...record, ringi_number: shouldFetchDetail ? await fetchRingiNumber(record.app_id, record.data_id) : stored.ringi_number };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(5, records.length) }, worker));
+  return enriched;
 }
 
 export function changed(source: AppsuiteRecord, stored?: { revision: string | null; raw_payload: unknown; is_present: boolean }) {
