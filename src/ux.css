@@ -27,6 +27,16 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 }
 
 .appsuite-sync-page { display: grid; gap: 18px; }
+.template-paper { min-height: 760px; padding: 44px 42px; border: 1px solid #d8dde4; background: #fff; box-shadow: 0 5px 20px rgb(22 40 67 / 9%); color: #1e2733; font-family: 'Noto Serif JP', 'Yu Mincho', serif; }
+.contract-preview { overflow: hidden; border: 1px solid #d8dde4; border-radius: 10px; background: #f1f4f8; box-shadow: 0 5px 20px rgb(22 40 67 / 9%); }.pdf-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #dce3eb; background: #fff; }.pdf-preview-heading div { display: grid; gap: 2px; }.pdf-preview-heading strong { color: #2d415c; font-size: 13px; }.pdf-preview-heading span { color: #7f8da0; font-size: 10px; }.pdf-preview-heading .secondary-button { padding: 7px 9px; font-size: 10px; }.contract-pdf-preview { display: block; width: 100%; height: calc(100vh - 180px); min-height: 720px; border: 0; background: #e7ebf0; }.pdf-preview-empty { display: grid; min-height: 720px; place-items: center; padding: 30px; color: #718197; background: repeating-linear-gradient(135deg, #f7f9fb, #f7f9fb 8px, #f1f4f7 8px, #f1f4f7 16px); font-size: 12px; }.contract-preview .template-note { padding: 0 13px 12px; }
+.template-paper h1 { margin: 0 0 31px; text-align: center; font-size: 23px; letter-spacing: .16em; }
+.plan-candidates label.disabled { opacity: .45; cursor: not-allowed; }
+.template-opening { margin: 0 0 24px; font-size: 11px; line-height: 1.95; }
+.template-head { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+.template-head caption { border: 1px solid #56616d; border-bottom: 0; padding: 5px; font-size: 12px; font-weight: 700; }
+.template-head th, .template-head td { border: 1px solid #56616d; padding: 7px 8px; text-align: left; vertical-align: middle; line-height: 1.45; }
+.template-head th { width: 34%; font-weight: 500; }.template-head td small { display: block; margin-top: 3px; color: #68727d; font-size: 9px; }.template-head .template-special th, .template-head .template-special td { height: 70px; vertical-align: top; }
+@media (max-width: 980px) { .template-paper { max-width: 680px; margin: auto; } } @media (max-width: 620px) { .template-paper { min-height: 0; padding: 35px 22px; } }
 .appsuite-sync-shortcut { position: fixed; right: 20px; bottom: 18px; z-index: 10; padding: 9px 13px; border-radius: 7px; color: #fff; background: #1769b4; box-shadow: 0 5px 16px rgb(20 70 120 / 28%); font-size: 12px; font-weight: 700; }
 .sync-panel { overflow: hidden; }
 .sync-panel > header, .preview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid #e7edf4; }

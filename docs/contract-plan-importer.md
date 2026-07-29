@@ -1,5 +1,15 @@
 # 契約書図面 初回登録ツール
 
+## 契約書ひな型の配置
+
+普通賃貸借契約書のPDF生成は、非公開Storageの `contract-documents/templates/ordinary_lease/` を参照します。新ひな型と日本語フォントを初回配置または差替えする場合は、次を実行します。
+
+```powershell
+.\scripts\upload-contract-template.ps1
+```
+
+ひな型は見開き9枚（左が奇数、右が偶数）のPDFを使用します。生成結果は18ページとなり、14ページの【本物件平面図】欄に選択済み区画図を配置します。
+
 このツールは既存のWebシステムから独立して動作します。契約書PDFは指定したOneDriveフォルダから読み取るだけで、原本を移動・アップロードしません。解析結果と承認履歴は `outputs/contract_plan_importer/review.sqlite3` に保存されます。
 
 ## 使い方
