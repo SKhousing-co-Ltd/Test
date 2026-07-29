@@ -3,7 +3,7 @@ import { PDFDocument, rgb } from 'https://esm.sh/pdf-lib@1.17.1';
 import fontkit from 'https://esm.sh/@pdf-lib/fontkit@1.1.1';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
-const TEMPLATE_PATH = 'templates/ordinary_lease/loan-room-lease-2025-06-02-source-refresh.pdf';
+const TEMPLATE_PATH = 'templates/ordinary_lease/loan-room-lease-2025-06-02-source-refresh-2026-07-29.pdf';
 const FONT_PATH = 'templates/ordinary_lease/yumin.ttf';
 const A4_WIDTH = 595.25;
 const A4_HEIGHT = 841.89;

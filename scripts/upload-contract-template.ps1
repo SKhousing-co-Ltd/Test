@@ -1,11 +1,9 @@
 ﻿param(
-  [string]$TemplatePath = 'C:\Users\本庄幸人\OneDrive - SKハウジング株式会社\ＳＫハウジング株式会社 - General\PM共通\2026 DX\契約書ひな型\貸室賃貸借契約書（2025.6.2改訂）.pdf',
-  [string]$FontPath = 'C:\Windows\Fonts\yumin.ttf'
+  [string]$TemplatePath = 'C:\Users\本庄幸人\OneDrive - SKハウジング株式会社\ＳＫハウジング株式会社 - General\PM共通\2026 DX\契約書ひな型\貸室賃貸借契約書（2025.6.2改訂）.pdf'
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $TemplatePath)) { throw "ひな型PDFが見つかりません: $TemplatePath" }
-if (-not (Test-Path -LiteralPath $FontPath)) { throw "日本語フォントが見つかりません: $FontPath" }
 
 $settings = @{}
 Get-Content .env.local | ForEach-Object {
@@ -14,14 +12,10 @@ Get-Content .env.local | ForEach-Object {
 if (-not $settings['SUPABASE_ACCESS_TOKEN']) { throw '.env.local に SUPABASE_ACCESS_TOKEN を設定してください。' }
 $env:SUPABASE_ACCESS_TOKEN = $settings['SUPABASE_ACCESS_TOKEN']
 
-$templateTemp = Join-Path $PWD 'tmp-contract-template.pdf'
-$fontTemp = Join-Path $PWD 'tmp-contract-font.ttf'
+$templateTemp = 'tmp-contract-template.pdf'
 try {
   Copy-Item -LiteralPath $TemplatePath -Destination $templateTemp -Force
-  Copy-Item -LiteralPath $FontPath -Destination $fontTemp -Force
-  npx.cmd supabase@latest --experimental storage cp $templateTemp 'ss:///contract-documents/templates/ordinary_lease/loan-room-lease-2025-06-02.pdf' --linked --content-type application/pdf
-  npx.cmd supabase@latest --experimental storage cp $fontTemp 'ss:///contract-documents/templates/ordinary_lease/yumin.ttf' --linked --content-type font/ttf
+  npx.cmd supabase@latest --experimental storage cp $templateTemp 'ss:///contract-documents/templates/ordinary_lease/loan-room-lease-2025-06-02-source-refresh-2026-07-29.pdf' --linked --content-type application/pdf
 } finally {
   if (Test-Path -LiteralPath $templateTemp) { Remove-Item -LiteralPath $templateTemp -Force }
-  if (Test-Path -LiteralPath $fontTemp) { Remove-Item -LiteralPath $fontTemp -Force }
 }
