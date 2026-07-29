@@ -1,5 +1,30 @@
 # Vite + React + TypeScript
 
+## 契約書ひな型を更新して本番へ反映する
+
+契約書ひな型は GitHub Pages ではなく Supabase Storage に保存され、PDF は `generate-contract-pdf` Edge Function が生成します。GitHub Pages・Edge Function・Storage は別々に更新します。
+
+1. 新しいPDFを所定のOneDriveフォルダに置き、次を実行します。スクリプトは更新日付きの新しい版を `contract-documents/templates/ordinary_lease/` に追加します。過去版は削除しません。
+
+   ```powershell
+   .\scripts\upload-contract-template.ps1
+   ```
+
+2. PDF生成処理をデプロイします。
+
+   ```powershell
+   $settings = @{}
+   Get-Content .env.local | ForEach-Object {
+     if ($_ -match '^\s*([^#=]+?)\s*=\s*(.*)\s*$') { $settings[$Matches[1].Trim()] = $Matches[2].Trim().Trim('"') }
+   }
+   $env:SUPABASE_ACCESS_TOKEN = $settings['SUPABASE_ACCESS_TOKEN']
+   npx supabase@latest functions deploy generate-contract-pdf --project-ref $settings['SUPABASE_PROJECT_ID']
+   ```
+
+3. 画面側の変更を GitHub Pages に反映する場合は、`main` にマージして push します。`.github/workflows/deploy.yml` は `main` への push のみで Pages を更新します。
+
+4. GitHub Pages で契約書作成画面を開き、プレビューを更新して新ひな型が表示されることを確認します。
+
 ## Lease-management initial import
 
 Apply `supabase/migrations/20260716000000_create_lease_management.sql` to add property, wing, unit, tenant, and contract-history management.
