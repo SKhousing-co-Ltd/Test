@@ -13,6 +13,7 @@ outputs/
 jpn.traineddata
 scripts/__pycache__/
 tools/__pycache__/
+supabase/.temp/
 .DS_Store
 
 tsconfig.tsbuildinfo
