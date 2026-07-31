@@ -226,11 +226,11 @@ def persist(records: list[RentRollRecord], issues: list[ImportIssue], source_fil
     persisted = 0
     runtime_issues = list(issues)
     for record in records:
-        property_row = client.one("property_master", {"select": "property_id", "property_name": f"eq.{record.property_name}"})
+        property_row = client.one("asset_master", {"select": "asset_id", "asset_name": f"eq.{record.property_name}"})
         if not property_row:
-            runtime_issues.append(ImportIssue(record.source_sheet_name, record.source_row_number, "property_not_matched", "property_master に一致する物件がありません。", asdict(record)))
+            runtime_issues.append(ImportIssue(record.source_sheet_name, record.source_row_number, "property_not_matched", "asset_master に一致する物件がありません。", asdict(record)))
             continue
-        property_id = property_row["property_id"]
+        property_id = property_row["asset_id"]
         unit_query = {"select": "unit_id", "property_id": f"eq.{property_id}", "unit_code": f"eq.{record.unit_code}"}
         unit_payload: dict[str, Any] = {"property_id": property_id, "unit_code": record.unit_code, "floor_label": record.floor_label, "unit_type": record.unit_type, "rentable_area_sqm": record.area_sqm}
         if record.wing_code:
