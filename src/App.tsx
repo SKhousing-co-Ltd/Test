@@ -164,7 +164,7 @@ function App() {
             <Route path="/appsuite-sync" element={<AppsuiteSyncPage isAdmin={profile?.role === 'admin'} />} />
             <Route path="/leasing-map" element={<LeasingMapPage />} />
             <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={false} loadError={contractLoadError} />} />
-            <Route path="/contract-documents" element={<Navigate to="/contracts/demo-ordinary-lease/document" replace />} />
+            <Route path="/contract-documents" element={<Navigate to="/contracts" replace />} />
             <Route path="/contracts/:contractId/document" element={<ContractDocumentPage />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
           </Route>
