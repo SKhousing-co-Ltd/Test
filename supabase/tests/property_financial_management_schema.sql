@@ -6,10 +6,10 @@ declare
   recurring_id uuid;
   entry_id uuid;
 begin
-  insert into public.property_master (property_name)
-  values ('収支管理テスト物件')
-  on conflict (property_name) do update set updated_at = now()
-  returning property_id into test_property_id;
+  insert into public.asset_master (asset_code, asset_name)
+  values (990002, '収支管理テスト物件')
+  on conflict (asset_code) do update set asset_name = excluded.asset_name, updated_at = now()
+  returning asset_id into test_property_id;
 
   insert into public.property_recurring_financial_item (
     property_id, account_id, item_name, monthly_amount, effective_from_month, effective_to_month

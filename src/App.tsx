@@ -123,7 +123,7 @@ function App() {
       setContractLoadError('');
       const { data, error } = await client
         .from('lease_contract')
-        .select('lease_contract_id, contract_status, contract_type, contract_start_date, contract_end_date, updated_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(unit:unit_master(property:property_master(property_name)))')
+        .select('lease_contract_id, contract_status, contract_type, contract_start_date, contract_end_date, updated_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(unit:unit_master(property:asset_master(property_name:asset_name)))')
         .order('updated_at', { ascending: false });
 
       if (error) {

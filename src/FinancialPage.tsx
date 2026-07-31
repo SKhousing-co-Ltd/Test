@@ -26,7 +26,7 @@ export function FinancialPage() {
   const loadMasters = async () => {
     if (!supabase) return;
     const [propertyResult, accountResult] = await Promise.all([
-      supabase.from('property_master').select('property_id, property_name, short_name').order('property_name'),
+      supabase.from('asset_master').select('property_id:asset_id, property_name:asset_name, short_name').order('asset_name'),
       supabase.from('income_expense_account_master').select('account_id, account_name, income_expense_type').order('account_id'),
     ]);
     if (propertyResult.error || accountResult.error) { setNotice(propertyResult.error?.message ?? accountResult.error?.message ?? 'マスタの取得に失敗しました。'); return; }
