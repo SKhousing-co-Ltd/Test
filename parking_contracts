@@ -1,0 +1,35 @@
+-- 駐車場契約テーブルの作成
+CREATE TABLE IF NOT EXISTS parking_contracts (
+    parking_contract_id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- 駐車場契約ID (uid)
+    parking_space_id UUID NOT NULL,                                 -- 駐車場区画ID (FK)
+    tenant_client_id UUID NOT NULL,                                 -- 借主取引先ID (FK)
+    rent_amount NUMERIC(10, 0),                                     -- 賃料 (金額)
+    deposit_amount NUMERIC(10, 0),                                  -- 敷金 (金額)
+    contract_start_date DATE,                                       -- 契約開始日
+    car_maker TEXT,                                                 -- メーカー
+    car_model TEXT,                                                 -- 車種
+    license_plate TEXT,                                             -- ナンバー
+    agent_client_id UUID,                                           -- 仲介取引先ID (FK)
+    agency_representative_id UUID,                                  -- 仲介業者担当者ID (FK)
+    
+    -- 外部キー制約 (関連テーブルとの紐づけ)
+    CONSTRAINT fk_parking_spaces
+        FOREIGN KEY (parking_space_id) 
+        REFERENCES parking_spaces_master (parking_space_id)
+        ON DELETE RESTRICT,
+        
+    CONSTRAINT fk_tenant_clients
+        FOREIGN KEY (tenant_client_id) 
+        REFERENCES clients (client_id)
+        ON DELETE RESTRICT,
+        
+    CONSTRAINT fk_agent_clients
+        FOREIGN KEY (agent_client_id) 
+        REFERENCES clients (client_id)
+        ON DELETE SET NULL,
+        
+    CONSTRAINT fk_agency_representatives
+        FOREIGN KEY (agency_representative_id) 
+        REFERENCES agency_representatives (agency_representative_id)
+        ON DELETE SET NULL
+);

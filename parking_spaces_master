@@ -1,0 +1,15 @@
+-- 駐車場区画マスタテーブルの作成
+CREATE TABLE IF NOT EXISTS parking_spaces_master (
+    parking_space_id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- 駐車場区画ID (uid)
+    parking_id UUID NOT NULL,                                     -- 駐車場ID (FK)
+    length NUMERIC(6, 2),                                         -- 全長 (mmやmなどの数値用)
+    width NUMERIC(6, 2),                                          -- 全幅
+    height NUMERIC(6, 2),                                         -- 全高
+    weight NUMERIC(7, 2),                                         -- 重量 (kgなど)
+    
+    -- 駐車場マスタ (parkings_master) との紐づけ（外部キー制約）
+    CONSTRAINT fk_parkings
+        FOREIGN KEY (parking_id) 
+        REFERENCES parkings_master (parking_id)
+        ON DELETE CASCADE
+);

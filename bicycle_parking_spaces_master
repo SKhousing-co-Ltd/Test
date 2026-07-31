@@ -1,0 +1,12 @@
+-- 駐輪場区画マスタテーブルの作成
+CREATE TABLE IF NOT EXISTS bicycle_parking_spaces_master (
+    bicycle_parking_space_id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- 駐輪場区画ID (uid)
+    bicycle_parking_id UUID NOT NULL,                                     -- 駐輪場ID (FK)
+    space_number TEXT NOT NULL,                                           -- 区画番号 (例: "1", "A-101" など)
+    
+    -- 駐輪場マスタ (bicycle_parkings_master) との紐づけ（外部キー制約）
+    CONSTRAINT fk_bicycle_parkings
+        FOREIGN KEY (bicycle_parking_id) 
+        REFERENCES bicycle_parkings_master (bicycle_parking_id)
+        ON DELETE CASCADE
+);
