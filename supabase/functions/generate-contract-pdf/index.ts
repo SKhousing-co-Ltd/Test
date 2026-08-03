@@ -46,7 +46,8 @@ async function uploadAdobeAsset(bytes: Uint8Array, token: string, clientId: stri
 async function importFormData(template: Uint8Array, fields: Record<string, string>) {
   const { token, clientId } = await adobeToken();
   const assetID = await uploadAdobeAsset(template, token, clientId);
-  const result = await fetch('https://pdf-services.adobe.io/operation/setformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID, jsonFormFieldsData: fields }) });
+  // The REST endpoint expects the JSON form data as a serialized JSON value.
+  const result = await fetch('https://pdf-services.adobe.io/operation/setformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID, jsonFormFieldsData: JSON.stringify(fields) }) });
   const startText = await result.text(); let started: AdobeJob = {};
   if (startText) { try { started = JSON.parse(startText) as AdobeJob; } catch { started = { error: { message: startText } }; } }
   if (!result.ok) throw new Error(`Adobe form import failed: ${adobeJobFailureDetail(started)}`);
