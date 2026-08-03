@@ -1,4 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Pin the module because esm.sh's moving @2 tag can temporarily resolve to an
+// unavailable package build while Supabase bundles an Edge Function.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8';
 import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
@@ -6,7 +8,14 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 const value = (input: unknown) => String(input ?? '').trim();
 type Field = { key: string; label: string; required?: boolean; acroformFieldName?: string };
 type BlockDefinitions = { terms?: { acroformFieldName?: string }; restoration?: { acroformFieldName?: string }; plan?: { page?: number; x?: number; y?: number; maxWidth?: number; maxHeight?: number } };
-type AdobeJob = { status?: string; assetID?: string; asset?: { assetID?: string }; output?: { assetID?: string }; result?: { assetID?: string }; error?: { message?: string } };
+type AdobeJob = { status?: string; assetID?: string; asset?: { assetID?: string }; output?: { assetID?: string }; result?: { assetID?: string }; error?: unknown; errors?: unknown };
+
+function adobeJobFailureDetail(job: AdobeJob) {
+  // Adobe's asynchronous endpoint does not consistently use error.message.
+  // Keep the diagnostic limited to status/error fields so no contract payload
+  // or temporary asset identifier is exposed in the client response or logs.
+  return JSON.stringify({ status: job.status ?? null, error: job.error ?? null, errors: job.errors ?? null });
+}
 
 async function adobeToken() {
   const clientId = Deno.env.get('ADOBE_PDF_SERVICES_CLIENT_ID');
@@ -40,7 +49,7 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
   const result = await fetch('https://pdf-services.adobe.io/operation/setformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID, jsonFormFieldsData: fields }) });
   const startText = await result.text(); let started: AdobeJob = {};
   if (startText) { try { started = JSON.parse(startText) as AdobeJob; } catch { started = { error: { message: startText } }; } }
-  if (!result.ok) throw new Error(`Adobe form import failed: ${started.error?.message ?? result.status}`);
+  if (!result.ok) throw new Error(`Adobe form import failed: ${adobeJobFailureDetail(started)}`);
   const location = result.headers.get('location');
   if (!location) throw new Error('Adobe form import did not return a job location.');
   let job = started;
@@ -52,7 +61,7 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
       if (!download.ok) throw new Error(`Adobe output download failed: ${download.status}`);
       return new Uint8Array(await download.arrayBuffer());
     }
-    if (job.status === 'failed') throw new Error(`Adobe form import job failed: ${job.error?.message ?? 'unknown error'}`);
+    if (job.status === 'failed') throw new Error(`Adobe form import job failed: ${adobeJobFailureDetail(job)}`);
     await new Promise((resolve) => setTimeout(resolve, 1000));
     job = await adobeJson(location, token, clientId) as AdobeJob;
   }
