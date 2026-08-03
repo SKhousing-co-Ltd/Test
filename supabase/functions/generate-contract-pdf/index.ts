@@ -68,7 +68,7 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
   throw new Error('Adobe form import timed out.');
 }
 
-async function diagnoseFormData(template: Uint8Array, fields: Record<string, string>, blocks: BlockDefinitions) {
+async function diagnoseFormData(template: Uint8Array, fields: Record<string, string>, blocks: BlockDefinitions, smokeTemplate?: Uint8Array) {
   const longFieldNames = [blocks.terms?.acroformFieldName, blocks.restoration?.acroformFieldName].filter((name): name is string => Boolean(name));
   const headings = Object.fromEntries(Object.entries(fields).filter(([name]) => !longFieldNames.includes(name)));
   const groups = [
@@ -85,11 +85,8 @@ async function diagnoseFormData(template: Uint8Array, fields: Record<string, str
     }
   }
   try {
-    const smokePdf = await PDFDocument.create();
-    const page = smokePdf.addPage([300, 200]);
-    const field = smokePdf.getForm().createTextField('smoke');
-    field.addToPage(page, { x: 24, y: 120, width: 240, height: 28 });
-    await importFormData(await smokePdf.save(), { smoke: 'PDF Services smoke test' });
+    if (!smokeTemplate) throw new Error('Standard AcroForm smoke template is not available.');
+    await importFormData(smokeTemplate, { smoke: 'PDF Services smoke test' });
     results.push({ group: 'standard AcroForm smoke test', ok: true });
   } catch (error) {
     results.push({ group: 'standard AcroForm smoke test', ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -142,7 +139,9 @@ Deno.serve(async (request) => {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (!detail.includes('Adobe form import')) throw error;
-      const diagnostics = await diagnoseFormData(templateBytes, formFields, blocks);
+      const { data: smokeTemplate } = await admin.storage.from('contract-documents').download('templates/_diagnostics/adobe-form-smoke.pdf');
+      const smokeBytes = smokeTemplate ? new Uint8Array(await smokeTemplate.arrayBuffer()) : undefined;
+      const diagnostics = await diagnoseFormData(templateBytes, formFields, blocks, smokeBytes);
       throw new Error(`${detail}; field diagnostics=${JSON.stringify(diagnostics)}`);
     }
 
