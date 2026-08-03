@@ -1,8 +1,8 @@
 begin;
 
-insert into public.property_master (property_name)
-values ('契約管理テスト物件')
-on conflict (property_name) do nothing;
+insert into public.asset_master (asset_code, asset_name)
+values (990001, '契約管理テスト物件')
+on conflict (asset_code) do update set asset_name = excluded.asset_name;
 
 do $$
 declare
@@ -13,7 +13,7 @@ declare
   first_contract uuid;
   second_contract uuid;
 begin
-  select property_id into property_uuid from public.property_master where property_name = '契約管理テスト物件';
+  select asset_id into property_uuid from public.asset_master where asset_code = 990001;
 
   insert into public.unit_master (property_id, unit_code, floor_label, unit_type, rentable_area_sqm)
   values (property_uuid, '101', '1F', 'office', 100.00)

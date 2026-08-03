@@ -12,6 +12,8 @@ rent_roll_import_report.json
 outputs/
 jpn.traineddata
 scripts/__pycache__/
+tools/__pycache__/
+supabase/.temp/
 .DS_Store
 
 tsconfig.tsbuildinfo

@@ -329,11 +329,11 @@ class App(SimpleHTTPRequestHandler):
             env = app_env(); url = env.get("VITE_SUPABASE_URL"); key = env.get("VITE_SUPABASE_ANON_KEY")
             try:
                 token = SESSION["access_token"]
-                property_query = urlencode({"select": "property_id,property_name", "property_name": f"eq.{property_name}"})
-                properties = supabase_request(f"{url.rstrip('/')}/rest/v1/property_master?{property_query}", token, "GET", api_key=key)
+                property_query = urlencode({"select": "asset_id,asset_name", "asset_name": f"eq.{property_name}"})
+                properties = supabase_request(f"{url.rstrip('/')}/rest/v1/asset_master?{property_query}", token, "GET", api_key=key)
                 if len(properties) != 1:
                     return json_response(self, {"error": "物件が見つかりません"}, 404)
-                property_id = properties[0]["property_id"]
+                property_id = properties[0]["asset_id"]
                 plan_query = urlencode({"select": "floor_plan_id,property_id,floor_label", "property_id": f"eq.{property_id}", "floor_label": f"eq.{floor_label}"})
                 plans = supabase_request(f"{url.rstrip('/')}/rest/v1/floor_plan?{plan_query}", token, "GET", api_key=key)
                 if len(plans) != 1:
@@ -437,10 +437,10 @@ def register_approved(url: str, token: str, apply: bool) -> dict[str, Any]:
     db = connect(); registered = []
     try:
         for item in preview:
-            property_query = urlencode({"select": "property_id", "property_name": f"eq.{item['property_name']}"})
-            properties = supabase_request(f"{url.rstrip('/')}/rest/v1/property_master?{property_query}", token, "GET")
+            property_query = urlencode({"select": "asset_id", "asset_name": f"eq.{item['property_name']}"})
+            properties = supabase_request(f"{url.rstrip('/')}/rest/v1/asset_master?{property_query}", token, "GET")
             if len(properties) != 1: raise ValueError(f"物件マスタを一意に特定できません: {item['property_name']}")
-            property_id = properties[0]["property_id"]
+            property_id = properties[0]["asset_id"]
             plan = next(p for p in plans if p["id"] == item["candidate_id"])
             object_root = f"initial-import/{plan['id']}"
             for key, local in (("original.png", plan["source_preview_path"]), ("preview.png", plan["white_plan_path"])):
