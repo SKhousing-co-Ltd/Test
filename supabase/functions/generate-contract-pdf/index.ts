@@ -68,14 +68,40 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
   throw new Error('Adobe form import timed out.');
 }
 
+async function exportFormData(template: Uint8Array) {
+  const { token, clientId } = await adobeToken();
+  const assetID = await uploadAdobeAsset(template, token, clientId);
+  const result = await fetch('https://pdf-services.adobe.io/operation/getformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID }) });
+  const startText = await result.text(); let job: AdobeJob = {};
+  if (startText) { try { job = JSON.parse(startText) as AdobeJob; } catch { job = { error: { message: startText } }; } }
+  if (!result.ok) throw new Error(`Adobe form export failed: ${adobeJobFailureDetail(job)}`);
+  const location = result.headers.get('location');
+  if (!location) throw new Error('Adobe form export did not return a job location.');
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    if (job.assetID ?? job.asset?.assetID ?? job.output?.assetID ?? job.result?.assetID) return;
+    if (job.status === 'failed') throw new Error(`Adobe form export job failed: ${adobeJobFailureDetail(job)}`);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    job = await adobeJson(location, token, clientId) as AdobeJob;
+  }
+  throw new Error('Adobe form export timed out.');
+}
+
 async function diagnoseFormData(template: Uint8Array, fields: Record<string, string>, blocks: BlockDefinitions, smokeTemplate?: Uint8Array) {
   const longFieldNames = [blocks.terms?.acroformFieldName, blocks.restoration?.acroformFieldName].filter((name): name is string => Boolean(name));
   const headings = Object.fromEntries(Object.entries(fields).filter(([name]) => !longFieldNames.includes(name)));
   const groups = [
+    ['empty form data', {}],
+    ['tenantName ASCII smoke', { tenantName: 'Adobe smoke' }],
     ['headings', headings],
     ...longFieldNames.map((name) => [`${name} (${[...fields[name] ?? ''].length} chars)`, { [name]: fields[name] ?? '' }] as const),
   ] as const;
   const results: Array<{ group: string; ok: boolean; error?: string }> = [];
+  try {
+    await exportFormData(template);
+    results.push({ group: 'export form data', ok: true });
+  } catch (error) {
+    results.push({ group: 'export form data', ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
   for (const [group, values] of groups) {
     try {
       await importFormData(template, values);
