@@ -46,8 +46,7 @@ async function uploadAdobeAsset(bytes: Uint8Array, token: string, clientId: stri
 async function importFormData(template: Uint8Array, fields: Record<string, string>) {
   const { token, clientId } = await adobeToken();
   const assetID = await uploadAdobeAsset(template, token, clientId);
-  // The REST endpoint expects the JSON form data as a serialized JSON value.
-  const result = await fetch('https://pdf-services.adobe.io/operation/setformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID, jsonFormFieldsData: JSON.stringify(fields) }) });
+  const result = await fetch('https://pdf-services.adobe.io/operation/setformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID, jsonFormFieldsData: fields }) });
   const startText = await result.text(); let started: AdobeJob = {};
   if (startText) { try { started = JSON.parse(startText) as AdobeJob; } catch { started = { error: { message: startText } }; } }
   if (!result.ok) throw new Error(`Adobe form import failed: ${adobeJobFailureDetail(started)}`);
@@ -67,6 +66,25 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
     job = await adobeJson(location, token, clientId) as AdobeJob;
   }
   throw new Error('Adobe form import timed out.');
+}
+
+async function diagnoseFormData(template: Uint8Array, fields: Record<string, string>, blocks: BlockDefinitions) {
+  const longFieldNames = [blocks.terms?.acroformFieldName, blocks.restoration?.acroformFieldName].filter((name): name is string => Boolean(name));
+  const headings = Object.fromEntries(Object.entries(fields).filter(([name]) => !longFieldNames.includes(name)));
+  const groups = [
+    ['headings', headings],
+    ...longFieldNames.map((name) => [`${name} (${[...fields[name] ?? ''].length} chars)`, { [name]: fields[name] ?? '' }] as const),
+  ] as const;
+  const results: Array<{ group: string; ok: boolean; error?: string }> = [];
+  for (const [group, values] of groups) {
+    try {
+      await importFormData(template, values);
+      results.push({ group, ok: true });
+    } catch (error) {
+      results.push({ group, ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
 }
 
 Deno.serve(async (request) => {
@@ -107,7 +125,16 @@ Deno.serve(async (request) => {
     const { data: template, error: templateError } = await admin.storage.from('contract-documents').download(revision.template_file_path);
     if (templateError || !template) throw new Error(`Template download failed: ${templateError?.message ?? 'not found'}`);
     stage = 'fill Adobe AcroForm';
-    let output = await importFormData(new Uint8Array(await template.arrayBuffer()), formFields);
+    const templateBytes = new Uint8Array(await template.arrayBuffer());
+    let output: Uint8Array;
+    try {
+      output = await importFormData(templateBytes, formFields);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!detail.includes('Adobe form import')) throw error;
+      const diagnostics = await diagnoseFormData(templateBytes, formFields, blocks);
+      throw new Error(`${detail}; field diagnostics=${JSON.stringify(diagnostics)}`);
+    }
 
     stage = 'attach plan snapshot';
     const { data: plans } = await userClient.from('lease_contract_document_plan').select('snapshot_file_path').eq('lease_contract_document_id', document.lease_contract_document_id).order('created_at').limit(1);
