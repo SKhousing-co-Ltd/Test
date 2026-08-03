@@ -2,6 +2,7 @@
 // unavailable package build while Supabase bundles an Edge Function.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8';
 import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1';
+import fontkit from 'https://esm.sh/@pdf-lib/fontkit@1.1.1';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -68,56 +69,17 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
   throw new Error('Adobe form import timed out.');
 }
 
-async function exportFormData(template: Uint8Array) {
-  const { token, clientId } = await adobeToken();
-  const assetID = await uploadAdobeAsset(template, token, clientId);
-  const result = await fetch('https://pdf-services.adobe.io/operation/getformdata', { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID }) });
-  const startText = await result.text(); let job: AdobeJob = {};
-  if (startText) { try { job = JSON.parse(startText) as AdobeJob; } catch { job = { error: { message: startText } }; } }
-  if (!result.ok) throw new Error(`Adobe form export failed: ${adobeJobFailureDetail(job)}`);
-  const location = result.headers.get('location');
-  if (!location) throw new Error('Adobe form export did not return a job location.');
-  for (let attempt = 0; attempt < 45; attempt += 1) {
-    if (job.assetID ?? job.asset?.assetID ?? job.output?.assetID ?? job.result?.assetID) return;
-    if (job.status === 'failed') throw new Error(`Adobe form export job failed: ${adobeJobFailureDetail(job)}`);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    job = await adobeJson(location, token, clientId) as AdobeJob;
+async function renderFormValuesWithEmbeddedFont(input: Uint8Array, fields: Record<string, string>, fontBytes: Uint8Array) {
+  const pdf = await PDFDocument.load(input);
+  pdf.registerFontkit(fontkit);
+  const font = await pdf.embedFont(fontBytes, { subset: false });
+  const form = pdf.getForm();
+  for (const [name, fieldValue] of Object.entries(fields)) {
+    const field = form.getTextField(name);
+    field.setText(fieldValue);
+    field.updateAppearances(font);
   }
-  throw new Error('Adobe form export timed out.');
-}
-
-async function diagnoseFormData(template: Uint8Array, fields: Record<string, string>, blocks: BlockDefinitions, smokeTemplate?: Uint8Array) {
-  const longFieldNames = [blocks.terms?.acroformFieldName, blocks.restoration?.acroformFieldName].filter((name): name is string => Boolean(name));
-  const headings = Object.fromEntries(Object.entries(fields).filter(([name]) => !longFieldNames.includes(name)));
-  const groups = [
-    ['empty form data', {}],
-    ['tenantName ASCII smoke', { tenantName: 'Adobe smoke' }],
-    ['headings', headings],
-    ...longFieldNames.map((name) => [`${name} (${[...fields[name] ?? ''].length} chars)`, { [name]: fields[name] ?? '' }] as const),
-  ] as const;
-  const results: Array<{ group: string; ok: boolean; error?: string }> = [];
-  try {
-    await exportFormData(template);
-    results.push({ group: 'export form data', ok: true });
-  } catch (error) {
-    results.push({ group: 'export form data', ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-  for (const [group, values] of groups) {
-    try {
-      await importFormData(template, values);
-      results.push({ group, ok: true });
-    } catch (error) {
-      results.push({ group, ok: false, error: error instanceof Error ? error.message : String(error) });
-    }
-  }
-  try {
-    if (!smokeTemplate) throw new Error('Standard AcroForm smoke template is not available.');
-    await importFormData(smokeTemplate, { smoke: 'PDF Services smoke test' });
-    results.push({ group: 'standard AcroForm smoke test', ok: true });
-  } catch (error) {
-    results.push({ group: 'standard AcroForm smoke test', ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-  return results;
+  return new Uint8Array(await pdf.save());
 }
 
 Deno.serve(async (request) => {
@@ -129,16 +91,17 @@ Deno.serve(async (request) => {
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const auth = request.headers.get('Authorization') ?? '';
+    const { leaseContractId } = await request.json();
     const userClient = createClient(url, anonKey, { global: { headers: { Authorization: auth } } });
     const { data: { user } } = await userClient.auth.getUser();
     if (!user) return response({ error: 'Unauthorized' }, 401);
-    const { leaseContractId } = await request.json();
+    const admin = createClient(url, serviceKey);
     if (!value(leaseContractId)) return response({ error: 'leaseContractId is required.' }, 400);
 
     stage = 'load saved contract document';
     const { data: document, error: documentError } = await userClient.from('lease_contract_document').select('lease_contract_document_id, document_type, contract_document_template_revision_id, field_values, terms_text, restoration_criteria_text').eq('lease_contract_id', leaseContractId).single();
     if (documentError || !document?.contract_document_template_revision_id) return response({ error: 'No saved contract document or template revision was found.' }, 400);
-    const { data: revision, error: revisionError } = await userClient.from('contract_document_template_revision').select('template_file_path, field_definitions, block_definitions').eq('contract_document_template_revision_id', document.contract_document_template_revision_id).single();
+    const { data: revision, error: revisionError } = await userClient.from('contract_document_template_revision').select('template_file_path, font_file_path, field_definitions, block_definitions').eq('contract_document_template_revision_id', document.contract_document_template_revision_id).single();
     if (revisionError || !revision?.template_file_path) return response({ error: 'No AcroForm PDF template was found.' }, 400);
 
     stage = 'validate AcroForm values';
@@ -154,22 +117,21 @@ Deno.serve(async (request) => {
     if (blocks.restoration?.acroformFieldName) formFields[blocks.restoration.acroformFieldName] = document.restoration_criteria_text ?? '';
 
     stage = 'download template from storage';
-    const admin = createClient(url, serviceKey);
     const { data: template, error: templateError } = await admin.storage.from('contract-documents').download(revision.template_file_path);
     if (templateError || !template) throw new Error(`Template download failed: ${templateError?.message ?? 'not found'}`);
     stage = 'fill Adobe AcroForm';
     const templateBytes = new Uint8Array(await template.arrayBuffer());
     let output: Uint8Array;
-    try {
-      output = await importFormData(templateBytes, formFields);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      if (!detail.includes('Adobe form import')) throw error;
-      const { data: smokeTemplate } = await admin.storage.from('contract-documents').download('templates/_diagnostics/adobe-form-smoke.pdf');
-      const smokeBytes = smokeTemplate ? new Uint8Array(await smokeTemplate.arrayBuffer()) : undefined;
-      const diagnostics = await diagnoseFormData(templateBytes, formFields, blocks, smokeBytes);
-      throw new Error(`${detail}; field diagnostics=${JSON.stringify(diagnostics)}`);
-    }
+    // Adobe's hosted renderer cannot resolve Japanese glyphs in this legacy
+    // template.  It creates the AcroForm PDF first; values are rendered below
+    // with the embedded Japanese font kept in private Storage.
+    output = await importFormData(templateBytes, {});
+
+    stage = 'render contract values with embedded Japanese font';
+    const fontPath = revision.font_file_path || 'templates/ordinary_lease/yumin.ttf';
+    const { data: fontFile, error: fontError } = await admin.storage.from('contract-documents').download(fontPath);
+    if (fontError || !fontFile) throw new Error(`Japanese font download failed: ${fontError?.message ?? 'not found'}`);
+    output = await renderFormValuesWithEmbeddedFont(output, formFields, new Uint8Array(await fontFile.arrayBuffer()));
 
     stage = 'attach plan snapshot';
     const { data: plans } = await userClient.from('lease_contract_document_plan').select('snapshot_file_path').eq('lease_contract_document_id', document.lease_contract_document_id).order('created_at').limit(1);
