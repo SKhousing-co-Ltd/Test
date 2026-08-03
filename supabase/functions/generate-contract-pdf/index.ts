@@ -10,14 +10,23 @@ type BlockDefinitions = { terms?: { acroformFieldName?: string }; restoration?: 
 async function adobeToken() {
   const clientId = Deno.env.get('ADOBE_PDF_SERVICES_CLIENT_ID'); const clientSecret = Deno.env.get('ADOBE_PDF_SERVICES_CLIENT_SECRET');
   if (!clientId || !clientSecret) throw new Error('Adobe PDF Servicesの認証情報が設定されていません。');
-  const form = new URLSearchParams({ client_id: clientId, client_secret: clientSecret, grant_type: 'client_credentials', scope: Deno.env.get('ADOBE_PDF_SERVICES_SCOPE') ?? 'openid,AdobeID,read_organizations' });
-  const result = await fetch('https://ims-na1.adobelogin.com/ims/token/v3', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
+  const form = new URLSearchParams({ client_id: clientId, client_secret: clientSecret });
+  const result = await fetch('https://pdf-services.adobe.io/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
   const payload = await result.json(); if (!result.ok || !payload.access_token) throw new Error(`Adobe OAuthに失敗しました: ${payload.error_description ?? payload.error ?? result.status}`);
   return { token: payload.access_token as string, clientId };
 }
 async function adobeJson(url: string, token: string, clientId: string, init: RequestInit = {}) {
   const result = await fetch(url, { ...init, headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, ...(init.headers ?? {}) } });
   const payload = await result.json(); if (!result.ok) throw new Error(`Adobe PDF Servicesの要求に失敗しました: ${payload?.error?.message ?? payload?.message ?? result.status}`); return payload;
+}
+async function startAdobeOperation(url: string, token: string, clientId: string, body: unknown) {
+  const result = await fetch(url, { method: 'POST', headers: { 'x-api-key': clientId, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const text = await result.text(); let payload: Record<string, unknown> = {};
+  if (text) { try { payload = JSON.parse(text) as Record<string, unknown>; } catch { payload = { message: text }; } }
+  if (!result.ok) throw new Error(`Adobe PDF Services request failed: ${String(payload.error ?? payload.message ?? result.status)}`);
+  const location = result.headers.get('location') ?? (payload.location as string | undefined) ?? (payload.statusUri as string | undefined);
+  if (!location) throw new Error('Adobe PDF Services did not return a job location.');
+  return { payload, location };
 }
 async function uploadAdobeAsset(bytes: Uint8Array, token: string, clientId: string) {
   const asset = await adobeJson('https://pdf-services.adobe.io/assets', token, clientId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaType: 'application/pdf' }) });
@@ -28,8 +37,8 @@ async function downloadAdobeAsset(assetId: string, token: string, clientId: stri
 }
 async function importFormData(template: Uint8Array, fields: Record<string, string>) {
   const { token, clientId } = await adobeToken(); const assetID = await uploadAdobeAsset(template, token, clientId);
-  const started = await adobeJson('https://pdf-services.adobe.io/operation/setformdata', token, clientId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assetID, jsonFormFieldsData: fields }) });
-  let job = started; const location = started.location ?? started.statusUri; for (let i = 0; location && !job.assetID && i < 30; i += 1) { await new Promise((resolve) => setTimeout(resolve, 1000)); job = await adobeJson(location, token, clientId); if (job.status === 'failed') throw new Error(`Adobe PDF生成に失敗しました: ${job.error?.message ?? ''}`); }
+  const started = await startAdobeOperation('https://pdf-services.adobe.io/operation/setformdata', token, clientId, { assetID, jsonFormFieldsData: fields });
+  let job = started.payload; for (let i = 0; !job.assetID && i < 45; i += 1) { await new Promise((resolve) => setTimeout(resolve, 1000)); job = await adobeJson(started.location, token, clientId); if (job.status === 'failed') throw new Error(`Adobe PDF generation failed: ${job.error?.message ?? ''}`); }
   const outputAssetId = job.assetID ?? job.output?.assetID ?? job.result?.assetID; if (!outputAssetId) throw new Error('Adobe PDF生成の完了結果を取得できませんでした。'); return downloadAdobeAsset(outputAssetId, token, clientId);
 }
 
