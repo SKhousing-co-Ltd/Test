@@ -84,6 +84,16 @@ async function diagnoseFormData(template: Uint8Array, fields: Record<string, str
       results.push({ group, ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
+  try {
+    const smokePdf = await PDFDocument.create();
+    const page = smokePdf.addPage([300, 200]);
+    const field = smokePdf.getForm().createTextField('smoke');
+    field.addToPage(page, { x: 24, y: 120, width: 240, height: 28 });
+    await importFormData(await smokePdf.save(), { smoke: 'PDF Services smoke test' });
+    results.push({ group: 'standard AcroForm smoke test', ok: true });
+  } catch (error) {
+    results.push({ group: 'standard AcroForm smoke test', ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
   return results;
 }
 
