@@ -50,13 +50,13 @@ export function LeasingMapPage() {
 
   const loadPlans = async () => {
     if (!supabase) return;
-    const { data: propertyData, error: propertyError } = await supabase.from('asset_master').select('property_id:asset_id, property_name:asset_name').order('asset_name');
-    if (propertyError) setNotice(`物件を取得できません: ${propertyError.message}`); else setProperties((propertyData ?? []) as Property[]);
-    const { data, error } = await supabase.from('unit_master').select('property_id, floor_label, property:asset_master(property_name:asset_name)').eq('is_active', true).not('floor_label', 'is', null).order('floor_label');
+    const { data: assetData, error: assetError } = await supabase.from('asset_master').select('asset_id, asset_name').order('asset_name');
+    if (assetError) setNotice(`物件を取得できません: ${assetError.message}`); else setProperties((assetData ?? []).map((asset: any) => ({ property_id: asset.asset_id, property_name: asset.asset_name })) as Property[]);
+    const { data, error } = await supabase.from('unit_master').select('property_id, floor_label, asset:asset_master(asset_name)').eq('is_active', true).not('floor_label', 'is', null).order('floor_label');
     if (error) return setNotice(`図面一覧を取得できません: ${error.message}`);
-    const scopes = new Map<string, FloorPlanSummary>(); (data ?? []).forEach((row: any) => { const plan = { floorPlanId: null, propertyId: row.property_id, propertyName: row.property?.property_name ?? '物件', floorLabel: row.floor_label }; scopes.set(scopeKey(plan), plan); });
-    const { data: existing } = await supabase.from('floor_plan').select('floor_plan_id, property_id, floor_label, property:asset_master(property_name:asset_name)');
-    (existing ?? []).forEach((row: any) => { const key = `${row.property_id}|${row.floor_label}`; const plan = scopes.get(key); if (plan) plan.floorPlanId = row.floor_plan_id; else scopes.set(key, { floorPlanId: row.floor_plan_id, propertyId: row.property_id, propertyName: row.property?.property_name ?? '物件', floorLabel: row.floor_label }); });
+    const scopes = new Map<string, FloorPlanSummary>(); (data ?? []).forEach((row: any) => { const plan = { floorPlanId: null, propertyId: row.property_id, propertyName: row.asset?.asset_name ?? '物件', floorLabel: row.floor_label }; scopes.set(scopeKey(plan), plan); });
+    const { data: existing } = await supabase.from('floor_plan').select('floor_plan_id, property_id, floor_label, asset:asset_master(asset_name)');
+    (existing ?? []).forEach((row: any) => { const key = `${row.property_id}|${row.floor_label}`; const plan = scopes.get(key); if (plan) plan.floorPlanId = row.floor_plan_id; else scopes.set(key, { floorPlanId: row.floor_plan_id, propertyId: row.property_id, propertyName: row.asset?.asset_name ?? '物件', floorLabel: row.floor_label }); });
     const next = [...scopes.values()]; setPlans(next); if (!selectedPlanId && next[0]) setSelectedPlanId(scopeKey(next[0]));
   };
   const loadRevisions = async (planId: string) => {

@@ -43,7 +43,7 @@ type LeaseContractRow = {
   contract_end_date: string | null;
   updated_at: string;
   tenant: { tenant_name: string } | null;
-  contract_units: Array<{ unit: { property: { property_name: string } | null } | null }> | null;
+  contract_units: Array<{ unit: { asset: { asset_name: string } | null } | null }> | null;
 };
 
 type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
@@ -123,7 +123,7 @@ function App() {
       setContractLoadError('');
       const { data, error } = await client
         .from('lease_contract')
-        .select('lease_contract_id, contract_status, contract_type, contract_start_date, contract_end_date, updated_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(unit:unit_master(property:asset_master(property_name:asset_name)))')
+        .select('lease_contract_id, contract_status, contract_type, contract_start_date, contract_end_date, updated_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(unit:unit_master(asset:asset_master(asset_name)))')
         .order('updated_at', { ascending: false });
 
       if (error) {
@@ -137,7 +137,7 @@ function App() {
       };
       setContracts(((data ?? []) as unknown as LeaseContractRow[]).map((contract) => ({
         id: contract.lease_contract_id,
-        property: contract.contract_units?.[0]?.unit?.property?.property_name ?? '未設定',
+        property: contract.contract_units?.[0]?.unit?.asset?.asset_name ?? '未設定',
         tenant: contract.tenant?.tenant_name ?? '未設定',
         type: contract.contract_type === 'renewal' ? initialContracts[0].type : initialContracts[1].type,
         startDate: contract.contract_start_date ?? '', endDate: contract.contract_end_date ?? '', assignee: '未設定',
@@ -164,7 +164,7 @@ function App() {
             <Route path="/appsuite-sync" element={<AppsuiteSyncPage isAdmin={profile?.role === 'admin'} />} />
             <Route path="/leasing-map" element={<LeasingMapPage />} />
             <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={false} loadError={contractLoadError} />} />
-            <Route path="/contract-documents" element={<Navigate to="/contracts/demo-ordinary-lease/document" replace />} />
+            <Route path="/contract-documents" element={<Navigate to="/contracts" replace />} />
             <Route path="/contracts/:contractId/document" element={<ContractDocumentPage />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
           </Route>
