@@ -1,14 +1,25 @@
 // Pin the module because esm.sh's moving @2 tag can temporarily resolve to an
 // unavailable package build while Supabase bundles an Edge Function.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8';
-import { PDFDocument } from 'https://esm.sh/pdf-lib@1.17.1';
+import { PDFDocument, rgb } from 'https://esm.sh/pdf-lib@1.17.1';
 import fontkit from 'https://esm.sh/@pdf-lib/fontkit@1.1.1';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 const value = (input: unknown) => String(input ?? '').trim();
 type Field = { key: string; label: string; required?: boolean; acroformFieldName?: string };
-type BlockDefinitions = { terms?: { acroformFieldName?: string }; restoration?: { acroformFieldName?: string }; plan?: { page?: number; x?: number; y?: number; maxWidth?: number; maxHeight?: number } };
+type BlockDefinitions = {
+  // `renderInPdf` is deliberately opt-in.  The currently registered legacy
+  // templates already have their terms printed on the page.  Rendering the
+  // same shared AcroForm value again makes every widget repeat the full text
+  // and corrupts the visible PDF.  New templates that reserve blank areas for
+  // generated text can explicitly opt in after their page layout is verified.
+  terms?: { acroformFieldName?: string; renderInPdf?: boolean };
+  restoration?: { acroformFieldName?: string; renderInPdf?: boolean };
+  plan?: { page?: number; x?: number; y?: number; maxWidth?: number; maxHeight?: number };
+};
+type TextBlock = { fieldName: string; text: string };
+type TextBox = { pageIndex: number; x: number; y: number; width: number; height: number };
 type AdobeJob = { status?: string; assetID?: string; asset?: { assetID?: string }; output?: { assetID?: string }; result?: { assetID?: string }; error?: unknown; errors?: unknown };
 
 function adobeJobFailureDetail(job: AdobeJob) {
@@ -69,16 +80,101 @@ async function importFormData(template: Uint8Array, fields: Record<string, strin
   throw new Error('Adobe form import timed out.');
 }
 
-async function renderFormValuesWithEmbeddedFont(input: Uint8Array, fields: Record<string, string>, fontBytes: Uint8Array) {
+function wrapText(text: string, font: any, size: number, maxWidth: number) {
+  const lines: string[] = [];
+  for (const paragraph of text.replace(/\r\n?/g, '\n').split('\n')) {
+    if (!paragraph) { lines.push(''); continue; }
+    let line = '';
+    for (const character of Array.from(paragraph)) {
+      if (line && font.widthOfTextAtSize(line + character, size) > maxWidth) {
+        lines.push(line);
+        line = character;
+      } else {
+        line += character;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
+async function renderContractValues(input: Uint8Array, fields: Record<string, string>, blocks: TextBlock[], fontBytes: Uint8Array) {
   const pdf = await PDFDocument.load(input);
   pdf.registerFontkit(fontkit);
-  const font = await pdf.embedFont(fontBytes, { subset: false });
+  // A subset contains only contract glyphs and keeps the Edge Function below
+  // its memory/output limits while still embedding every used Japanese glyph.
+  const font = await pdf.embedFont(fontBytes, { subset: true });
   const form = pdf.getForm();
+  const pages = pdf.getPages();
+
   for (const [name, fieldValue] of Object.entries(fields)) {
-    const field = form.getTextField(name);
-    field.setText(fieldValue);
-    field.updateAppearances(font);
+    try {
+      const field = form.getTextField(name);
+      field.setText(fieldValue);
+      field.updateAppearances(font);
+    } catch (error) {
+      throw new Error(`Cannot render field ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+
+  for (const block of blocks) {
+    let field: any;
+    let widgets: any[];
+    let boxes: TextBox[];
+    try {
+      field = form.getTextField(block.fieldName) as any;
+      widgets = field.acroField.getWidgets() as any[];
+      boxes = widgets.map((widget) => {
+        const pageRef = widget.P?.();
+        const pageIndex = pages.findIndex((page: any) => String(page.ref) === String(pageRef));
+        if (pageIndex < 0) throw new Error(`Cannot locate PDF page for ${block.fieldName}.`);
+        return { pageIndex, ...widget.getRectangle() };
+      }).sort((left: TextBox, right: TextBox) => left.pageIndex - right.pageIndex);
+    } catch (error) {
+      throw new Error(`Cannot read block ${block.fieldName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (boxes.length === 0) throw new Error(`No PDF drawing area is configured for ${block.fieldName}.`);
+
+    // A shared AcroForm field renders one value into every widget.  Keep the
+    // widgets empty and paint consecutive text segments onto the pages below;
+    // hiding annotations is not reliable across PDF viewers.
+    try {
+      field.setText('');
+      field.updateAppearances(font);
+    } catch (error) {
+      throw new Error(`Cannot clear block ${block.fieldName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    let remaining = block.text;
+    let usedSize = 0;
+    for (let size = 10; size >= 6; size -= 1) {
+      let candidate = remaining;
+      for (const box of boxes) {
+        const lineHeight = size * 1.32;
+        const capacity = Math.max(1, Math.floor((box.height - 8) / lineHeight));
+        candidate = wrapText(candidate, font, size, Math.max(1, box.width - 8)).slice(capacity).join('\n');
+      }
+      if (!candidate) { usedSize = size; break; }
+    }
+    if (!usedSize) throw new Error(`${block.fieldName} is too long for the configured PDF areas.`);
+
+    for (const box of boxes) {
+      const page = pages[box.pageIndex];
+      const lineHeight = usedSize * 1.32;
+      const capacity = Math.max(1, Math.floor((box.height - 8) / lineHeight));
+      const lines = wrapText(remaining, font, usedSize, Math.max(1, box.width - 8));
+      const segment = lines.slice(0, capacity);
+      remaining = lines.slice(capacity).join('\n');
+      page.drawRectangle({ x: box.x, y: box.y, width: box.width, height: box.height, color: rgb(1, 1, 1) });
+      for (const [index, line] of segment.entries()) {
+        page.drawText(line, { x: box.x + 4, y: box.y + box.height - 4 - usedSize - (index * lineHeight), size: usedSize, font, color: rgb(0, 0, 0) });
+      }
+    }
+  }
+  // The generated file is an immutable preview/final document.  Flattening
+  // preserves the Japanese appearance streams we generated above and stops
+  // PDF viewers from attempting to redraw legacy AcroForm fields with
+  // Helvetica (which cannot display Japanese glyphs).
+  form.flatten({ updateFieldAppearances: false });
   return new Uint8Array(await pdf.save());
 }
 
@@ -113,8 +209,9 @@ Deno.serve(async (request) => {
       formFields[fieldName] = fieldValue;
     }
     const blocks = (revision.block_definitions ?? {}) as BlockDefinitions;
-    if (blocks.terms?.acroformFieldName) formFields[blocks.terms.acroformFieldName] = document.terms_text ?? '';
-    if (blocks.restoration?.acroformFieldName) formFields[blocks.restoration.acroformFieldName] = document.restoration_criteria_text ?? '';
+    const textBlocks: TextBlock[] = [];
+    if (blocks.terms?.acroformFieldName && blocks.terms.renderInPdf === true) textBlocks.push({ fieldName: blocks.terms.acroformFieldName, text: document.terms_text ?? '' });
+    if (blocks.restoration?.acroformFieldName && blocks.restoration.renderInPdf === true) textBlocks.push({ fieldName: blocks.restoration.acroformFieldName, text: document.restoration_criteria_text ?? '' });
 
     stage = 'download template from storage';
     const { data: template, error: templateError } = await admin.storage.from('contract-documents').download(revision.template_file_path);
@@ -131,7 +228,9 @@ Deno.serve(async (request) => {
     const fontPath = revision.font_file_path || 'templates/ordinary_lease/yumin.ttf';
     const { data: fontFile, error: fontError } = await admin.storage.from('contract-documents').download(fontPath);
     if (fontError || !fontFile) throw new Error(`Japanese font download failed: ${fontError?.message ?? 'not found'}`);
-    output = await renderFormValuesWithEmbeddedFont(output, formFields, new Uint8Array(await fontFile.arrayBuffer()));
+    const fontBytes = new Uint8Array(await fontFile.arrayBuffer());
+    stage = 'render contract values';
+    output = await renderContractValues(output, formFields, textBlocks, fontBytes);
 
     stage = 'attach plan snapshot';
     const { data: plans } = await userClient.from('lease_contract_document_plan').select('snapshot_file_path').eq('lease_contract_document_id', document.lease_contract_document_id).order('created_at').limit(1);
