@@ -152,7 +152,7 @@ function App() {
   const signOut = async () => { await supabase?.auth.signOut(); setSession(null); setProfile(null); };
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
         <Route path="/login" element={session && profile?.account_status === 'active' ? <Navigate to="/dashboard" replace /> : <AuthPage mode="login" />} />
