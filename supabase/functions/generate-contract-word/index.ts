@@ -9,6 +9,50 @@ function dataUrl(bytes: Uint8Array, mediaType: string) {
   return `data:${mediaType};base64,${btoa(binary)}`;
 }
 
+/**
+ * Document Generation text tags treat a plain newline in JSON as text, rather
+ * than a Word line or paragraph break.  Contract clauses intentionally carry
+ * manual line breaks from the approved source, so send the supported HTML
+ * constructs instead.  A blank line is a paragraph boundary; a single line
+ * break remains a Word line break.  Escaping first keeps customer-entered text
+ * from being interpreted as arbitrary HTML.
+ */
+function contractTextToAdobeHtml(value: string | null | undefined) {
+  const escaped = (value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  if (!escaped) return '';
+  return escaped
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+
+function normalizeText(value: string | null | undefined) {
+  return (value ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+/**
+ * The standard criteria remain as approved Word tables in the template.
+ * Preserve contract-specific edits as a separate note instead of flattening
+ * those tables into one long paragraph.  Prepending/appending a note is the
+ * current form workflow; a replacement is retained in full so no saved text
+ * is silently discarded until the form evolves into a structured table editor.
+ */
+function restorationNotes(currentValue: string | null | undefined, defaultValue: string | null | undefined) {
+  const current = normalizeText(currentValue);
+  const standard = normalizeText(defaultValue);
+  if (!current || current === standard) return '';
+  if (standard && current.endsWith(standard)) return current.slice(0, current.length - standard.length).trim();
+  if (standard && current.startsWith(standard)) return current.slice(standard.length).trim();
+  return `【フォームで確定した原状回復工事基準の変更内容】\n${current}`;
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: adobeCorsHeaders });
   if (request.method !== 'POST') return respond({ error: 'Method not allowed' }, 405);
@@ -31,7 +75,7 @@ Deno.serve(async (request) => {
     if (documentError || !document?.contract_document_template_revision_id) return respond({ error: 'No saved contract document or template revision was found.' }, 400);
     failureContext = { documentId: document.lease_contract_document_id, templateRevisionId: document.contract_document_template_revision_id, contentVersion: document.content_version, userId: user.id };
     const { data: revision, error: revisionError } = await userClient.from('contract_document_template_revision')
-      .select('generation_engine, template_docx_file_path, document_generation_schema').eq('contract_document_template_revision_id', document.contract_document_template_revision_id).single();
+      .select('generation_engine, template_docx_file_path, document_generation_schema, default_restoration_criteria_text').eq('contract_document_template_revision_id', document.contract_document_template_revision_id).single();
     if (revisionError || revision?.generation_engine !== 'document_generation' || !revision.template_docx_file_path) return respond({ error: 'A published Word document-generation template is required.' }, 400);
 
     stage = 'reuse current Word output';
@@ -50,7 +94,11 @@ Deno.serve(async (request) => {
     if (plans?.[0]?.snapshot_file_path) {
       const { data: snapshot, error: snapshotError } = await admin.storage.from('contract-documents').download(plans[0].snapshot_file_path);
       if (snapshotError || !snapshot) throw new Error(`Plan snapshot download failed: ${snapshotError?.message ?? 'not found'}`);
-      planImage = dataUrl(new Uint8Array(await snapshot.arrayBuffer()), 'image/png');
+      const source = dataUrl(new Uint8Array(await snapshot.arrayBuffer()), 'image/png');
+      // The DOCX template uses planImage as a standalone text tag. Adobe
+      // Document Generation expands this HTML into an inline image, avoiding
+      // any client-provided URL or image data.
+      planImage = `<img src="${source}" width="620">`;
     }
 
     stage = 'generate Word document';
@@ -59,8 +107,14 @@ Deno.serve(async (request) => {
     const fieldValues = (document.field_values ?? {}) as Record<string, unknown>;
     const mergeData = {
       ...fieldValues,
-      termsText: document.terms_text ?? '',
-      restorationText: document.restoration_criteria_text ?? '',
+      // Use Document Generation's supported rich-text HTML so the layout of
+      // the stored Japanese source (including explicit line/paragraph breaks)
+      // survives in the generated DOCX and later formal PDF.
+      termsText: contractTextToAdobeHtml(document.terms_text),
+      restorationNotes: contractTextToAdobeHtml(restorationNotes(
+        document.restoration_criteria_text,
+        revision.default_restoration_criteria_text,
+      )),
       planImage,
       hasPlan: Boolean(planImage),
       contentVersion: String(document.content_version),
