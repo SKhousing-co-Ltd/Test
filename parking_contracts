@@ -20,12 +20,12 @@ CREATE TABLE IF NOT EXISTS parking_contracts (
         
     CONSTRAINT fk_tenant_clients
         FOREIGN KEY (tenant_client_id) 
-        REFERENCES clients (client_id)
+        REFERENCES clients_table (client_id)
         ON DELETE RESTRICT,
         
     CONSTRAINT fk_agent_clients
         FOREIGN KEY (agent_client_id) 
-        REFERENCES clients (client_id)
+        REFERENCES clients_table (client_id)
         ON DELETE SET NULL,
         
     CONSTRAINT fk_agency_representatives
