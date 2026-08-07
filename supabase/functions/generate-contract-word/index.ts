@@ -37,6 +37,23 @@ function normalizeText(value: string | null | undefined) {
   return (value ?? '').replace(/\r\n/g, '\n').trim();
 }
 
+const headerDateKeys = new Set(['contractStartDate', 'contractEndDate']);
+const headerCurrencyKeys = new Set(['monthlyRentAmount', 'monthlyCommonChargeAmount', 'depositAmount', 'securityDepositAmount', 'keyMoneyAmount', 'guarantorLimitAmount']);
+
+function formatHeaderValue(key: string, value: unknown) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (headerDateKeys.has(key)) {
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) return `${match[1]}年${match[2]}月${match[3]}日`;
+  }
+  if (headerCurrencyKeys.has(key)) {
+    const amount = Number(text.replace(/,/g, ''));
+    if (Number.isFinite(amount)) return new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 0 }).format(amount);
+  }
+  return text;
+}
+
 /**
  * The standard criteria remain as approved Word tables in the template.
  * Preserve contract-specific edits as a separate note instead of flattening
@@ -78,12 +95,6 @@ Deno.serve(async (request) => {
       .select('generation_engine, template_docx_file_path, document_generation_schema, default_restoration_criteria_text').eq('contract_document_template_revision_id', document.contract_document_template_revision_id).single();
     if (revisionError || revision?.generation_engine !== 'document_generation' || !revision.template_docx_file_path) return respond({ error: 'A published Word document-generation template is required.' }, 400);
 
-    stage = 'reuse current Word output';
-    const { data: existing } = await userClient.from('lease_contract_document_output_revision')
-      .select('lease_contract_document_output_revision_id, word_file_path, status').eq('lease_contract_document_id', document.lease_contract_document_id)
-      .eq('content_version', document.content_version).maybeSingle();
-    if (existing?.word_file_path && existing.status !== 'failed') return respond({ outputRevisionId: existing.lease_contract_document_output_revision_id, wordFilePath: existing.word_file_path, contentVersion: document.content_version, reused: true });
-
     stage = 'download Word template';
     const { data: template, error: templateError } = await admin.storage.from('contract-documents').download(revision.template_docx_file_path);
     if (templateError || !template) throw new Error(`Word template download failed: ${templateError?.message ?? 'not found'}`);
@@ -104,7 +115,8 @@ Deno.serve(async (request) => {
     stage = 'generate Word document';
     const { token, clientId } = await adobeToken();
     const assetID = await uploadAdobeAsset(new Uint8Array(await template.arrayBuffer()), DOCX_MEDIA_TYPE, token, clientId);
-    const fieldValues = (document.field_values ?? {}) as Record<string, unknown>;
+    const fieldValues = Object.fromEntries(Object.entries((document.field_values ?? {}) as Record<string, unknown>)
+      .map(([key, fieldValue]) => [key, formatHeaderValue(key, fieldValue)]));
     const mergeData = {
       ...fieldValues,
       // Use Document Generation's supported rich-text HTML so the layout of
@@ -124,8 +136,8 @@ Deno.serve(async (request) => {
     stage = 'save Word output';
     const basePath = `documents/${leaseContractId}/${document.document_type}/${document.lease_contract_document_id}/outputs/v${document.content_version}`;
     const wordFilePath = `${basePath}/contract.docx`;
-    const { error: uploadError } = await admin.storage.from('contract-documents').upload(wordFilePath, word, { contentType: DOCX_MEDIA_TYPE, upsert: false });
-    if (uploadError && !/already exists/i.test(uploadError.message)) throw uploadError;
+    const { error: uploadError } = await admin.storage.from('contract-documents').upload(wordFilePath, word, { contentType: DOCX_MEDIA_TYPE, upsert: true });
+    if (uploadError) throw uploadError;
     const { data: output, error: outputError } = await admin.from('lease_contract_document_output_revision').upsert({
       lease_contract_document_id: document.lease_contract_document_id, contract_document_template_revision_id: document.contract_document_template_revision_id,
       content_version: document.content_version, status: 'word_generated', word_file_path: wordFilePath, error_summary: null, generated_by: user.id,
