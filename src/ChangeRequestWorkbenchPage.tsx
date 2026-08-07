@@ -4,14 +4,24 @@ import { supabase } from './lib/supabase';
 type RequestStatus = 'open' | 'in_review' | 'on_hold' | 'resolved' | 'applied' | 'excluded' | string;
 type JsonObject = Record<string, unknown>;
 type ImportIssueSource = { source_file_name: string; source_sheet_name: string; source_row_number: number | null };
-type ChangeRequestItem = { change_request_item_id: string; entity_id: string | null; field_name: string | null; current_value: unknown; proposed_value: unknown; validation_status: string; validation_message: string | null; import_issue?: ImportIssueSource | null };
+type ChangeRequestItem = { change_request_item_id: string; entity_type: string; entity_id: string | null; field_name: string | null; current_value: unknown; proposed_value: unknown; validation_status: string; validation_message: string | null; import_issue?: ImportIssueSource | null };
 type ChangeRequestComment = { change_request_comment_id: string; body: string; created_at: string };
 type ChangeRequest = {
   change_request_id: string; request_type: string; status: RequestStatus; source_type: string;
   title: string; summary: string | null; source_payload: JsonObject; proposed_payload: JsonObject;
   row_version: number; updated_at: string; items?: ChangeRequestItem[]; comments?: ChangeRequestComment[];
 };
-type ContractUnitOption = { lease_contract_unit_id: string; unit: { unit_code: string; unit_name: string | null } | null };
+type ContractUnitOption = {
+  lease_contract_unit_id: string;
+  unit: {
+    unit_code: string;
+    unit_name: string | null;
+    floor_label: string | null;
+    building_wing: { wing_code: string; wing_name: string | null } | null;
+    asset: { asset_name: string } | null;
+  } | null;
+  contract: { contract_status: string; tenant: { tenant_name: string } | null } | null;
+};
 
 const editableFields = [
   ['leased_area_sqm', '契約面積（㎡）'], ['monthly_rent_amount', '月額賃料'], ['monthly_common_charge_amount', '月額共益費'],
@@ -22,6 +32,18 @@ const statusLabel: Record<string, string> = { open: '要確認', in_review: '確
 const sourceLabels: Record<string, string> = { floor: '階', unit: '取込元の区画表記', tenant_name: '取込元のテナント名', tenant_code: '取込元のテナントコード', discriminator: '仮識別子' };
 const formatDate = (value: string) => new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 const prettyValue = (value: unknown) => value === null || value === undefined || value === '' ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+const compareContractUnitOptions = (left: ContractUnitOption, right: ContractUnitOption) => contractUnitLabel(left).localeCompare(contractUnitLabel(right), 'ja-JP', { numeric: true, sensitivity: 'base' });
+
+function contractUnitLabel(option: ContractUnitOption) {
+  const unit = option.unit;
+  if (!unit) return `未設定の区画（${option.lease_contract_unit_id}）`;
+  const wing = unit.building_wing ? (unit.building_wing.wing_name || unit.building_wing.wing_code) : '';
+  const location = [unit.asset?.asset_name, wing, unit.floor_label].filter(Boolean).join('｜');
+  const unitName = unit.unit_name ? ` ${unit.unit_name}` : '';
+  const tenant = option.contract?.tenant?.tenant_name ? `｜${option.contract.tenant.tenant_name}` : '';
+  const status = option.contract?.contract_status && option.contract.contract_status !== 'active' ? `（${option.contract.contract_status}）` : '';
+  return `${location || '物件・階未設定'}｜${unit.unit_code}${unitName}${tenant}${status}`;
+}
 
 function getImportType(request: ChangeRequest) {
   return request.source_type === 'initial_import' ? request.title.replace(/^取込エラー:\s*/, '') : null;
@@ -88,7 +110,7 @@ export function ChangeRequestWorkbenchPage() {
     if (!supabase) return;
     setLoading(true); setError('');
     const { data, error: loadError } = await supabase.from('change_request')
-      .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, row_version, updated_at, items:change_request_item(change_request_item_id, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
+      .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, row_version, updated_at, items:change_request_item(change_request_item_id, entity_type, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
       .order('updated_at', { ascending: false });
     setLoading(false);
     if (loadError) { setError(`対応依頼を読み込めませんでした: ${loadError.message}`); return; }
@@ -98,8 +120,22 @@ export function ChangeRequestWorkbenchPage() {
   }, []);
 
   useEffect(() => { void loadRequests(); }, [loadRequests]);
-  useEffect(() => { if (supabase) void supabase.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master(unit_code, unit_name)').order('lease_contract_unit_id').then(({ data }) => setContractUnits((data ?? []) as unknown as ContractUnitOption[])); }, []);
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.from('lease_contract_unit')
+      .select('lease_contract_unit_id, unit:unit_master(unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name)), contract:lease_contract(contract_status, tenant:tenant_master(tenant_name))')
+      .then(({ data, error: unitLoadError }) => {
+        if (unitLoadError) { setError(`対象区画の候補を読み込めませんでした: ${unitLoadError.message}`); return; }
+        setContractUnits(((data ?? []) as unknown as ContractUnitOption[]).sort(compareContractUnitOptions));
+      });
+  }, []);
   const selected = requests.find((request) => request.change_request_id === selectedId) ?? null;
+  const availableContractUnits = useMemo(() => {
+    const linkedUnitIds = new Set((selected?.items ?? [])
+      .filter((item) => item.entity_type === 'lease_contract_unit' && item.entity_id)
+      .map((item) => item.entity_id!));
+    return linkedUnitIds.size ? contractUnits.filter((unit) => linkedUnitIds.has(unit.lease_contract_unit_id)) : contractUnits;
+  }, [contractUnits, selected]);
   useEffect(() => { setComment(''); setItemUnitId(''); setItemValue(''); }, [selectedId]);
 
   const filtered = useMemo(() => requests.filter((request) => {
@@ -168,7 +204,7 @@ export function ChangeRequestWorkbenchPage() {
         <header className="change-detail-heading"><div><p className="section-kicker">{selected.source_type === 'initial_import' ? 'INITIAL IMPORT' : selected.source_type}</p><h3>{selected.title}</h3><p>{selected.summary || '取込内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span></header>
         <IssueContext request={selected} />
         <section className="change-card"><h4>反映する契約条件</h4><p>{getImportType(selected) ? '区画が確定した後にだけ、下の項目を入力します。区画やテナントの判定そのものをここで無理に入力しないでください。' : '現在の値と反映予定の値を確認します。'}</p><div className="change-diff-table"><div className="change-diff-head"><span>項目</span><span>現在</span><span>反映予定</span></div>{(selected.items ?? []).map((item) => <div key={item.change_request_item_id}><strong>{item.field_name || '未設定（取込エラーの確認待ち）'}</strong><span>{prettyValue(item.current_value)}</span><span className="proposed-value">{prettyValue(item.proposed_value)}</span></div>)}</div></section>
-        {editable && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。</p><div className="change-item-editor"><label>対象区画<select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}><option value="">選択してください</option>{contractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{unit.unit?.unit_code ?? unit.lease_contract_unit_id}{unit.unit?.unit_name ? ` (${unit.unit.unit_name})` : ''}</option>)}</select></label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
+        {editable && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画<select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}><option value="">選択してください</option>{availableContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
         <section className="change-card"><h4>対応メモ</h4><p>確認した資料、採用する区画・テナントコード、判断理由を残してください。</p><div className="change-comments">{selected.comments?.length ? selected.comments.map((entry) => <div key={entry.change_request_comment_id}><strong>開発メンバー</strong><time>{formatDate(entry.created_at)}</time><p>{entry.body}</p></div>) : <p className="muted">まだメモはありません。</p>}</div>{editable && <div className="comment-composer"><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="例：原本Excelの〇シートと契約書を確認。4F A〜Cを1契約として扱う。" /><button className="secondary-button" onClick={() => void addComment()} disabled={working || !comment.trim()}>メモを追加</button></div>}</section>
         {editable ? <footer className="change-actions"><button className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working}>保留にする</button><button className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working}>対象外にする</button><button className="primary-button" onClick={() => void resolve()} disabled={working}>{working ? '処理中…' : 'Resolveする'}</button></footer> : selected.status === 'resolved' ? <footer className="change-actions"><button className="primary-button" onClick={() => void apply()} disabled={working}>{working ? '処理中…' : '適用を確定'}</button></footer> : null}
       </> : <p className="change-empty">左側から対応依頼を選択してください。</p>}</main>

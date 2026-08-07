@@ -15,6 +15,13 @@
 .map-tools .zoom-controls .zoom-value { min-width: 48px; color: #3f5876; }
 .map-tools .zoom-controls button:disabled { cursor: not-allowed; opacity: .45; }
 
+.unit-list-hint { margin: -3px 0 9px; color: #748399; font-size: 10px; line-height: 1.5; }
+.unit-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; }
+.unit-list-row > button:first-child { display: grid; gap: 3px; width: 100%; border: 1px solid #e5eaf1; border-radius: 6px; padding: 8px; background: #fff; text-align: left; }
+.unit-list-row > button:first-child.selected { border-color: #4b8ed4; background: #edf6ff; }
+.delete-unit-button { display: block !important; width: auto !important; align-self: stretch; border: 1px solid #edc9c4; border-radius: 6px; padding: 0 7px; color: #ae4f45; background: #fff7f5; font-size: 10px; font-weight: 700; }
+.delete-unit-button:disabled { cursor: not-allowed; border-color: #e4e9ef; color: #a0aab8; background: #f5f7f9; }
+
 @media (max-width: 760px) {
   .map-stage { height: clamp(350px, 60vh, 540px); }
   .map-canvas, .map-canvas > img, .map-canvas > svg { min-height: 350px; }
