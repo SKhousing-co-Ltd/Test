@@ -19,6 +19,9 @@ type Contract = {
 };
 
 type ContractAllocation = {
+  lease_start_date: string | null;
+  lease_end_date: string | null;
+  created_by_amendment: { status: string } | { status: string }[] | null;
   leased_area_sqm: number | null;
   monthly_rent_amount: number | null;
   monthly_common_charge_amount: number | null;
@@ -27,7 +30,20 @@ type ContractAllocation = {
   security_deposit_amount: number | null;
   key_money_amount: number | null;
   renewal_fee_amount: number | null;
+  terms: ContractTerm[] | null;
   contract: Contract | Contract[] | null;
+};
+
+type ContractTerm = {
+  effective_from: string;
+  effective_to: string | null;
+  monthly_rent_amount: number | null;
+  monthly_common_charge_amount: number | null;
+  deposit_amount: number | null;
+  security_deposit_amount: number | null;
+  key_money_amount: number | null;
+  renewal_fee_amount: number | null;
+  amendment: { status: string } | { status: string }[] | null;
 };
 
 type UnitSource = {
@@ -79,13 +95,24 @@ function firstOf<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
-function isCurrentContract(allocation: ContractAllocation): boolean {
+function isCurrentContract(allocation: ContractAllocation, asOfDate: string): boolean {
   const contract = firstOf(allocation.contract);
+  const originAmendment = firstOf(allocation.created_by_amendment);
   return Boolean(
     contract?.contract_status === 'active'
-    && (!contract.contract_start_date || contract.contract_start_date <= today)
-    && (!contract.contract_end_date || contract.contract_end_date >= today),
+    && (!contract.contract_start_date || contract.contract_start_date <= asOfDate)
+    && (!contract.contract_end_date || contract.contract_end_date >= asOfDate)
+    && (!allocation.lease_start_date || allocation.lease_start_date <= asOfDate)
+    && (!allocation.lease_end_date || allocation.lease_end_date >= asOfDate)
+    && (!originAmendment || originAmendment.status === 'executed'),
   );
+}
+
+function currentTerms(allocation: ContractAllocation, asOfDate: string): ContractTerm | null {
+  return (allocation.terms ?? [])
+    .filter((term) => term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate))
+    .filter((term) => !firstOf(term.amendment) || firstOf(term.amendment)?.status === 'executed')
+    .sort((left, right) => right.effective_from.localeCompare(left.effective_from))[0] ?? null;
 }
 
 function floorOrder(label: string): number {
@@ -103,8 +130,9 @@ function leasingStatus(source: UnitSource): string | null {
   return value?.leasing_status ?? null;
 }
 
-function toRentRollRow(source: UnitSource): RentRollRow {
-  const currentAllocation = (source.allocations ?? []).find(isCurrentContract);
+function toRentRollRow(source: UnitSource, asOfDate: string): RentRollRow {
+  const currentAllocation = (source.allocations ?? []).find((allocation) => isCurrentContract(allocation, asOfDate));
+  const terms = currentAllocation ? currentTerms(currentAllocation, asOfDate) : null;
   const manualStatus = leasingStatus(source);
   const contract = firstOf(currentAllocation?.contract);
   const tenant = firstOf(contract?.tenant);
@@ -125,13 +153,13 @@ function toRentRollRow(source: UnitSource): RentRollRow {
     tenantCode: tenant?.external_tenant_code ?? '',
     tenantName: tenant?.tenant_name ?? '',
     area: currentAllocation?.leased_area_sqm ?? source.rentable_area_sqm,
-    rent: amount(currentAllocation?.monthly_rent_amount),
-    commonCharge: amount(currentAllocation?.monthly_common_charge_amount),
-    total: amount(currentAllocation?.monthly_total_amount) || amount(currentAllocation?.monthly_rent_amount) + amount(currentAllocation?.monthly_common_charge_amount),
-    deposit: amount(currentAllocation?.deposit_amount),
-    securityDeposit: amount(currentAllocation?.security_deposit_amount),
-    keyMoney: amount(currentAllocation?.key_money_amount),
-    renewalFee: amount(currentAllocation?.renewal_fee_amount),
+    rent: amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount),
+    commonCharge: amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
+    total: amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount) + amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
+    deposit: amount(terms?.deposit_amount ?? currentAllocation?.deposit_amount),
+    securityDeposit: amount(terms?.security_deposit_amount ?? currentAllocation?.security_deposit_amount),
+    keyMoney: amount(terms?.key_money_amount ?? currentAllocation?.key_money_amount),
+    renewalFee: amount(terms?.renewal_fee_amount ?? currentAllocation?.renewal_fee_amount),
   };
 }
 
@@ -145,6 +173,7 @@ export function RentRollPage() {
   const [rows, setRows] = useState<RentRollRow[]>([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | RentRollStatus>('all');
+  const [asOfDate, setAsOfDate] = useState(today);
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -214,8 +243,13 @@ export function RentRollPage() {
           unit_id, unit_code, unit_name, floor_label, rentable_area_sqm, source_discriminator,
           leasing_status:unit_leasing_status(leasing_status),
           allocations:lease_contract_unit(
-            leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, monthly_total_amount,
+            lease_start_date, lease_end_date, created_by_amendment:lease_contract_amendment!lease_contract_unit_created_by_amendment_id_fkey(status), leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, monthly_total_amount,
             deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount,
+            terms:lease_contract_unit_term(
+              effective_from, effective_to, monthly_rent_amount, monthly_common_charge_amount,
+              deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount,
+              amendment:lease_contract_amendment(status)
+            ),
             contract:lease_contract(
               contract_status, contract_start_date, contract_end_date, notes,
               tenant:tenant_master(external_tenant_code, tenant_name)
@@ -230,13 +264,13 @@ export function RentRollPage() {
         setRows([]);
         setError(`レントロールの取得に失敗しました: ${loadError.message}`);
       } else {
-        setRows(((data ?? []) as unknown as UnitSource[]).map(toRentRollRow));
+        setRows(((data ?? []) as unknown as UnitSource[]).map((source) => toRentRollRow(source, asOfDate)));
       }
       setLoadingRows(false);
     };
     void loadRows();
     return () => { cancelled = true; };
-  }, [propertyId]);
+  }, [propertyId, asOfDate]);
 
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
     const floorDifference = floorOrder(a.floor) - floorOrder(b.floor);
@@ -272,6 +306,9 @@ export function RentRollPage() {
     </div>
 
     <div className="rent-roll-toolbar">
+      <label>基準日
+        <input type="date" value={asOfDate} onChange={(event) => setAsOfDate(event.target.value)} />
+      </label>
       <label>物件
         <select value={propertyId} onChange={(event) => setPropertyId(event.target.value)} disabled={loadingProperties}>
           {properties.map((property) => <option key={property.propertyId} value={property.propertyId}>{property.shortName || property.propertyName}</option>)}
