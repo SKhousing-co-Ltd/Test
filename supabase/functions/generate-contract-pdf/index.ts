@@ -7,18 +7,32 @@ import fontkit from 'https://esm.sh/@pdf-lib/fontkit@1.1.1';
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' };
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 const value = (input: unknown) => String(input ?? '').trim();
+const headerDateKeys = new Set(['contractStartDate', 'contractEndDate']);
+const headerCurrencyKeys = new Set(['monthlyRentAmount', 'monthlyCommonChargeAmount', 'depositAmount', 'securityDepositAmount', 'keyMoneyAmount', 'guarantorLimitAmount']);
+function formatHeaderValue(key: string, input: unknown) {
+  const text = value(input);
+  if (headerDateKeys.has(key)) {
+    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) return `${match[1]}年${match[2]}月${match[3]}日`;
+  }
+  if (headerCurrencyKeys.has(key)) {
+    const amount = Number(text.replace(/,/g, ''));
+    if (Number.isFinite(amount)) return new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 0 }).format(amount);
+  }
+  return text;
+}
 type Field = { key: string; label: string; required?: boolean; acroformFieldName?: string };
 type BlockDefinitions = {
-  // `renderInPdf` is deliberately opt-in.  The currently registered legacy
-  // templates already have their terms printed on the page.  Rendering the
-  // same shared AcroForm value again makes every widget repeat the full text
-  // and corrupts the visible PDF.  New templates that reserve blank areas for
-  // generated text can explicitly opt in after their page layout is verified.
-  terms?: { acroformFieldName?: string; renderInPdf?: boolean };
-  restoration?: { acroformFieldName?: string; renderInPdf?: boolean };
+  // Long-text fields must be painted page by page.  A single AcroForm value
+  // is shared by all of its widgets, so putting a long clause into the field
+  // itself repeats the entire clause on every page.  `pageNumbers` is an
+  // optional one-based mapping for templates whose widgets do not expose /P.
+  // `renderInPdf: false` is retained as an explicit opt-out only.
+  terms?: { acroformFieldName?: string; renderInPdf?: boolean; pageNumbers?: number[] };
+  restoration?: { acroformFieldName?: string; renderInPdf?: boolean; pageNumbers?: number[] };
   plan?: { page?: number; x?: number; y?: number; maxWidth?: number; maxHeight?: number };
 };
-type TextBlock = { fieldName: string; text: string };
+type TextBlock = { fieldName: string; text: string; pageNumbers?: number[] };
 type TextBox = { pageIndex: number; x: number; y: number; width: number; height: number };
 type AdobeJob = { status?: string; assetID?: string; asset?: { assetID?: string }; output?: { assetID?: string }; result?: { assetID?: string }; error?: unknown; errors?: unknown };
 
@@ -85,12 +99,20 @@ function wrapText(text: string, font: any, size: number, maxWidth: number) {
   for (const paragraph of text.replace(/\r\n?/g, '\n').split('\n')) {
     if (!paragraph) { lines.push(''); continue; }
     let line = '';
+    let lineWidth = 0;
     for (const character of Array.from(paragraph)) {
-      if (line && font.widthOfTextAtSize(line + character, size) > maxWidth) {
+      // Measuring the accumulated string for every character makes a 10,000
+      // character clause quadratic and exhausts an Edge Function.  PDF text
+      // widths are additive for the embedded Japanese font, so keep a running
+      // width and make this operation linear.
+      const characterWidth = font.widthOfTextAtSize(character, size);
+      if (line && lineWidth + characterWidth > maxWidth) {
         lines.push(line);
         line = character;
+        lineWidth = characterWidth;
       } else {
         line += character;
+        lineWidth += characterWidth;
       }
     }
     if (line) lines.push(line);
@@ -124,9 +146,13 @@ async function renderContractValues(input: Uint8Array, fields: Record<string, st
     try {
       field = form.getTextField(block.fieldName) as any;
       widgets = field.acroField.getWidgets() as any[];
-      boxes = widgets.map((widget) => {
-        const pageRef = widget.P?.();
-        const pageIndex = pages.findIndex((page: any) => String(page.ref) === String(pageRef));
+      boxes = widgets.map((widget, widgetIndex) => {
+        // Do not read widget /P here.  This legacy document has orphaned and
+        // malformed references which cause pdf-lib's "Unexpected N type"
+        // failure.  The registered order is deterministic for this revision.
+        const pageNumber = block.pageNumbers?.[widgetIndex]
+          ?? (block.fieldName === 'termsText' ? widgetIndex + 1 : block.fieldName === 'restorationCriteriaText' ? 8 : undefined);
+        const pageIndex = pageNumber === undefined ? -1 : pageNumber - 1;
         if (pageIndex < 0) throw new Error(`Cannot locate PDF page for ${block.fieldName}.`);
         return { pageIndex, ...widget.getRectangle() };
       }).sort((left: TextBox, right: TextBox) => left.pageIndex - right.pageIndex);
@@ -144,16 +170,14 @@ async function renderContractValues(input: Uint8Array, fields: Record<string, st
     } catch (error) {
       throw new Error(`Cannot clear block ${block.fieldName}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    let remaining = block.text;
+    const narrowestWidth = Math.max(1, Math.min(...boxes.map((box) => box.width - 8)));
+    let lines: string[] = [];
     let usedSize = 0;
     for (let size = 10; size >= 6; size -= 1) {
-      let candidate = remaining;
-      for (const box of boxes) {
-        const lineHeight = size * 1.32;
-        const capacity = Math.max(1, Math.floor((box.height - 8) / lineHeight));
-        candidate = wrapText(candidate, font, size, Math.max(1, box.width - 8)).slice(capacity).join('\n');
-      }
-      if (!candidate) { usedSize = size; break; }
+      const candidateLines = wrapText(block.text, font, size, narrowestWidth);
+      const lineHeight = size * 1.32;
+      const capacity = boxes.reduce((total, box) => total + Math.max(1, Math.floor((box.height - 8) / lineHeight)), 0);
+      if (candidateLines.length <= capacity) { usedSize = size; lines = candidateLines; break; }
     }
     if (!usedSize) throw new Error(`${block.fieldName} is too long for the configured PDF areas.`);
 
@@ -161,20 +185,17 @@ async function renderContractValues(input: Uint8Array, fields: Record<string, st
       const page = pages[box.pageIndex];
       const lineHeight = usedSize * 1.32;
       const capacity = Math.max(1, Math.floor((box.height - 8) / lineHeight));
-      const lines = wrapText(remaining, font, usedSize, Math.max(1, box.width - 8));
-      const segment = lines.slice(0, capacity);
-      remaining = lines.slice(capacity).join('\n');
+      const segment = lines.splice(0, capacity);
       page.drawRectangle({ x: box.x, y: box.y, width: box.width, height: box.height, color: rgb(1, 1, 1) });
       for (const [index, line] of segment.entries()) {
         page.drawText(line, { x: box.x + 4, y: box.y + box.height - 4 - usedSize - (index * lineHeight), size: usedSize, font, color: rgb(0, 0, 0) });
       }
     }
   }
-  // The generated file is an immutable preview/final document.  Flattening
-  // preserves the Japanese appearance streams we generated above and stops
-  // PDF viewers from attempting to redraw legacy AcroForm fields with
-  // Helvetica (which cannot display Japanese glyphs).
-  form.flatten({ updateFieldAppearances: false });
+  // Do not flatten this legacy template.  Its AcroForm resource tree contains
+  // incomplete indirect references, which pdf-lib cannot flatten reliably
+  // (`Unexpected N type: undefined`).  Header appearances are already updated
+  // with the embedded Japanese font, and legacy long-text fields remain empty.
   return new Uint8Array(await pdf.save());
 }
 
@@ -204,14 +225,18 @@ Deno.serve(async (request) => {
     const formFields: Record<string, string> = {};
     for (const field of (revision.field_definitions ?? []) as Field[]) {
       const fieldName = field.acroformFieldName ?? field.key;
-      const fieldValue = value((document.field_values as Record<string, unknown>)[field.key]);
+      const fieldValue = formatHeaderValue(field.key, (document.field_values as Record<string, unknown>)[field.key]);
       if (field.required && !fieldValue) return response({ error: `Required field is empty: ${field.label}` }, 400);
       formFields[fieldName] = fieldValue;
     }
     const blocks = (revision.block_definitions ?? {}) as BlockDefinitions;
     const textBlocks: TextBlock[] = [];
-    if (blocks.terms?.acroformFieldName && blocks.terms.renderInPdf === true) textBlocks.push({ fieldName: blocks.terms.acroformFieldName, text: document.terms_text ?? '' });
-    if (blocks.restoration?.acroformFieldName && blocks.restoration.renderInPdf === true) textBlocks.push({ fieldName: blocks.restoration.acroformFieldName, text: document.restoration_criteria_text ?? '' });
+    // Render long text by default when the template declares a target field.
+    // This is intentionally different from writing the form value itself:
+    // the renderer clears the shared AcroForm value and paints each page
+    // segment into its own rectangle, preventing duplicate text on every page.
+    if (blocks.terms?.acroformFieldName && blocks.terms.renderInPdf !== false) textBlocks.push({ fieldName: blocks.terms.acroformFieldName, text: document.terms_text ?? '', pageNumbers: blocks.terms.pageNumbers });
+    if (blocks.restoration?.acroformFieldName && blocks.restoration.renderInPdf !== false) textBlocks.push({ fieldName: blocks.restoration.acroformFieldName, text: document.restoration_criteria_text ?? '', pageNumbers: blocks.restoration.pageNumbers });
 
     stage = 'download template from storage';
     const { data: template, error: templateError } = await admin.storage.from('contract-documents').download(revision.template_file_path);

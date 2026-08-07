@@ -16,6 +16,7 @@ import { RentRollPage } from './RentRollPage';
 import { LeasingMapPage } from './LeasingMapPage';
 import { ContractDocumentPage } from './ContractDocumentPage';
 import { AppsuiteSyncPage } from './AppsuiteSyncPage';
+import { ContractWorkflowPage } from './ContractWorkflowPage';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
 type ContractType = '新規' | '更新';
@@ -165,7 +166,7 @@ function App() {
             <Route path="/rent-roll" element={<RentRollPage />} />
             <Route path="/appsuite-sync" element={<AppsuiteSyncPage isAdmin={profile?.role === 'admin'} />} />
             <Route path="/leasing-map" element={<LeasingMapPage />} />
-            <Route path="/contracts" element={<ContractsPage contracts={contracts} setContracts={setContracts} canEdit={false} loadError={contractLoadError} />} />
+            <Route path="/contracts" element={<ContractWorkflowPage canComplete={profile?.role !== 'viewer'} />} />
             <Route path="/contract-documents" element={<Navigate to="/contracts" replace />} />
             <Route path="/contracts/:contractId/document" element={<ContractDocumentPage />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
