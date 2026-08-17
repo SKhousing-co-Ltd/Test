@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Dialog } from './components/Dialog';
 import { supabase } from './lib/supabase';
 
-type Tab = 'orders' | 'invoices' | 'cashflow';
+type Tab = 'orders' | 'invoices' | 'cashflow' | 'integrations';
 type Property = { asset_id: string; asset_name: string; short_name: string | null };
 type Account = { account_id: string; account_name: string };
 type Vendor = { vendor_id: string; vendor_code: string; vendor_name: string; billone_supplier_id: string | null; is_active: boolean };
@@ -62,6 +62,32 @@ type Cashflow = {
   paid_date: string | null;
 };
 
+type AppsuiteInbox = {
+  appsuite_procurement_inbox_id: string;
+  ringi_number: string | null;
+  property_name: string | null;
+  vendor_name: string | null;
+  title: string | null;
+  gross_amount: number | null;
+  match_status: 'action_required' | 'ready' | 'imported' | 'ignored';
+  issues: string[];
+  imported_procurement_order_id: string | null;
+};
+
+type BilloneInbox = {
+  billone_invoice_inbox_id: string;
+  source_invoice_id: string;
+  invoice_number: string | null;
+  supplier_name: string | null;
+  property_name: string | null;
+  invoice_date: string | null;
+  due_date: string | null;
+  gross_amount: number | null;
+  match_status: 'action_required' | 'ready' | 'imported' | 'ignored';
+  issues: string[];
+  imported_vendor_invoice_id: string | null;
+};
+
 type OrderDraft = {
   property_id: string;
   account_id: string;
@@ -96,6 +122,8 @@ export function ProcurementPage({ canEdit, canManageVendors }: { canEdit: boolea
   const [orders, setOrders] = useState<Order[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [cashflow, setCashflow] = useState<Cashflow[]>([]);
+  const [appsuiteInbox, setAppsuiteInbox] = useState<AppsuiteInbox[]>([]);
+  const [billoneInbox, setBilloneInbox] = useState<BilloneInbox[]>([]);
   const [query, setQuery] = useState('');
   const [propertyId, setPropertyId] = useState('');
   const [notice, setNotice] = useState('');
@@ -107,15 +135,17 @@ export function ProcurementPage({ canEdit, canManageVendors }: { canEdit: boolea
   const load = async () => {
     if (!supabase) return;
     setLoading(true); setNotice('');
-    const [propertyResult, accountResult, vendorResult, orderResult, invoiceResult, cashflowResult] = await Promise.all([
+    const [propertyResult, accountResult, vendorResult, orderResult, invoiceResult, cashflowResult, appsuiteInboxResult, billoneInboxResult] = await Promise.all([
       supabase.from('asset_master').select('asset_id, asset_name, short_name').order('asset_name'),
       supabase.from('income_expense_account_master').select('account_id, account_name').eq('income_expense_type', '支出').order('account_id'),
       supabase.from('vendor_master').select('vendor_id, vendor_code, vendor_name, billone_supplier_id, is_active').eq('is_active', true).order('vendor_name'),
       supabase.from('procure_to_pay_overview').select('*').order('updated_at', { ascending: false }),
       supabase.from('vendor_invoice').select('vendor_invoice_id, property_id, account_id, vendor_id, invoice_number, billone_invoice_id, invoice_date, due_date, gross_amount, status, property:asset_master(asset_name), vendor:vendor_master(vendor_name), account:income_expense_account_master(account_name)').order('invoice_date', { ascending: false }),
       supabase.from('payable_cashflow').select('*').order('scheduled_date'),
+      supabase.from('appsuite_procurement_inbox').select('appsuite_procurement_inbox_id, ringi_number, property_name, vendor_name, title, gross_amount, match_status, issues, imported_procurement_order_id').order('updated_at', { ascending: false }).limit(500),
+      supabase.from('billone_invoice_inbox').select('billone_invoice_inbox_id, source_invoice_id, invoice_number, supplier_name, property_name, invoice_date, due_date, gross_amount, match_status, issues, imported_vendor_invoice_id').order('last_received_at', { ascending: false }).limit(500),
     ]);
-    const error = [propertyResult, accountResult, vendorResult, orderResult, invoiceResult, cashflowResult].find((result) => result.error)?.error;
+    const error = [propertyResult, accountResult, vendorResult, orderResult, invoiceResult, cashflowResult, appsuiteInboxResult, billoneInboxResult].find((result) => result.error)?.error;
     if (error) setNotice(`発注・支払データを読み込めませんでした: ${error.message}`);
     setProperties((propertyResult.data ?? []) as Property[]);
     setAccounts((accountResult.data ?? []) as Account[]);
@@ -123,6 +153,8 @@ export function ProcurementPage({ canEdit, canManageVendors }: { canEdit: boolea
     setOrders((orderResult.data ?? []) as Order[]);
     setInvoices((invoiceResult.data ?? []) as unknown as Invoice[]);
     setCashflow((cashflowResult.data ?? []) as Cashflow[]);
+    setAppsuiteInbox((appsuiteInboxResult.data ?? []) as AppsuiteInbox[]);
+    setBilloneInbox((billoneInboxResult.data ?? []) as BilloneInbox[]);
     setLoading(false);
   };
 
@@ -166,6 +198,22 @@ export function ProcurementPage({ canEdit, canManageVendors }: { canEdit: boolea
     });
     if (error) setNotice(error.message); else void load();
   };
+  const refreshMatches = async () => {
+    if (!supabase) return;
+    setLoading(true);
+    const { error } = await supabase.rpc('refresh_external_procurement_inboxes');
+    if (error) { setNotice(error.message); setLoading(false); } else await load();
+  };
+  const commitAppsuite = async (id: string) => {
+    if (!supabase) return;
+    const { error } = await supabase.rpc('commit_appsuite_procurement_inbox', { target_id: id });
+    if (error) setNotice(error.message); else await load();
+  };
+  const commitBillone = async (id: string) => {
+    if (!supabase) return;
+    const { error } = await supabase.rpc('commit_billone_invoice_inbox', { target_id: id });
+    if (error) setNotice(error.message); else await load();
+  };
 
   return <section className="procurement-page">
     <div className="page-heading"><div><p className="section-kicker">PROCURE TO PAY</p><h2>発注・請求・支払管理</h2><p>修繕費・仲介料を、発注からBill One請求書、支払、物件収支まで一つの流れで管理します。</p></div><div className="procurement-actions">{canManageVendors && <button className="secondary-button" onClick={() => setVendorDialog(true)}>取引先登録</button>}{canEdit && <button className="secondary-button" onClick={() => setInvoiceDialog(true)} disabled={!vendors.length}>請求書を登録</button>}{canEdit && <button className="primary-button" onClick={() => setOrderDialog(true)} disabled={!vendors.length}>発注を登録</button>}</div></div>
@@ -177,11 +225,12 @@ export function ProcurementPage({ canEdit, canManageVendors }: { canEdit: boolea
       <Metric label="支払予定残高" value={metrics.unpaid} tone="green" />
       <article className="procurement-metric red"><span>支払期日超過</span><strong>{metrics.overdue}<small>件</small></strong></article>
     </div>
-    <nav className="procurement-tabs"><button className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}>発注一覧</button><button className={tab === 'invoices' ? 'active' : ''} onClick={() => setTab('invoices')}>請求書</button><button className={tab === 'cashflow' ? 'active' : ''} onClick={() => setTab('cashflow')}>支払予定・資金繰り</button></nav>
-    <div className="procurement-toolbar"><label className="procurement-search">検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="番号、物件、取引先、件名" /></label><label>物件<select value={propertyId} onChange={(event) => setPropertyId(event.target.value)}><option value="">すべての物件</option>{properties.map((property) => <option key={property.asset_id} value={property.asset_id}>{property.short_name || property.asset_name}</option>)}</select></label></div>
+    <nav className="procurement-tabs"><button className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}>発注一覧</button><button className={tab === 'invoices' ? 'active' : ''} onClick={() => setTab('invoices')}>請求書</button><button className={tab === 'cashflow' ? 'active' : ''} onClick={() => setTab('cashflow')}>支払予定・資金繰り</button><button className={tab === 'integrations' ? 'active' : ''} onClick={() => setTab('integrations')}>外部連携受信箱</button></nav>
+    {tab !== 'integrations' && <div className="procurement-toolbar"><label className="procurement-search">検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="番号、物件、取引先、件名" /></label><label>物件<select value={propertyId} onChange={(event) => setPropertyId(event.target.value)}><option value="">すべての物件</option>{properties.map((property) => <option key={property.asset_id} value={property.asset_id}>{property.short_name || property.asset_name}</option>)}</select></label></div>}
     {tab === 'orders' && <OrderTable orders={filteredOrders} canEdit={canEdit} onStatus={updateOrderStatus} loading={loading} />}
     {tab === 'invoices' && <InvoiceTable invoices={filteredInvoices} canEdit={canEdit} onStatus={updateInvoiceStatus} loading={loading} />}
     {tab === 'cashflow' && <CashflowTable payments={filteredCashflow} loading={loading} />}
+    {tab === 'integrations' && <IntegrationInbox appsuiteItems={appsuiteInbox} billoneItems={billoneInbox} canEdit={canEdit} loading={loading} onRefresh={refreshMatches} onCommitAppsuite={commitAppsuite} onCommitBillone={commitBillone} />}
     {orderDialog && <OrderDialog properties={properties} accounts={accounts} vendors={vendors} onClose={() => setOrderDialog(false)} onSaved={() => { setOrderDialog(false); void load(); }} />}
     {invoiceDialog && <InvoiceDialog properties={properties} accounts={accounts} vendors={vendors} orders={orders.filter((order) => !['completed', 'cancelled', 'invoiced'].includes(order.status))} onClose={() => setInvoiceDialog(false)} onSaved={() => { setInvoiceDialog(false); void load(); }} />}
     {vendorDialog && <VendorDialog onClose={() => setVendorDialog(false)} onSaved={() => { setVendorDialog(false); void load(); }} />}
@@ -202,6 +251,15 @@ function InvoiceTable({ invoices, canEdit, onStatus, loading }: { invoices: Invo
 
 function CashflowTable({ payments, loading }: { payments: Cashflow[]; loading: boolean }) { return <div className="procurement-panel"><div className="table-wrap"><table className="procurement-table"><thead><tr><th>支払予定日</th><th>物件・科目</th><th>取引先</th><th>請求書番号</th><th>Bill One ID</th><th>金額</th><th>状態</th><th>支払日</th></tr></thead><tbody>{loading && <tr><td colSpan={8} className="procurement-empty">読み込み中…</td></tr>}{!loading && payments.map((payment) => <tr key={payment.payment_schedule_id}><td className={payment.status !== 'paid' && payment.scheduled_date < today ? 'overdue' : ''}><strong>{payment.scheduled_date}</strong></td><td><strong>{payment.asset_name}</strong><small>{payment.account_name}</small></td><td>{payment.vendor_name}</td><td>{payment.invoice_number || '番号なし'}</td><td>{payment.billone_invoice_id || '手動登録'}</td><td className="numeric"><strong>{yen.format(Number(payment.amount))}</strong></td><td><Status value={payment.status} label={payment.status === 'paid' ? '支払済' : payment.status === 'scheduled' ? '支払予定' : '未予定'} /></td><td>{payment.paid_date || '—'}</td></tr>)}{!loading && !payments.length && <tr><td colSpan={8} className="procurement-empty">支払予定はありません。</td></tr>}</tbody></table></div></div>; }
 function Status({ value, label }: { value: string; label: string }) { return <span className={`procurement-status ${value}`}>{label}</span>; }
+
+function IntegrationInbox({ appsuiteItems, billoneItems, canEdit, loading, onRefresh, onCommitAppsuite, onCommitBillone }: { appsuiteItems: AppsuiteInbox[]; billoneItems: BilloneInbox[]; canEdit: boolean; loading: boolean; onRefresh: () => void; onCommitAppsuite: (id: string) => void; onCommitBillone: (id: string) => void }) {
+  const statusLabel = (status: AppsuiteInbox['match_status']) => status === 'ready' ? '照合済み' : status === 'imported' ? '反映済み' : status === 'ignored' ? '対象外' : '要確認';
+  return <div className="integration-inbox">
+    <div className="integration-inbox-heading"><div><h3>外部連携受信箱</h3><p>AppSuiteの決裁済み発注とBill One請求書を照合し、準備が整った行だけ台帳へ反映します。</p></div>{canEdit && <button className="secondary-button" disabled={loading} onClick={onRefresh}>マスタと再照合</button>}</div>
+    <section className="procurement-panel"><header className="integration-source-heading"><div><strong>AppSuite 修繕発注</strong><small>取引先未登録などの行は、問題を解消してから再照合します。</small></div><span>{appsuiteItems.filter((item) => item.match_status === 'action_required').length}件 要確認</span></header><div className="table-wrap"><table className="procurement-table"><thead><tr><th>稟議番号</th><th>物件・発注内容</th><th>取引先</th><th>金額</th><th>照合</th><th /></tr></thead><tbody>{appsuiteItems.map((item) => <tr key={item.appsuite_procurement_inbox_id}><td>{item.ringi_number ?? '—'}</td><td><strong>{item.title ?? '内容未設定'}</strong><small>{item.property_name ?? '物件未特定'}</small></td><td>{item.vendor_name ?? '—'}</td><td className="numeric">{item.gross_amount ? yen.format(Number(item.gross_amount)) : '—'}</td><td><Status value={item.match_status} label={statusLabel(item.match_status)} />{item.issues.length > 0 && <small>{item.issues.join('／')}</small>}</td><td>{canEdit && item.match_status === 'ready' && <button className="row-action" onClick={() => onCommitAppsuite(item.appsuite_procurement_inbox_id)}>発注へ反映</button>}</td></tr>)}{!appsuiteItems.length && <tr><td colSpan={6} className="procurement-empty">AppSuiteアプリID 87を同期すると、決裁済みの発注候補が表示されます。</td></tr>}</tbody></table></div></section>
+    <section className="procurement-panel"><header className="integration-source-heading"><div><strong>Bill One 請求書</strong><small>連携受信APIが同じ請求書IDを再受信しても重複登録しません。</small></div><span>{billoneItems.filter((item) => item.match_status === 'action_required').length}件 要確認</span></header><div className="table-wrap"><table className="procurement-table"><thead><tr><th>Bill One ID／請求書番号</th><th>物件・取引先</th><th>請求日／支払期日</th><th>金額</th><th>照合</th><th /></tr></thead><tbody>{billoneItems.map((item) => <tr key={item.billone_invoice_inbox_id}><td><strong>{item.source_invoice_id}</strong><small>{item.invoice_number ?? '番号なし'}</small></td><td><strong>{item.supplier_name ?? '取引先未特定'}</strong><small>{item.property_name ?? '物件未特定'}</small></td><td>{item.invoice_date ?? '—'}<small>{item.due_date ? `支払 ${item.due_date}` : '支払期日なし'}</small></td><td className="numeric">{item.gross_amount ? yen.format(Number(item.gross_amount)) : '—'}</td><td><Status value={item.match_status} label={statusLabel(item.match_status)} />{item.issues.length > 0 && <small>{item.issues.join('／')}</small>}</td><td>{canEdit && item.match_status === 'ready' && <button className="row-action" onClick={() => onCommitBillone(item.billone_invoice_inbox_id)}>請求書へ反映</button>}</td></tr>)}{!billoneItems.length && <tr><td colSpan={6} className="procurement-empty">Bill One連携受信APIから届いた請求書はここに表示されます。</td></tr>}</tbody></table></div></section>
+  </div>;
+}
 
 function OrderDialog({ properties, accounts, vendors, onClose, onSaved }: { properties: Property[]; accounts: Account[]; vendors: Vendor[]; onClose: () => void; onSaved: () => void }) {
   const [draft, setDraft] = useState<OrderDraft>({ property_id: properties[0]?.asset_id ?? '', account_id: accounts[0]?.account_id ?? '', vendor_id: vendors[0]?.vendor_id ?? '', order_type: 'repair', title: '', description: '', gross_amount: 0, order_date: today, expected_completion_date: '', expected_payment_date: '', appsuite_ringi_number: '' });

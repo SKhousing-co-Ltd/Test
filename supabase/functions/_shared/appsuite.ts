@@ -58,7 +58,8 @@ function value(payload: Record<string, unknown>, key: string): string | null {
   return typeof field.val === 'string' ? field.val.trim() || null : String(field.val);
 }
 
-function workflowType(name: string | null) {
+function workflowType(name: string | null, appId: string) {
+  if (appId === '87') return '修繕発注稟議';
   if (!name) return 'その他';
   if (/定期借家.*(?:まき直し|巻き直し)|(?:まき直し|巻き直し).*定期借家/.test(name)) return '定期借家まき直し稟議';
   if (name.includes('新規契約稟議')) return '新規契約稟議';
@@ -82,7 +83,7 @@ export async function fetchRecords(appId: string): Promise<AppsuiteRecord[]> {
       const requirement = value(payload, '申請の要件');
       const dataId = value(payload, 'データID');
       if (!dataId) continue;
-      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: null, raw_payload: payload });
+      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement, appId), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: null, raw_payload: payload });
     }
   }
   return results;
