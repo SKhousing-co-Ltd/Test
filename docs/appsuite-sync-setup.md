@@ -31,3 +31,11 @@ select cron.alter_job(
 ```
 
 Supabase Vaultを使う場合は、`<...>` を `vault.decrypted_secrets` の参照に置き換えます。これにより、定期実行用の秘密値をSQL本文へ残しません。
+
+## service_role の同期依存権限
+
+`appsuite_record` のトリガーは呼出元権限で動作します。Edge Function が使う `service_role` には、契約照合と発注候補照合に必要な参照権限、変更依頼の登録権限、契約照合関数の実行権限だけを付与します。契約・物件・発注本体への書込権限や、`anon` への公開権限は付与しません。
+
+適用SQLは `20260817075940_grant_appsuite_sync_service_role_dependencies.sql` で管理します。権限エラーを回避するために関数を `SECURITY DEFINER` へ変更しないでください。
+
+同期の成否はHTTP結果だけでなく、`appsuite_sync_run` のアプリ別 `status`、取得・追加・更新・欠落件数と `appsuite_application.last_synced_at` を突合します。
