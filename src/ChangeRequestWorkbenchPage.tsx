@@ -28,7 +28,7 @@ const editableFields = [
   ['deposit_amount', '保証金・敷金'], ['security_deposit_amount', '敷金'], ['key_money_amount', '礼金'],
   ['renewal_fee_amount', '更新料'], ['lease_start_date', '契約開始日'], ['lease_end_date', '契約終了日'],
 ] as const;
-const statusLabel: Record<string, string> = { open: '要確認', in_review: '確認中', on_hold: '保留', resolved: 'Resolve済み', applied: '適用済み', excluded: '対象外' };
+const statusLabel: Record<string, string> = { open: '要確認', in_review: '確認中', on_hold: '保留', resolved: '確認済み（確定待ち）', applied: '確定済み', excluded: '対象外' };
 const sourceLabels: Record<string, string> = { floor: '階', unit: '取込元の区画表記', tenant_name: '取込元のテナント名', tenant_code: '取込元のテナントコード', discriminator: '仮識別子' };
 const formatDate = (value: string) => new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 const prettyValue = (value: unknown) => value === null || value === undefined || value === '' ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -49,34 +49,44 @@ function getImportType(request: ChangeRequest) {
   return request.source_type === 'initial_import' ? request.title.replace(/^取込エラー:\s*/, '') : null;
 }
 
+function isReviewOnlyImport(request: ChangeRequest) {
+  return request.source_type === 'initial_import'
+    && Boolean(request.items?.length)
+    && request.items!.every((item) => item.entity_type === 'rent_roll_import_issue');
+}
+
 function IssueContext({ request }: { request: ChangeRequest }) {
   const issueType = getImportType(request);
   if (!issueType) return null;
   const sourceRows = Object.entries(request.source_payload).filter(([, value]) => value !== null && value !== undefined && value !== '');
   const importSource = request.items?.find((item) => item.import_issue)?.import_issue;
-  const guide: Record<string, { title: string; steps: string[] }> = {
+  const guide: Record<string, { title: string; objective: string; steps: string[] }> = {
     multiple_tenant_codes: {
       title: 'この区画には複数のテナントコードが記載されています',
+      objective: 'この区画で採用するテナントコードを1つ特定します。',
       steps: ['下の「取込元の記載」でテナントコードを確認します。改行で複数並んでいる場合があります。', '元のレントロールまたは契約書を見て、この区画で採用するテナントコードを1つ決めます。', '採用するコード・根拠を対応メモへ残します。区画を特定できない場合は「保留」にします。'],
     },
     combined_unit: {
-      title: '複数区画をまとめて1契約として記載されています',
-      steps: ['下の「取込元の区画表記」と階を確認します。例：A・B、C〜E。', '平面図と契約書を確認し、実際にこの契約に含める区画を特定します。', '区画が確定した後だけ、必要に応じて賃料・面積・期間を「契約条件を修正」で入力します。'],
+      title: '複数区画を1契約にまとめた取込内容です',
+      objective: '取込元の区画の組み合わせが、契約書・平面図と一致するかを確定します。一致する場合、契約条件の入力は不要です。',
+      steps: ['下の「取込元の区画表記」と階を確認します。例：A・B、C〜E。', '契約書と平面図で、表示された全区画がこの契約に含まれるか確認します。', '一致する場合は確認した資料を対応メモに残して「確認完了にする」を押します。不一致の場合は正しい区画をメモに残して「保留」にします。'],
     },
     temporary_unit_discriminator: {
       title: '同じ名称の区画を区別するため、仮識別子を付けています',
+      objective: '仮識別子と実際の区画の対応を特定します。',
       steps: ['階・区画表記・テナント名・仮識別子が、元の資料と一致するか確認します。', 'どの実際の区画に対応するかを平面図・契約書で特定します。', '特定できない場合は、判断理由をメモに残して「保留」にします。'],
     },
     layout_not_supported: {
       title: 'このExcelレイアウトは自動取込の対象外です',
+      objective: '自動取込に必要な列の場所を特定し、取込設定の追加を依頼します。',
       steps: ['元のExcelを開き、棟・階・区画・テナントがどの列に書かれているか確認します。', '資料の保存場所と確認結果を対応メモへ残します。', 'この依頼は賃料入力では解決しないため、「保留」にして取込設定の追加を依頼します。'],
     },
   };
-  const detail = guide[issueType] ?? { title: '取込内容の確認が必要です', steps: ['下の取込元の記載と元の資料を照合します。', '判断内容を対応メモに残します。'] };
+  const detail = guide[issueType] ?? { title: '取込内容の確認が必要です', objective: '取込元の値と元資料の一致・不一致を特定します。', steps: ['下の取込元の記載と元の資料を照合します。', '判断内容を対応メモに残します。'] };
   return <section className="change-card issue-context">
     <p className="section-kicker">IMPORT SOURCE</p>
     <h4>{detail.title}</h4>
-    <p>取込時の元データをそのまま表示しています。まずこの内容と元のExcel・契約書・平面図を照合してください。</p>
+    <div className="change-objective"><strong>この依頼で確定すること</strong><p>{detail.objective}</p></div>
     <div className="change-diff-table">
       <div className="change-diff-head"><span>ソースシート（物件）</span><span>元Excelファイル</span><span>該当行</span></div>
       <div><strong>{importSource?.source_sheet_name ?? '確認中'}</strong><span>{importSource?.source_file_name ?? '確認中'}</span><span>{importSource?.source_row_number ? `${importSource.source_row_number} 行目` : '行番号なし'}</span></div>
@@ -144,6 +154,8 @@ export function ChangeRequestWorkbenchPage() {
     return matchesStatus && (!search.trim() || text.includes(search.trim().toLocaleLowerCase()));
   }), [filter, requests, search]);
   const editable = selected?.status === 'open' || selected?.status === 'in_review' || selected?.status === 'on_hold';
+  const reviewOnly = selected ? isReviewOnlyImport(selected) : false;
+  const domainItems = selected?.items?.filter((item) => item.entity_type !== 'rent_roll_import_issue') ?? [];
 
   const addComment = async () => {
     if (!selected || !supabase || !comment.trim()) return;
@@ -176,20 +188,26 @@ export function ChangeRequestWorkbenchPage() {
     setMessage('契約条件を保存しました。内容を確認してからResolveしてください。'); await loadRequests();
   };
   const resolve = async () => {
-    if (!selected || !supabase || !window.confirm('確認内容を見直したうえでResolveしますか？')) return;
+    if (!selected || !supabase || !window.confirm('確認内容を見直したうえで、確認完了にしますか？')) return;
     setWorking(true); setError('');
-    const { error: resolveError } = await supabase.rpc('resolve_change_request', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version, p_resolution_payload: {} });
+    const { data, error: resolveError } = await supabase.rpc('resolve_change_request', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version, p_resolution_payload: {} });
     setWorking(false);
-    if (resolveError) { setError(`Resolveできませんでした: ${resolveError.message}`); return; }
-    setMessage('Resolveしました。続けて「適用を確定」を押すと正本へ反映します。'); await loadRequests();
+    if (resolveError) { setError(`確認完了にできませんでした: ${resolveError.message}`); return; }
+    const resolved = (Array.isArray(data) ? data[0] : data) as ChangeRequest | null;
+    if (!resolved || resolved.status !== 'resolved') { setError('確認完了をDBで確認できませんでした。画面を更新して再試行してください。'); return; }
+    setFilter('resolved');
+    setMessage('確認完了にしました。続けて「内容を確定」を押すと確定済みになります。'); await loadRequests();
   };
   const apply = async () => {
-    if (!selected || !supabase || !window.confirm('正本への反映を確定しますか？')) return;
+    if (!selected || !supabase || !window.confirm(reviewOnly ? '確認内容を確定し、この取込依頼を閉じますか？' : '正本への反映を確定しますか？')) return;
     setWorking(true); setError('');
-    const { error: applyError } = await supabase.rpc('apply_change_request', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version });
+    const { data, error: applyError } = await supabase.rpc('apply_change_request', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version });
     setWorking(false);
     if (applyError) { setError(`適用できませんでした: ${applyError.message}`); return; }
-    setMessage('正本へ反映し、取込エラーを解決済みにしました。'); await loadRequests();
+    const applied = (Array.isArray(data) ? data[0] : data) as ChangeRequest | null;
+    if (!applied || applied.status !== 'applied') { setError('確定済みへの更新をDBで確認できませんでした。画面を更新して再試行してください。'); return; }
+    setFilter('applied');
+    setMessage('内容を確定し、取込依頼を確定済みにしました。'); await loadRequests();
   };
 
   return <section className="change-workbench">
@@ -197,16 +215,16 @@ export function ChangeRequestWorkbenchPage() {
     {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}</p>}
     <div className="change-workbench-layout">
       <aside className="change-request-list"><header><div><h3>対応依頼</h3><p>未対応のものから順に確認します</p></div><button className="secondary-button" onClick={() => void loadRequests()} disabled={loading}>更新</button></header>
-        <div className="change-filters"><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="open">要確認</option><option value="on_hold">保留</option><option value="resolved">Resolve済み</option><option value="applied">適用済み</option><option value="excluded">対象外</option><option value="all">すべて</option></select><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="区画・テナント名・コードで検索" /></div>
+        <div className="change-filters"><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="open">要確認</option><option value="on_hold">保留</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option><option value="all">すべて</option></select><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="区画・テナント名・コードで検索" /></div>
         <div className="change-request-rows">{loading ? <p className="change-empty">読み込み中…</p> : filtered.length === 0 ? <p className="change-empty">該当する対応依頼はありません。</p> : filtered.map((request) => <button key={request.change_request_id} onClick={() => setSelectedId(request.change_request_id)} className={request.change_request_id === selectedId ? 'selected' : ''}><span className={`change-status ${request.status}`}>{statusLabel[request.status] ?? request.status}</span><strong>{request.title}</strong><small>{request.summary || '確認待ち'}</small></button>)}</div>
       </aside>
       <main className="change-request-detail">{selected ? <>
         <header className="change-detail-heading"><div><p className="section-kicker">{selected.source_type === 'initial_import' ? 'INITIAL IMPORT' : selected.source_type}</p><h3>{selected.title}</h3><p>{selected.summary || '取込内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span></header>
         <IssueContext request={selected} />
-        <section className="change-card"><h4>反映する契約条件</h4><p>{getImportType(selected) ? '区画が確定した後にだけ、下の項目を入力します。区画やテナントの判定そのものをここで無理に入力しないでください。' : '現在の値と反映予定の値を確認します。'}</p><div className="change-diff-table"><div className="change-diff-head"><span>項目</span><span>現在</span><span>反映予定</span></div>{(selected.items ?? []).map((item) => <div key={item.change_request_item_id}><strong>{item.field_name || '未設定（取込エラーの確認待ち）'}</strong><span>{prettyValue(item.current_value)}</span><span className="proposed-value">{prettyValue(item.proposed_value)}</span></div>)}</div></section>
-        {editable && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画<select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}><option value="">選択してください</option>{availableContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
+        {reviewOnly ? <section className="change-card change-no-edit"><h4>契約条件の入力は不要です</h4><p>この依頼は、取込内容と元資料の一致を確認する作業です。確認した資料と結果を対応メモに残してください。</p></section> : <section className="change-card"><h4>反映する契約条件</h4><p>現在の値と反映予定の値を確認します。</p><div className="change-diff-table"><div className="change-diff-head"><span>項目</span><span>現在</span><span>反映予定</span></div>{domainItems.map((item) => <div key={item.change_request_item_id}><strong>{item.field_name || '未設定'}</strong><span>{prettyValue(item.current_value)}</span><span className="proposed-value">{prettyValue(item.proposed_value)}</span></div>)}</div></section>}
+        {editable && !reviewOnly && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画<select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}><option value="">選択してください</option>{availableContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
         <section className="change-card"><h4>対応メモ</h4><p>確認した資料、採用する区画・テナントコード、判断理由を残してください。</p><div className="change-comments">{selected.comments?.length ? selected.comments.map((entry) => <div key={entry.change_request_comment_id}><strong>開発メンバー</strong><time>{formatDate(entry.created_at)}</time><p>{entry.body}</p></div>) : <p className="muted">まだメモはありません。</p>}</div>{editable && <div className="comment-composer"><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="例：原本Excelの〇シートと契約書を確認。4F A〜Cを1契約として扱う。" /><button className="secondary-button" onClick={() => void addComment()} disabled={working || !comment.trim()}>メモを追加</button></div>}</section>
-        {editable ? <footer className="change-actions"><button className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working}>保留にする</button><button className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working}>対象外にする</button><button className="primary-button" onClick={() => void resolve()} disabled={working}>{working ? '処理中…' : 'Resolveする'}</button></footer> : selected.status === 'resolved' ? <footer className="change-actions"><button className="primary-button" onClick={() => void apply()} disabled={working}>{working ? '処理中…' : '適用を確定'}</button></footer> : null}
+        {editable ? <footer className="change-actions"><button className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working}>保留にする</button><button className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working}>対象外にする</button><button className="primary-button" onClick={() => void resolve()} disabled={working}>{working ? '処理中…' : '確認完了にする'}</button></footer> : selected.status === 'resolved' ? <footer className="change-actions"><p>最終確認後、確定済みとして取込依頼を閉じます。</p><button className="primary-button" onClick={() => void apply()} disabled={working}>{working ? '処理中…' : '内容を確定'}</button></footer> : null}
       </> : <p className="change-empty">左側から対応依頼を選択してください。</p>}</main>
     </div>
   </section>;
