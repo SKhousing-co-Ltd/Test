@@ -83,7 +83,7 @@ export async function fetchRecords(appId: string): Promise<AppsuiteRecord[]> {
       const requirement = value(payload, '申請の要件');
       const dataId = value(payload, 'データID');
       if (!dataId) continue;
-      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement, appId), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: null, raw_payload: payload });
+      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement, appId), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: value(payload, '稟議番号'), raw_payload: payload });
     }
   }
   return results;
@@ -104,8 +104,8 @@ export async function enrichRingiNumbers(records: AppsuiteRecord[], existing: Ma
       const index = nextIndex++;
       const record = records[index];
       const stored = existing.get(record.data_id);
-      const shouldFetchDetail = !stored || !stored.ringi_number || changed(record, stored);
-      enriched[index] = { ...record, ringi_number: shouldFetchDetail ? await fetchRingiNumber(record.app_id, record.data_id) : stored.ringi_number };
+      const shouldFetchDetail = !record.ringi_number && (!stored || !stored.ringi_number || changed(record, stored));
+      enriched[index] = { ...record, ringi_number: record.ringi_number ?? (shouldFetchDetail ? await fetchRingiNumber(record.app_id, record.data_id) : stored?.ringi_number ?? null) };
     }
   };
   await Promise.all(Array.from({ length: Math.min(5, records.length) }, worker));

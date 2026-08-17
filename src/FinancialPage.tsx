@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { supabase } from './lib/supabase';
 import { Dialog } from './components/Dialog';
 import { ForecastManager, LccManager } from './FinancialPlanning';
+import { FinancialActualImport } from './FinancialActualImport';
 
-type Property = { property_id: string; property_name: string; short_name: string | null };
-type Account = { account_id: string; account_name: string; income_expense_type: '収入' | '支出' };
+export type FinancialProperty = { property_id: string; property_name: string; short_name: string | null; asset_code: number | null };
+export type FinancialAccount = { account_id: string; account_name: string; income_expense_type: '収入' | '支出' };
+type Property = FinancialProperty;
+type Account = FinancialAccount;
 type Summary = { property_id: string; accounting_month: string; contract_rent_income: number; contract_common_charge_income: number; other_income: number; recurring_expense: number; variable_expense: number; income_total: number; expense_total: number; balance: number };
 type RecurringItem = { recurring_item_id: string; property_id: string; account_id: string; item_name: string; monthly_amount: number; effective_from_month: string; effective_to_month: string | null; counterparty_name: string | null; notes: string | null; is_active: boolean; account?: Pick<Account, 'account_name' | 'income_expense_type'> | null };
 type MonthlyEntry = { financial_entry_id: string; property_id: string; account_id: string; accounting_month: string; amount: number; entry_date: string | null; description: string; counterparty_name: string | null; notes: string | null; account?: Pick<Account, 'account_name' | 'income_expense_type'> | null };
 type Detail = { source_type: string; source_id: string; account_id: string; account_name: string; income_expense_type: '収入' | '支出'; amount: number; description: string; counterparty_name: string | null };
-type Tab = 'dashboard' | 'forecast' | 'lcc' | 'recurring' | 'monthly';
+type Tab = 'dashboard' | 'forecast' | 'lcc' | 'recurring' | 'monthly' | 'import';
 
 const yen = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
 const monthLabel = (value: string) => new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'short' }).format(new Date(`${value.slice(0, 7)}-01T00:00:00`));
@@ -27,17 +30,17 @@ export function FinancialPage({ canManage = false }: { canManage?: boolean }) {
   const loadMasters = async () => {
     if (!supabase) return;
     const [propertyResult, accountResult] = await Promise.all([
-      supabase.from('asset_master').select('asset_id, asset_name, short_name').order('asset_name'),
+      supabase.from('asset_master').select('asset_id, asset_code, asset_name, short_name').order('asset_name'),
       supabase.from('income_expense_account_master').select('account_id, account_name, income_expense_type').order('account_id'),
     ]);
     if (propertyResult.error || accountResult.error) { setNotice(propertyResult.error?.message ?? accountResult.error?.message ?? 'マスタの取得に失敗しました。'); return; }
-    const nextProperties = (propertyResult.data ?? []).map((asset: any) => ({ property_id: asset.asset_id, property_name: asset.asset_name, short_name: asset.short_name })) as Property[];
+    const nextProperties = (propertyResult.data ?? []).map((asset: any) => ({ property_id: asset.asset_id, asset_code: asset.asset_code, property_name: asset.asset_name, short_name: asset.short_name })) as Property[];
     setProperties(nextProperties); setAccounts((accountResult.data ?? []) as Account[]);
     setSelectedPropertyId((current) => current || nextProperties[0]?.property_id || '');
   };
   useEffect(() => { void loadMasters(); }, []);
   const selectedProperty = properties.find((property) => property.property_id === selectedPropertyId);
-  return <section className="financial-page"><nav className="tabs"><button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>年度ダッシュボード</button><button className={tab === 'forecast' ? 'active' : ''} onClick={() => setTab('forecast')}>予算・将来予測</button><button className={tab === 'lcc' ? 'active' : ''} onClick={() => setTab('lcc')}>LCC</button><button className={tab === 'recurring' ? 'active' : ''} onClick={() => setTab('recurring')}>定期収支</button><button className={tab === 'monthly' ? 'active' : ''} onClick={() => setTab('monthly')}>月次実績</button></nav><section className="toolbar"><label>対象ビル<select value={selectedPropertyId} onChange={(e) => setSelectedPropertyId(e.target.value)}>{properties.map((property) => <option value={property.property_id} key={property.property_id}>{property.short_name || property.property_name}</option>)}</select></label>{(tab === 'dashboard' || tab === 'forecast') && <label>年度<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{[year - 1, year, year + 1].map((value) => <option value={value} key={value}>{value}年度（4月〜3月）</option>)}</select></label>}<span className="selected-property">{selectedProperty?.property_name}</span></section>{notice && <p className="notice">{notice}</p>}{tab === 'dashboard' && <FinancialDashboard properties={properties} selectedPropertyId={selectedPropertyId} year={year} />}{tab === 'forecast' && <ForecastManager propertyId={selectedPropertyId} accounts={accounts} year={year} canManage={canManage} />}{tab === 'lcc' && <LccManager propertyId={selectedPropertyId} accounts={accounts} canManage={canManage} />}{tab === 'recurring' && <RecurringManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'monthly' && <MonthlyManager propertyId={selectedPropertyId} accounts={accounts} />}</section>;
+  return <section className="financial-page"><nav className="tabs"><button className={tab === 'dashboard' ? 'active' : ''} onClick={() => setTab('dashboard')}>年度ダッシュボード</button><button className={tab === 'forecast' ? 'active' : ''} onClick={() => setTab('forecast')}>予算・将来予測</button><button className={tab === 'lcc' ? 'active' : ''} onClick={() => setTab('lcc')}>LCC</button><button className={tab === 'recurring' ? 'active' : ''} onClick={() => setTab('recurring')}>定期収支</button><button className={tab === 'monthly' ? 'active' : ''} onClick={() => setTab('monthly')}>月次実績</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>実績CSV取込</button></nav>{tab !== 'import' && <section className="toolbar"><label>対象ビル<select value={selectedPropertyId} onChange={(e) => setSelectedPropertyId(e.target.value)}>{properties.map((property) => <option value={property.property_id} key={property.property_id}>{property.short_name || property.property_name}</option>)}</select></label>{(tab === 'dashboard' || tab === 'forecast') && <label>年度<select value={year} onChange={(e) => setYear(Number(e.target.value))}>{[year - 1, year, year + 1].map((value) => <option value={value} key={value}>{value}年度（4月〜3月）</option>)}</select></label>}<span className="selected-property">{selectedProperty?.property_name}</span></section>}{notice && <p className="notice">{notice}</p>}{tab === 'dashboard' && <FinancialDashboard properties={properties} selectedPropertyId={selectedPropertyId} year={year} />}{tab === 'forecast' && <ForecastManager propertyId={selectedPropertyId} accounts={accounts} year={year} canManage={canManage} />}{tab === 'lcc' && <LccManager propertyId={selectedPropertyId} accounts={accounts} canManage={canManage} />}{tab === 'recurring' && <RecurringManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'monthly' && <MonthlyManager propertyId={selectedPropertyId} accounts={accounts} />}{tab === 'import' && <FinancialActualImport properties={properties} accounts={accounts} />}</section>;
 }
 
 function FinancialDashboard({ properties, selectedPropertyId, year }: { properties: Property[]; selectedPropertyId: string; year: number }) {
