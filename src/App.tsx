@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   BrowserRouter,
@@ -95,24 +95,40 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [contractLoadError, setContractLoadError] = useState('');
+  const currentUserIdRef = useRef<string | null>(null);
+  const profileRequestIdRef = useRef(0);
 
-  const loadProfile = async (nextSession: Session | null) => {
+  const loadProfile = async (nextSession: Session | null, blockUi = false) => {
+    const requestedUserId = nextSession?.user.id ?? null;
+    const requestId = ++profileRequestIdRef.current;
+    currentUserIdRef.current = requestedUserId;
     setSession(nextSession);
     if (!nextSession || !supabase) { setProfile(null); setIsLoading(false); return; }
-    setIsLoading(true);
+    if (blockUi) setIsLoading(true);
     const { data, error } = await supabase
       .from('user_profiles')
       .select('user_id, employee_id, email, role, account_status, approved_at, created_at, employee:employee_master(employee_name)')
       .eq('user_id', nextSession.user.id)
       .maybeSingle();
-    setProfile(error ? null : data as UserProfile | null);
-    setIsLoading(false);
+    if (requestId !== profileRequestIdRef.current || currentUserIdRef.current !== requestedUserId) return;
+    if (!error || blockUi) setProfile(error ? null : data as UserProfile | null);
+    if (blockUi) setIsLoading(false);
   };
 
   useEffect(() => {
     if (!supabase) { setIsLoading(false); return; }
-    void supabase.auth.getSession().then(({ data }) => void loadProfile(data.session));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => void loadProfile(nextSession));
+    void supabase.auth.getSession().then(({ data }) => void loadProfile(data.session, true));
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'INITIAL_SESSION') return;
+
+      if (event === 'TOKEN_REFRESHED' && nextSession?.user.id === currentUserIdRef.current) {
+        setSession(nextSession);
+        return;
+      }
+
+      const userChanged = (nextSession?.user.id ?? null) !== currentUserIdRef.current;
+      void loadProfile(nextSession, userChanged);
+    });
     return () => listener.subscription.unsubscribe();
   }, []);
 
