@@ -164,7 +164,7 @@ function App() {
         <Route element={<ProtectedRoute session={session} profile={profile} isLoading={isLoading} />}>
           <Route element={<PortalLayout profile={profile!} onSignOut={signOut} />}>
             <Route path="/dashboard" element={<Dashboard contracts={contracts} userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
-            <Route path="/financial" element={<FinancialPage />} />
+            <Route path="/financial" element={<FinancialPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/procurement" element={<ProcurementPage canEdit={profile?.role !== 'viewer'} canManageVendors={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/rent-roll" element={<RentRollPage />} />
             <Route path="/change-requests" element={<ChangeRequestWorkbenchPage />} />
