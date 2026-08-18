@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './lib/supabase';
 
 type RentRollStatus = 'occupied' | 'scheduled' | 'vacant' | 'applied' | 'unavailable';
+type ProductCategory = 'office' | 'residential' | 'parking' | 'bicycle_parking' | 'signage' | 'warehouse' | 'antenna' | 'other';
 
 type PropertyOption = {
   propertyId: string;
@@ -51,6 +52,7 @@ type UnitSource = {
   unit_code: string;
   unit_name: string | null;
   floor_label: string | null;
+  unit_type: string;
   rentable_area_sqm: number | null;
   source_discriminator: string | null;
   leasing_status: { leasing_status: string } | { leasing_status: string }[] | null;
@@ -60,6 +62,7 @@ type UnitSource = {
 type RentRollRow = {
   unitId: string;
   status: RentRollStatus;
+  productCategory: ProductCategory;
   floor: string;
   unitCode: string;
   unitName: string;
@@ -80,6 +83,19 @@ const today = new Date().toISOString().slice(0, 10);
 const currencyFormatter = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
 const numberFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });
 const collator = new Intl.Collator('ja-JP', { numeric: true, sensitivity: 'base' });
+const productCategories: Array<{ code: ProductCategory; label: string }> = [
+  { code: 'office', label: '事務所' },
+  { code: 'residential', label: '住居' },
+  { code: 'parking', label: '駐車場' },
+  { code: 'bicycle_parking', label: '駐輪場' },
+  { code: 'signage', label: '看板' },
+  { code: 'warehouse', label: '倉庫' },
+  { code: 'antenna', label: 'アンテナ' },
+  { code: 'other', label: 'その他' },
+];
+const allProductCategories = productCategories.map(({ code }) => code);
+const productCategoryLabel = Object.fromEntries(productCategories.map(({ code, label }) => [code, label])) as Record<ProductCategory, string>;
+const productCategorySet = new Set<ProductCategory>(allProductCategories);
 
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: '入居中',
@@ -88,6 +104,34 @@ const statusLabel: Record<RentRollStatus, string> = {
   applied: '申込中',
   unavailable: '利用不可',
 };
+
+function normalizeProductCategory(value: string): ProductCategory {
+  if (value === 'storage') return 'warehouse';
+  if (value === 'equipment' || value === 'retail') return 'other';
+  return productCategorySet.has(value as ProductCategory) ? value as ProductCategory : 'other';
+}
+
+function storedProductCategories(propertyId: string): ProductCategory[] {
+  if (!propertyId) return allProductCategories;
+  try {
+    const stored = localStorage.getItem(`rent-roll-product-filters:v1:${propertyId}`);
+    if (!stored) return allProductCategories;
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return allProductCategories;
+    return allProductCategories.filter((category) => parsed.includes(category));
+  } catch {
+    return allProductCategories;
+  }
+}
+
+function summarizeRows(targetRows: RentRollRow[]) {
+  return {
+    units: targetRows.length,
+    occupied: targetRows.filter((row) => row.status === 'occupied' || row.status === 'scheduled').length,
+    vacant: targetRows.filter((row) => row.status === 'vacant').length,
+    monthlyTotal: targetRows.reduce((total, row) => total + row.total, 0),
+  };
+}
 
 const amount = (value: number | null | undefined) => value ?? 0;
 
@@ -146,6 +190,7 @@ function toRentRollRow(source: UnitSource, asOfDate: string): RentRollRow {
   return {
     unitId: source.unit_id,
     status,
+    productCategory: normalizeProductCategory(source.unit_type),
     floor: source.floor_label ?? '',
     unitCode: source.unit_code,
     unitName: source.unit_name ?? source.unit_code,
@@ -173,6 +218,7 @@ export function RentRollPage() {
   const [rows, setRows] = useState<RentRollRow[]>([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | RentRollStatus>('all');
+  const [selectedProductCategories, setSelectedProductCategories] = useState<ProductCategory[]>(allProductCategories);
   const [asOfDate, setAsOfDate] = useState(today);
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -224,6 +270,10 @@ export function RentRollPage() {
   }, []);
 
   useEffect(() => {
+    setSelectedProductCategories(storedProductCategories(propertyId));
+  }, [propertyId]);
+
+  useEffect(() => {
     if (!propertyId) {
       setRows([]);
       return;
@@ -240,7 +290,7 @@ export function RentRollPage() {
       const { data, error: loadError } = await supabase
         .from('unit_master')
         .select(`
-          unit_id, unit_code, unit_name, floor_label, rentable_area_sqm, source_discriminator,
+          unit_id, unit_code, unit_name, floor_label, unit_type, rentable_area_sqm, source_discriminator,
           leasing_status:unit_leasing_status(leasing_status),
           allocations:lease_contract_unit(
             lease_start_date, lease_end_date, created_by_amendment:lease_contract_amendment!lease_contract_unit_created_by_amendment_id_fkey(status), leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, monthly_total_amount,
@@ -279,22 +329,41 @@ export function RentRollPage() {
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('ja-JP');
+    const selectedCategories = new Set(selectedProductCategories);
     return sortedRows.filter((row) => {
+      const matchesProductCategory = selectedCategories.has(row.productCategory);
       const matchesStatus = statusFilter === 'all' || row.status === statusFilter;
       const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantCode, row.tenantName]
         .some((value) => value.toLocaleLowerCase('ja-JP').includes(normalizedQuery));
-      return matchesStatus && matchesQuery;
+      return matchesProductCategory && matchesStatus && matchesQuery;
     });
-  }, [query, sortedRows, statusFilter]);
+  }, [query, selectedProductCategories, sortedRows, statusFilter]);
 
-  const summary = useMemo(() => ({
-    units: rows.length,
-    occupied: rows.filter((row) => row.status === 'occupied' || row.status === 'scheduled').length,
-    vacant: rows.filter((row) => row.status === 'vacant').length,
-    monthlyTotal: rows.reduce((total, row) => total + row.total, 0),
-  }), [rows]);
+  const summary = useMemo(() => summarizeRows(filteredRows), [filteredRows]);
+  const overallSummary = useMemo(() => summarizeRows(rows), [rows]);
+  const productCounts = useMemo(() => Object.fromEntries(allProductCategories.map((category) => [
+    category,
+    rows.filter((row) => row.productCategory === category).length,
+  ])) as Record<ProductCategory, number>, [rows]);
 
   const selectedProperty = properties.find((property) => property.propertyId === propertyId);
+
+  const saveSelectedProductCategories = (categories: ProductCategory[]) => {
+    setSelectedProductCategories(categories);
+    if (!propertyId) return;
+    try {
+      localStorage.setItem(`rent-roll-product-filters:v1:${propertyId}`, JSON.stringify(categories));
+    } catch {
+      // The filter still works for the current page when browser storage is unavailable.
+    }
+  };
+
+  const toggleProductCategory = (category: ProductCategory) => {
+    const nextCategories = selectedProductCategories.includes(category)
+      ? selectedProductCategories.filter((item) => item !== category)
+      : allProductCategories.filter((item) => item === category || selectedProductCategories.includes(item));
+    saveSelectedProductCategories(nextCategories);
+  };
 
   return <section className="rent-roll-page">
     <div className="rent-roll-heading">
@@ -327,26 +396,49 @@ export function RentRollPage() {
       </label>
     </div>
 
+    <section className="rent-roll-product-filter" aria-labelledby="rent-roll-product-filter-title">
+      <div className="rent-roll-product-filter-heading">
+        <div><h3 id="rent-roll-product-filter-title">商品区分</h3><p>表示する商品を複数選択できます。</p></div>
+        <div className="rent-roll-product-filter-actions">
+          <button type="button" onClick={() => saveSelectedProductCategories(allProductCategories)}>全選択</button>
+          <button type="button" onClick={() => saveSelectedProductCategories([])}>全解除</button>
+        </div>
+      </div>
+      <div className="rent-roll-product-options">
+        {productCategories.map(({ code, label }) => <label key={code} className={selectedProductCategories.includes(code) ? 'selected' : ''}>
+          <input type="checkbox" checked={selectedProductCategories.includes(code)} onChange={() => toggleProductCategory(code)} />
+          <span>{label}</span><small>{numberFormatter.format(productCounts[code])}</small>
+        </label>)}
+      </div>
+      <div className="rent-roll-selected-products">
+        <strong>選択中</strong>
+        {selectedProductCategories.length > 0
+          ? selectedProductCategories.map((category) => <span key={category}>{productCategoryLabel[category]}</span>)
+          : <em>選択されている商品はありません</em>}
+      </div>
+    </section>
+
     {error && <p className="rent-roll-notice">{error}</p>}
     {!loadingProperties && properties.length === 0 && !error && <p className="rent-roll-notice">表示できるレントロール物件がありません。</p>}
 
     {selectedProperty && <div className="rent-roll-metrics" aria-label={`${selectedProperty.propertyName} の集計`}>
-      <div><span>区画数</span><strong>{numberFormatter.format(summary.units)} 区画</strong></div>
-      <div><span>入居中</span><strong>{numberFormatter.format(summary.occupied)} 区画</strong></div>
-      <div><span>空室</span><strong>{numberFormatter.format(summary.vacant)} 区画</strong></div>
-      <div className="rent-roll-total"><span>月額合計</span><strong>{currencyFormatter.format(summary.monthlyTotal)}</strong></div>
+      <div><span>表示中の区画数</span><strong>{numberFormatter.format(summary.units)} 区画</strong><small>全体 {numberFormatter.format(overallSummary.units)} 区画</small></div>
+      <div><span>表示中の入居</span><strong>{numberFormatter.format(summary.occupied)} 区画</strong><small>全体 {numberFormatter.format(overallSummary.occupied)} 区画</small></div>
+      <div><span>表示中の空室</span><strong>{numberFormatter.format(summary.vacant)} 区画</strong><small>全体 {numberFormatter.format(overallSummary.vacant)} 区画</small></div>
+      <div className="rent-roll-total"><span>表示中の月額合計</span><strong>{currencyFormatter.format(summary.monthlyTotal)}</strong><small>全体 {currencyFormatter.format(overallSummary.monthlyTotal)}</small></div>
     </div>}
 
     <div className="rent-roll-panel">
       <div className="rent-roll-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}</p></div></div>
       <div className="rent-roll-table-wrap">
         <table className="rent-roll-table">
-          <thead><tr><th>状態</th><th>階</th><th>室</th><th>テナントコード</th><th>テナント名</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
+          <thead><tr><th>状態</th><th>商品</th><th>階</th><th>室</th><th>テナントコード</th><th>テナント名</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
           <tbody>
-            {loadingRows && <tr><td colSpan={13} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
-            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={13} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
+            {loadingRows && <tr><td colSpan={14} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
+            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={14} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
             {!loadingRows && filteredRows.map((row) => <tr key={row.unitId}>
               <td><span className={`rent-roll-status ${row.status}`}>{statusLabel[row.status]}</span></td>
+              <td><span className={`rent-roll-product-badge ${row.productCategory}`}>{productCategoryLabel[row.productCategory]}</span></td>
               <td>{row.floor || '—'}</td>
               <td><strong>{row.unitName}</strong>{row.discriminator && <small className="rent-roll-discriminator">暫定識別子: {row.discriminator}</small>}</td>
               <td>{row.tenantCode || '—'}</td><td>{row.tenantName || '—'}</td>
