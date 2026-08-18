@@ -131,12 +131,20 @@ def as_date(value: Any) -> str | None:
 
 
 def infer_unit_type(unit_code: str) -> str:
-    if "倉庫" in unit_code:
-        return "storage"
+    if any(token in unit_code for token in ("駐輪", "自転車", "バイク")):
+        return "bicycle_parking"
     if any(token in unit_code for token in ("駐車", "車庫", "パーキング")):
         return "parking"
+    if any(token in unit_code for token in ("看板", "サイン")):
+        return "signage"
+    if any(token in unit_code for token in ("アンテナ", "基地局")):
+        return "antenna"
+    if "倉庫" in unit_code:
+        return "warehouse"
+    if any(token in unit_code for token in ("住居", "住宅", "居室")):
+        return "residential"
     if "ATM" in unit_code or "機械" in unit_code:
-        return "equipment"
+        return "other"
     return "office"
 
 
