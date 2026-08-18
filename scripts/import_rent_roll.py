@@ -26,6 +26,7 @@ PROPERTY_NAME_ALIASES: dict[str, str] = {
     "三共郡山ビル南館": "三共ビル郡山南館",
 }
 EMPTY_TENANT_VALUES = {"", "空室", "空室（倉庫）", "空"}
+SHEET_UNIT_COLUMN_OVERRIDES = {"梅田": 4}
 
 
 @dataclass
@@ -61,6 +62,7 @@ class RentRollRecord:
     renewal_terms: str | None
     payment_terms: str | None
     source_unit_discriminator: str = ""
+    source_contract_discriminator: str = ""
 
 
 def normalize_text(value: Any) -> str:
@@ -88,7 +90,11 @@ def contract_source_key(record: RentRollRecord) -> str:
     """Keep a contract stable when rows move within a source worksheet."""
     tenant_identity = primary_tenant_code(record.tenant_code) or normalize_tenant_name(record.tenant_name)
     raw = "|".join((record.property_name, record.wing_code or "", record.floor_label or "", record.unit_code, tenant_identity))
-    return f"rr:v2:{sha256(raw.encode('utf-8')).hexdigest()}"
+    base_key = f"rr:v2:{sha256(raw.encode('utf-8')).hexdigest()}"
+    if not record.source_contract_discriminator:
+        return base_key
+    instance_raw = f"{base_key}|{record.source_contract_discriminator}"
+    return f"rr:v3:{sha256(instance_raw.encode('utf-8')).hexdigest()}"
 
 
 def import_notes(record: RentRollRecord) -> str | None:
@@ -174,6 +180,8 @@ def detect_columns(sheet: Any) -> tuple[dict[str, int | None], int]:
     # 新大阪・横浜などは「室」の見出しが空欄だが、階の右隣が区画列である。
     if columns["unit"] is None and columns["floor"] and columns["tenant_name"] and columns["area"]:
         columns["unit"] = columns["floor"] + 1
+    if sheet.title in SHEET_UNIT_COLUMN_OVERRIDES:
+        columns["unit"] = SHEET_UNIT_COLUMN_OVERRIDES[sheet.title]
     return columns, header_row
 
 
@@ -181,11 +189,15 @@ def cell(row: tuple[Any, ...], column: int | None) -> Any:
     return row[column - 1] if column and column <= len(row) else None
 
 
-def read_workbook(path: Path) -> tuple[list[RentRollRecord], list[ImportIssue]]:
+def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> tuple[list[RentRollRecord], list[ImportIssue]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     records: list[RentRollRecord] = []
     issues: list[ImportIssue] = []
+    found_sheet_names: set[str] = set()
     for sheet in workbook.worksheets:
+        if selected_sheet_names is not None and sheet.title not in selected_sheet_names:
+            continue
+        found_sheet_names.add(sheet.title)
         if sheet.title in SPECIAL_LAYOUT_SHEETS:
             issues.append(ImportIssue(sheet.title, None, "layout_not_supported", "棟・住居用の専用レイアウトのため、設定を追加するまで自動取込の対象外です。"))
             continue
@@ -223,6 +235,30 @@ def read_workbook(path: Path) -> tuple[list[RentRollRecord], list[ImportIssue]]:
                 as_number(cell(row, columns["renewal_fee"])), as_date(cell(row, columns["contract_start"])),
                 as_date(cell(row, columns["contract_end"])), normalize_text(cell(row, columns["renewal_terms"])) or None,
                 normalize_text(cell(row, columns["payment_terms"])) or None))
+    for missing_sheet_name in sorted((selected_sheet_names or set()) - found_sheet_names):
+        issues.append(ImportIssue(missing_sheet_name, None, "sheet_not_found", "指定されたシートがワークブックにありません。"))
+
+    tenant_names_by_code: dict[tuple[str, str], str] = {}
+    for record in records:
+        tenant_code = primary_tenant_code(record.tenant_code)
+        if tenant_code and record.tenant_name:
+            tenant_names_by_code.setdefault((record.source_sheet_name, tenant_code), record.tenant_name)
+    for record in records:
+        tenant_code = primary_tenant_code(record.tenant_code)
+        if tenant_code and not record.tenant_name:
+            record.tenant_name = tenant_names_by_code.get((record.source_sheet_name, tenant_code))
+
+    latest_start_by_code: dict[tuple[str, str], str] = {}
+    for record in records:
+        tenant_code = primary_tenant_code(record.tenant_code)
+        if not tenant_code:
+            continue
+        key = (record.source_sheet_name, tenant_code)
+        if record.contract_start_date:
+            latest_start_by_code[key] = record.contract_start_date
+        elif key in latest_start_by_code:
+            record.contract_start_date = latest_start_by_code[key]
+
     grouped: dict[tuple[str, str | None, str | None, str], list[RentRollRecord]] = {}
     for record in records:
         grouped.setdefault((record.property_name, record.wing_code, record.floor_label, record.unit_code), []).append(record)
@@ -235,6 +271,18 @@ def read_workbook(path: Path) -> tuple[list[RentRollRecord], list[ImportIssue]]:
             discriminators[base] = discriminators.get(base, 0) + 1
             record.source_unit_discriminator = base if discriminators[base] == 1 else f"{base}-row-{record.source_row_number}"
             issues.append(ImportIssue(record.source_sheet_name, record.source_row_number, "temporary_unit_discriminator", "同一階・同一区画名が複数あるため、暫定識別子を付けて登録します。", {"floor": record.floor_label, "unit": record.unit_code, "discriminator": record.source_unit_discriminator, "tenant_code": record.tenant_code, "tenant_name": record.tenant_name}))
+
+    contract_groups: dict[tuple[str, str], list[RentRollRecord]] = {}
+    for record in records:
+        tenant_identity = primary_tenant_code(record.tenant_code) or normalize_tenant_name(record.tenant_name)
+        identity = "|".join((record.property_name, record.wing_code or "", record.floor_label or "", record.unit_code, tenant_identity))
+        contract_groups.setdefault((record.source_sheet_name, identity), []).append(record)
+    for group in contract_groups.values():
+        start_dates = {record.contract_start_date or "" for record in group}
+        if len(start_dates) <= 1:
+            continue
+        for record in group:
+            record.source_contract_discriminator = record.contract_start_date or f"row-{record.source_row_number}"
     return records, issues
 
 
@@ -270,19 +318,59 @@ def terminate_source_contracts_for_unit(client: SupabaseRest, unit_id: str) -> N
         client.request("PATCH", "lease_contract", query={"lease_contract_id": f"eq.{allocation['lease_contract_id']}"}, body={"contract_status": "terminated"})
 
 
+def deactivate_imported_units_for_property(client: SupabaseRest, property_id: str) -> None:
+    units = client.many("unit_master", {"select": "unit_id,source_discriminator", "property_id": f"eq.{property_id}"})
+    for unit in units:
+        source_allocations = client.many("lease_contract_unit", {
+            "select": "lease_contract_id,lease_contract!inner(source_system)",
+            "unit_id": f"eq.{unit['unit_id']}",
+            "lease_contract.source_system": f"eq.{SOURCE_SYSTEM}",
+        })
+        if unit.get("source_discriminator") or source_allocations:
+            client.request("PATCH", "unit_master", query={"unit_id": f"eq.{unit['unit_id']}"}, body={"is_active": False})
+
+
+def terminate_stale_source_contracts_for_properties(client: SupabaseRest, property_ids: set[str], active_source_keys: set[str]) -> None:
+    terminated_contract_ids: set[str] = set()
+    for property_id in property_ids:
+        units = client.many("unit_master", {"select": "unit_id", "property_id": f"eq.{property_id}"})
+        for unit in units:
+            allocations = client.many("lease_contract_unit", {
+                "select": "lease_contract_id,lease_contract!inner(source_record_key,source_system,contract_status)",
+                "unit_id": f"eq.{unit['unit_id']}",
+                "lease_contract.source_system": f"eq.{SOURCE_SYSTEM}",
+                "lease_contract.contract_status": "eq.active",
+            })
+            for allocation in allocations:
+                contract = allocation.get("lease_contract") or {}
+                contract_id = allocation["lease_contract_id"]
+                if contract_id in terminated_contract_ids or contract.get("source_record_key") in active_source_keys:
+                    continue
+                client.request("PATCH", "lease_contract", query={"lease_contract_id": f"eq.{contract_id}"}, body={"contract_status": "terminated"})
+                terminated_contract_ids.add(contract_id)
+
+
 def persist(records: list[RentRollRecord], issues: list[ImportIssue], source_file_name: str, client: SupabaseRest) -> tuple[int, list[ImportIssue]]:
     persisted = 0
     runtime_issues = list(issues)
     active_source_keys: set[str] = set()
+    property_rows: dict[str, dict[str, Any] | None] = {}
+    for property_name in {record.property_name for record in records}:
+        property_rows[property_name] = client.one("asset_master", {"select": "asset_id", "asset_name": f"eq.{property_name}"})
+    imported_property_ids = {row["asset_id"] for row in property_rows.values() if row}
+    for property_id in imported_property_ids:
+        deactivate_imported_units_for_property(client, property_id)
+    for source_sheet_name in {record.source_sheet_name for record in records} | {issue.source_sheet_name for issue in issues}:
+        client.request("DELETE", "rent_roll_import_issue", query={"source_file_name": f"eq.{source_file_name}", "source_sheet_name": f"eq.{source_sheet_name}"})
     for record in records:
-        property_row = client.one("asset_master", {"select": "asset_id", "asset_name": f"eq.{record.property_name}"})
+        property_row = property_rows[record.property_name]
         if not property_row:
             runtime_issues.append(ImportIssue(record.source_sheet_name, record.source_row_number, "property_not_matched", "asset_master に一致する物件がありません。", asdict(record)))
             continue
         property_id = property_row["asset_id"]
         unit_query = {"select": "unit_id", "property_id": f"eq.{property_id}", "unit_code": f"eq.{record.unit_code}", "source_discriminator": f"eq.{record.source_unit_discriminator}"}
         unit_query["floor_label"] = f"eq.{record.floor_label}" if record.floor_label else "is.null"
-        unit_payload: dict[str, Any] = {"property_id": property_id, "unit_code": record.unit_code, "floor_label": record.floor_label, "source_discriminator": record.source_unit_discriminator, "unit_type": record.unit_type, "rentable_area_sqm": record.area_sqm}
+        unit_payload: dict[str, Any] = {"property_id": property_id, "unit_code": record.unit_code, "floor_label": record.floor_label, "source_discriminator": record.source_unit_discriminator, "unit_type": record.unit_type, "rentable_area_sqm": record.area_sqm, "is_active": True}
         if record.wing_code:
             wing = client.one("building_wing_master", {"select": "building_wing_id", "property_id": f"eq.{property_id}", "wing_code": f"eq.{record.wing_code}"})
             if not wing:
@@ -323,15 +411,13 @@ def persist(records: list[RentRollRecord], issues: list[ImportIssue], source_fil
             client.request("POST", "lease_contract_unit", body=allocation_payload)
         active_source_keys.add(source_key)
         persisted += 1
-    for contract in client.many("lease_contract", {"select": "lease_contract_id,source_record_key", "source_system": f"eq.{SOURCE_SYSTEM}", "contract_status": "eq.active"}):
-        if contract["source_record_key"] not in active_source_keys:
-            client.request("PATCH", "lease_contract", query={"lease_contract_id": f"eq.{contract['lease_contract_id']}"}, body={"contract_status": "terminated"})
+    terminate_stale_source_contracts_for_properties(client, imported_property_ids, active_source_keys)
     for issue in runtime_issues:
         client.request("POST", "rent_roll_import_issue", body={"source_file_name": source_file_name, **asdict(issue)})
     return persisted, runtime_issues
 
 
-def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], source_file_name: str, path: Path) -> None:
+def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], source_file_name: str, path: Path, *, wrap_transaction: bool = True) -> None:
     """Create one transactional import for the Supabase CLI when no service key is available."""
     rows = [{
         "source_sheet_name": record.source_sheet_name,
@@ -369,9 +455,9 @@ def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], s
         "source_payload": issue.source_payload,
     } for issue in issues]
     source_file_sql = "'" + source_file_name.replace("'", "''") + "'"
-    sql = f'''begin;
-
-create temporary table rent_roll_stage (
+    transaction_start = "begin;\n\n" if wrap_transaction else ""
+    transaction_end = "\ncommit;\n" if wrap_transaction else "\n"
+    sql = f'''{transaction_start}create temporary table rent_roll_stage (
   source_sheet_name text not null, source_row_number integer not null, property_name text not null,
   source_status text not null, wing_code text, floor_label text, unit_code text not null, unit_type text not null,
   source_discriminator text not null, tenant_code text, tenant_name text, normalized_tenant_name text not null,
@@ -392,6 +478,29 @@ select * from jsonb_to_recordset($rentroll${json.dumps(rows, ensure_ascii=False)
 );
 
 create temporary table rent_roll_active_source_key (source_record_key text primary key) on commit drop;
+
+delete from public.rent_roll_import_issue issue
+using (select distinct source_sheet_name from rent_roll_stage) source_sheet
+where issue.source_file_name = {source_file_sql}
+  and issue.source_sheet_name = source_sheet.source_sheet_name;
+
+update public.unit_master unit
+set is_active = false, updated_at = now()
+where unit.property_id in (
+  select asset.asset_id
+  from public.asset_master asset
+  join (select distinct property_name from rent_roll_stage) source_property
+    on source_property.property_name = asset.asset_name
+)
+and (
+  coalesce(unit.source_discriminator, '') <> ''
+  or exists (
+    select 1
+    from public.lease_contract_unit contract_unit
+    join public.lease_contract contract on contract.lease_contract_id = contract_unit.lease_contract_id
+    where contract_unit.unit_id = unit.unit_id and contract.source_system = '{SOURCE_SYSTEM}'
+  )
+);
 
 do $rentroll_import$
 declare
@@ -475,6 +584,14 @@ begin
 
   update public.lease_contract c set contract_status = 'terminated', updated_at = now()
   where c.source_system = '{SOURCE_SYSTEM}' and c.contract_status = 'active'
+    and exists (
+      select 1
+      from public.lease_contract_unit contract_unit
+      join public.unit_master unit on unit.unit_id = contract_unit.unit_id
+      join public.asset_master asset on asset.asset_id = unit.property_id
+      where contract_unit.lease_contract_id = c.lease_contract_id
+        and asset.asset_name in (select distinct property_name from rent_roll_stage)
+    )
     and not exists (select 1 from rent_roll_active_source_key k where k.source_record_key = c.source_record_key);
 end;
 $rentroll_import$;
@@ -485,8 +602,7 @@ from jsonb_to_recordset($rentrollissues${json.dumps(issue_rows, ensure_ascii=Fal
   source_sheet_name text, source_row_number integer, issue_type text, message text, source_payload jsonb
 );
 
-commit;
-'''
+{transaction_end}'''
     path.write_text(sql, encoding="utf-8")
 
 
@@ -496,16 +612,27 @@ def main() -> int:
     parser.add_argument("--report", type=Path, default=Path("rent_roll_import_report.json"))
     parser.add_argument("--apply", action="store_true", help="Write to Supabase after reviewing the report.")
     parser.add_argument("--sql-file", type=Path, help="Write a transactional SQL import for `supabase db query --linked --file`.")
+    parser.add_argument("--migration-file", type=Path, help="Write an idempotent, transactional Supabase migration.")
+    parser.add_argument("--sheet", action="append", dest="sheet_names", help="Import only the named worksheet. Repeat to select multiple sheets.")
     args = parser.parse_args()
-    records, issues = read_workbook(args.workbook)
-    report = {"source_file": args.workbook.name, "record_count": len(records), "issue_count": len(issues), "records": [asdict(record) for record in records], "issues": [asdict(issue) for issue in issues]}
+    records, issues = read_workbook(args.workbook, set(args.sheet_names) if args.sheet_names else None)
+    report = {
+        "source_file": args.workbook.name,
+        "record_count": len(records),
+        "issue_count": len(issues),
+        "records": [asdict(record) | {"source_record_key": contract_source_key(record)} for record in records],
+        "issues": [asdict(issue) for issue in issues],
+    }
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Dry-run report: {args.report} ({len(records)} records, {len(issues)} issues)")
-    if args.sql_file:
-        if args.apply:
-            parser.error("--apply and --sql-file cannot be used together.")
-        write_sql_import(records, issues, args.workbook.name, args.sql_file)
-        print(f"Prepared SQL import: {args.sql_file}")
+    if not records:
+        parser.error("No rent-roll records were found for the selected worksheets.")
+    if args.sql_file or args.migration_file:
+        if args.apply or (args.sql_file and args.migration_file):
+            parser.error("Choose exactly one of --apply, --sql-file, or --migration-file.")
+        output_path = args.sql_file or args.migration_file
+        write_sql_import(records, issues, args.workbook.name, output_path, wrap_transaction=True)
+        print(f"Prepared SQL import: {output_path}")
         return 0
     if not args.apply:
         return 0
