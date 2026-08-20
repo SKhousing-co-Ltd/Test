@@ -77,10 +77,10 @@ begin
         and source_discriminator = r.source_discriminator;
     if v_unit_id is null then
       insert into public.unit_master (property_id, building_wing_id, unit_code, floor_label, source_discriminator, unit_type, rentable_area_sqm)
-      values (v_property_id, v_wing_id, r.unit_code, r.floor_label, r.source_discriminator, r.unit_type, r.area_sqm)
+      values (v_property_id, v_wing_id, r.unit_code, r.floor_label, r.source_discriminator, case when r.unit_type = 'storage' then 'warehouse' else r.unit_type end, r.area_sqm)
       returning unit_id into v_unit_id;
     else
-      update public.unit_master set unit_type = r.unit_type, rentable_area_sqm = r.area_sqm, is_active = true, updated_at = now() where unit_id = v_unit_id;
+      update public.unit_master set unit_type = case when r.unit_type = 'storage' then 'warehouse' else r.unit_type end, rentable_area_sqm = r.area_sqm, is_active = true, updated_at = now() where unit_id = v_unit_id;
     end if;
 
     if r.is_vacant then
