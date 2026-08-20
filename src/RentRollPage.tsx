@@ -61,6 +61,7 @@ type UnitSource = {
 
 type RentRollRow = {
   unitId: string;
+  unitType: string;
   status: RentRollStatus;
   productCategory: ProductCategory;
   floor: string;
@@ -77,6 +78,19 @@ type RentRollRow = {
   securityDeposit: number;
   keyMoney: number;
   renewalFee: number;
+  parkingScope: 'internal' | 'external' | null;
+  parkingSpaceNumber: string;
+  parkingAccessCode: string;
+  parkingVehicle: string;
+};
+
+type ParkingRollDetail = {
+  unit_id: string;
+  space_number: string;
+  parking_scope: 'internal' | 'external' | null;
+  access_code: string | null;
+  vehicle_model: string | null;
+  registration_number: string | null;
 };
 
 const today = new Date().toISOString().slice(0, 10);
@@ -174,7 +188,7 @@ function leasingStatus(source: UnitSource): string | null {
   return value?.leasing_status ?? null;
 }
 
-function toRentRollRow(source: UnitSource, asOfDate: string): RentRollRow {
+function toRentRollRow(source: UnitSource, asOfDate: string, parking?: ParkingRollDetail): RentRollRow {
   const currentAllocation = (source.allocations ?? []).find((allocation) => isCurrentContract(allocation, asOfDate));
   const terms = currentAllocation ? currentTerms(currentAllocation, asOfDate) : null;
   const manualStatus = leasingStatus(source);
@@ -189,6 +203,7 @@ function toRentRollRow(source: UnitSource, asOfDate: string): RentRollRow {
 
   return {
     unitId: source.unit_id,
+    unitType: source.unit_type,
     status,
     productCategory: normalizeProductCategory(source.unit_type),
     floor: source.floor_label ?? '',
@@ -205,6 +220,10 @@ function toRentRollRow(source: UnitSource, asOfDate: string): RentRollRow {
     securityDeposit: amount(terms?.security_deposit_amount ?? currentAllocation?.security_deposit_amount),
     keyMoney: amount(terms?.key_money_amount ?? currentAllocation?.key_money_amount),
     renewalFee: amount(terms?.renewal_fee_amount ?? currentAllocation?.renewal_fee_amount),
+    parkingScope: parking?.parking_scope ?? null,
+    parkingSpaceNumber: parking?.space_number ?? '',
+    parkingAccessCode: parking?.access_code ?? '',
+    parkingVehicle: [parking?.vehicle_model, parking?.registration_number].filter(Boolean).join(' / '),
   };
 }
 
@@ -219,6 +238,7 @@ export function RentRollPage() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | RentRollStatus>('all');
   const [selectedProductCategories, setSelectedProductCategories] = useState<ProductCategory[]>(allProductCategories);
+  const [unitTypeFilter, setUnitTypeFilter] = useState<'all' | 'space' | 'parking'>('all');
   const [asOfDate, setAsOfDate] = useState(today);
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -235,9 +255,9 @@ export function RentRollPage() {
         return;
       }
       const { data, error: loadError } = await supabase
-        .from('lease_contract_unit')
-        .select('unit:unit_master!inner(property_id, asset:asset_master(asset_name, short_name)), contract:lease_contract!inner(source_system)')
-        .eq('contract.source_system', 'rent_roll_xlsx');
+        .from('asset_master')
+        .select('asset_id, asset_name, short_name')
+        .order('asset_name');
 
       if (cancelled) return;
       if (loadError) {
@@ -246,21 +266,11 @@ export function RentRollPage() {
         return;
       }
 
-      const uniqueProperties = new Map<string, PropertyOption>();
-      const propertyUnits = (data ?? []) as unknown as Array<{ unit: { property_id: string; asset: { asset_name: string; short_name: string | null } | { asset_name: string; short_name: string | null }[] | null } | { property_id: string; asset: { asset_name: string; short_name: string | null } | { asset_name: string; short_name: string | null }[] | null }[] | null }>;
-      propertyUnits.forEach((record) => {
-        const unit = firstOf(record.unit);
-        if (!unit) return;
-        const asset = firstOf(unit.asset);
-        if (asset) {
-          uniqueProperties.set(unit.property_id, {
-            propertyId: unit.property_id,
-            propertyName: asset.asset_name,
-            shortName: asset.short_name,
-          });
-        }
-      });
-      const options = [...uniqueProperties.values()].sort((a, b) => collator.compare(a.propertyName, b.propertyName));
+      const options = ((data ?? []) as Array<{ asset_id: string; asset_name: string; short_name: string | null }>).map((asset) => ({
+        propertyId: asset.asset_id,
+        propertyName: asset.asset_name,
+        shortName: asset.short_name,
+      }));
       setProperties(options);
       setPropertyId((current) => current || options[0]?.propertyId || '');
       setLoadingProperties(false);
@@ -287,9 +297,8 @@ export function RentRollPage() {
         setLoadingRows(false);
         return;
       }
-      const { data, error: loadError } = await supabase
-        .from('unit_master')
-        .select(`
+      const [unitResult, parkingResult] = await Promise.all([
+        supabase.from('unit_master').select(`
           unit_id, unit_code, unit_name, floor_label, unit_type, rentable_area_sqm, source_discriminator,
           leasing_status:unit_leasing_status(leasing_status),
           allocations:lease_contract_unit(
@@ -305,16 +314,21 @@ export function RentRollPage() {
               tenant:tenant_master(external_tenant_code, tenant_name)
             )
           )
-        `)
-        .eq('property_id', propertyId)
-        .eq('is_active', true);
+        `).eq('property_id', propertyId).eq('is_active', true),
+        supabase.rpc('parking_list_at_date', {
+          p_property_id: propertyId,
+          p_as_of_date: asOfDate,
+        }),
+      ]);
 
       if (cancelled) return;
+      const loadError = unitResult.error ?? parkingResult.error;
       if (loadError) {
         setRows([]);
         setError(`レントロールの取得に失敗しました: ${loadError.message}`);
       } else {
-        setRows(((data ?? []) as unknown as UnitSource[]).map((source) => toRentRollRow(source, asOfDate)));
+        const parkingByUnit = new Map(((parkingResult.data ?? []) as ParkingRollDetail[]).map((parking) => [parking.unit_id, parking]));
+        setRows(((unitResult.data ?? []) as unknown as UnitSource[]).map((source) => toRentRollRow(source, asOfDate, parkingByUnit.get(source.unit_id))));
       }
       setLoadingRows(false);
     };
@@ -333,11 +347,12 @@ export function RentRollPage() {
     return sortedRows.filter((row) => {
       const matchesProductCategory = selectedCategories.has(row.productCategory);
       const matchesStatus = statusFilter === 'all' || row.status === statusFilter;
-      const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantCode, row.tenantName]
+      const matchesType = unitTypeFilter === 'all' || (unitTypeFilter === 'parking' ? row.unitType === 'parking' : row.unitType !== 'parking');
+      const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantCode, row.tenantName, row.parkingSpaceNumber, row.parkingAccessCode, row.parkingVehicle]
         .some((value) => value.toLocaleLowerCase('ja-JP').includes(normalizedQuery));
-      return matchesProductCategory && matchesStatus && matchesQuery;
+      return matchesProductCategory && matchesStatus && matchesType && matchesQuery;
     });
-  }, [query, selectedProductCategories, sortedRows, statusFilter]);
+  }, [query, selectedProductCategories, sortedRows, statusFilter, unitTypeFilter]);
 
   const summary = useMemo(() => summarizeRows(filteredRows), [filteredRows]);
   const overallSummary = useMemo(() => summarizeRows(rows), [rows]);
@@ -394,6 +409,11 @@ export function RentRollPage() {
           <option value="vacant">空室</option>
         </select>
       </label>
+      <label>区画種別
+        <select value={unitTypeFilter} onChange={(event) => setUnitTypeFilter(event.target.value as typeof unitTypeFilter)}>
+          <option value="all">すべて</option><option value="space">貸室等</option><option value="parking">駐車場</option>
+        </select>
+      </label>
     </div>
 
     <section className="rent-roll-product-filter" aria-labelledby="rent-roll-product-filter-title">
@@ -432,16 +452,18 @@ export function RentRollPage() {
       <div className="rent-roll-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}</p></div></div>
       <div className="rent-roll-table-wrap">
         <table className="rent-roll-table">
-          <thead><tr><th>状態</th><th>商品</th><th>階</th><th>室</th><th>テナントコード</th><th>テナント名</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
+          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>テナントコード</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
           <tbody>
-            {loadingRows && <tr><td colSpan={14} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
-            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={14} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
+            {loadingRows && <tr><td colSpan={18} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
+            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={18} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
             {!loadingRows && filteredRows.map((row) => <tr key={row.unitId}>
               <td><span className={`rent-roll-status ${row.status}`}>{statusLabel[row.status]}</span></td>
               <td><span className={`rent-roll-product-badge ${row.productCategory}`}>{productCategoryLabel[row.productCategory]}</span></td>
+              <td><span className={`unit-type-badge ${row.unitType === 'parking' ? 'parking' : ''}`}>{row.unitType === 'parking' ? '駐車場' : '貸室等'}</span></td>
               <td>{row.floor || '—'}</td>
-              <td><strong>{row.unitName}</strong>{row.discriminator && <small className="rent-roll-discriminator">暫定識別子: {row.discriminator}</small>}</td>
-              <td>{row.tenantCode || '—'}</td><td>{row.tenantName || '—'}</td>
+              <td><strong>{row.parkingSpaceNumber ? `枠 ${row.parkingSpaceNumber}` : row.unitName}</strong>{row.discriminator && <small className="rent-roll-discriminator">暫定識別子: {row.discriminator}</small>}</td>
+              <td>{row.parkingScope === 'internal' ? '内部' : row.parkingScope === 'external' ? '外部' : '—'}</td>
+              <td>{row.tenantCode || '—'}</td><td>{row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
               <td className="numeric">{row.area == null ? '—' : numberFormatter.format(row.area)}</td>
               <td className="numeric">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.total)}</td>
               <td className="numeric">{formatCurrency(row.deposit)}</td><td className="numeric">{formatCurrency(row.securityDeposit)}</td><td className="numeric">{formatCurrency(row.keyMoney)}</td><td className="numeric">{formatCurrency(row.renewalFee)}</td>
