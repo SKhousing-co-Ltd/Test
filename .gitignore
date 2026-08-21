@@ -10,6 +10,8 @@ pnpm-debug.log*
 gcm-diagnose.log
 rent_roll_import_report.json
 outputs/
+output/
+tmp/
 jpn.traineddata
 scripts/__pycache__/
 tools/__pycache__/
