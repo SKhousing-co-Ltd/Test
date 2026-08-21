@@ -609,7 +609,7 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
     try {
       const results = await Promise.all(rows.map((row) => {
         const vacant = isVacantImportRow(row);
-        return supabase.from('parking_import_row').update({
+        return supabase!.from('parking_import_row').update({
           matched_tenant_id: vacant ? null : row.matched_tenant_id,
           parking_scope: vacant ? null : row.parking_scope,
           main_lease_contract_id: vacant || row.parking_scope !== 'internal' ? null : row.main_lease_contract_id,
