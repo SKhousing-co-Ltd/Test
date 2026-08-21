@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { supabase } from './lib/supabase';
+import { ParkingDetailModal } from './ParkingDetailModal';
 
 type ParkingScope = 'internal' | 'external';
 type ParkingImportStatus = 'occupied' | 'vacant';
@@ -303,6 +304,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const [parkingTypeFilter, setParkingTypeFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<ParkingCurrentRow | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [vehicleHistory, setVehicleHistory] = useState<VehicleHistory[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -393,6 +395,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
     setFacilityFilter('all');
     setParkingTypeFilter('all');
     setSelected(null);
+    setDetailOpen(false);
   };
 
   return <section className="parking-page">
@@ -405,15 +408,15 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       <label>物件<select value={propertyId} onChange={(event) => changeProperty(event.target.value)}>
         {properties.map((property) => <option key={property.asset_id} value={property.asset_id}>{property.short_name || property.asset_name}</option>)}
       </select></label>
-      <label>駐車場<select value={facilityFilter} onChange={(event) => { setFacilityFilter(event.target.value); setSelected(null); }}>
+      <label>駐車場<select value={facilityFilter} onChange={(event) => { setFacilityFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
         <option value="all">すべての駐車場</option>
         {propertyFacilities.map((facility) => <option key={facility.parking_facility_id} value={facility.parking_facility_id}>{facility.facility_name}</option>)}
       </select></label>
-      <label>駐車場種別<select value={parkingTypeFilter} onChange={(event) => { setParkingTypeFilter(event.target.value); setSelected(null); }}>
+      <label>駐車場種別<select value={parkingTypeFilter} onChange={(event) => { setParkingTypeFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
         <option value="all">すべての種別</option>
         {propertyParkingTypes.map((type) => <option key={type.parking_type_id} value={String(type.parking_type_id)}>{type.parking_type_name}</option>)}
       </select></label>
-      <label>基準日<input type="date" value={asOfDate} onChange={(event) => { setAsOfDate(event.target.value); setSelected(null); }} /></label>
+      <label>基準日<input type="date" value={asOfDate} onChange={(event) => { setAsOfDate(event.target.value); setSelected(null); setDetailOpen(false); }} /></label>
       <label>契約区分<select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value as typeof scopeFilter)}>
         <option value="all">すべて</option><option value="internal">内部</option><option value="external">外部</option><option value="vacant">空き枠</option>
       </select></label>
@@ -436,7 +439,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
           <tbody>
             {loading ? <tr><td colSpan={9} className="parking-empty">駐車場台帳を読み込んでいます。</td></tr> : null}
             {!loading && !filteredRows.length ? <tr><td colSpan={9} className="parking-empty">条件に一致する駐車枠がありません。</td></tr> : null}
-            {!loading ? filteredRows.map((row) => <tr key={row.unit_id} className={selected?.unit_id === row.unit_id ? 'selected' : ''} onClick={() => setSelected(row)}>
+            {!loading ? filteredRows.map((row) => <tr key={row.unit_id} className={selected?.unit_id === row.unit_id ? 'selected' : ''} onClick={() => { setSelected(row); setDetailOpen(false); }}>
               <td><span className={`parking-state ${row.lease_contract_id ? 'occupied' : 'vacant'}`}>{row.lease_contract_id ? '契約中' : '空き'}</span></td>
               <td><strong>{row.space_number}</strong><small>{row.facility_name}{row.parking_type_name ? ` / ${row.parking_type_name}` : ''}</small></td>
               <td>{row.parking_scope === 'internal' ? '内部' : row.parking_scope === 'external' ? '外部' : '—'}</td>
@@ -450,7 +453,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
 
       <aside className="parking-detail">
         {selected ? <>
-          <header><div><p>SPACE</p><h3>枠 {selected.space_number}</h3></div><button onClick={() => setSelected(null)} aria-label="詳細を閉じる">×</button></header>
+          <header><div><p>SPACE</p><h3>枠 {selected.space_number}</h3></div><button onClick={() => { setSelected(null); setDetailOpen(false); }} aria-label="詳細を閉じる">×</button></header>
           <dl>
             <div><dt>駐車場</dt><dd>{selected.facility_name}</dd></div>
             <div><dt>種別</dt><dd>{selected.parking_type_name || '—'}</dd></div>
@@ -463,6 +466,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             <div><dt>暗証番号</dt><dd className="access-code">{selected.access_code || '—'}</dd></div>
             <div><dt>備考</dt><dd>{selected.notes || '—'}</dd></div>
           </dl>
+          <button className="parking-detail-more" onClick={() => setDetailOpen(true)}>詳細を見る</button>
           <section><h4>車両履歴</h4>{vehicleHistory.length ? <ol>{vehicleHistory.map((vehicle) => <li key={vehicle.parking_vehicle_history_id}>
             <strong>{vehicle.vehicle_model || '車種未設定'}</strong><span>{vehicle.registration_number || '番号未設定'} / {vehicle.chassis_number || '車台番号未設定'}</span>
             <small>{displayDate(vehicle.effective_from)} ～ {displayDate(vehicle.effective_to)}</small>
@@ -470,6 +474,17 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
         </> : <div className="parking-detail-empty"><strong>枠を選択</strong><p>駐車場・契約・暗証番号・車両履歴を確認できます。</p></div>}
       </aside>
     </div>
+
+    {detailOpen && selected ? <ParkingDetailModal
+      row={selected}
+      canManage={canManage}
+      onClose={() => setDetailOpen(false)}
+      onSaved={async () => {
+        setDetailOpen(false);
+        setSelected(null);
+        await loadParkingRows(propertyId, asOfDate);
+      }}
+    /> : null}
 
     {importOpen ? <ParkingImportDialog
       propertyId={propertyId} properties={properties} facilities={facilities} parkingTypes={parkingTypes}
