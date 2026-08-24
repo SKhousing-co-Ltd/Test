@@ -86,6 +86,7 @@ type RentRollRow = {
 
 type ParkingRollDetail = {
   unit_id: string;
+  space_status: 'occupied' | 'vacant' | 'unavailable';
   space_number: string;
   parking_scope: 'internal' | 'external' | null;
   access_code: string | null;
@@ -116,7 +117,7 @@ const statusLabel: Record<RentRollStatus, string> = {
   scheduled: '解約予定',
   vacant: '空室',
   applied: '申込中',
-  unavailable: '利用不可',
+  unavailable: '使用不可',
 };
 
 function normalizeProductCategory(value: string): ProductCategory {
@@ -194,12 +195,15 @@ function toRentRollRow(source: UnitSource, asOfDate: string, parking?: ParkingRo
   const manualStatus = leasingStatus(source);
   const contract = firstOf(currentAllocation?.contract);
   const tenant = firstOf(contract?.tenant);
+  const parkingUnavailable = source.unit_type === 'parking' && parking?.space_status === 'unavailable';
   const isTerminationScheduled = Boolean(contract?.notes?.includes('解約予定'));
-  const status: RentRollStatus = manualStatus === 'applied' || manualStatus === 'unavailable'
-    ? manualStatus
-    : currentAllocation
-      ? isTerminationScheduled ? 'scheduled' : 'occupied'
-      : 'vacant';
+  const status: RentRollStatus = parkingUnavailable
+    ? 'unavailable'
+    : manualStatus === 'applied' || manualStatus === 'unavailable'
+      ? manualStatus
+      : currentAllocation
+        ? isTerminationScheduled ? 'scheduled' : 'occupied'
+        : 'vacant';
 
   return {
     unitId: source.unit_id,
@@ -210,20 +214,20 @@ function toRentRollRow(source: UnitSource, asOfDate: string, parking?: ParkingRo
     unitCode: source.unit_code,
     unitName: source.unit_name ?? source.unit_code,
     discriminator: source.source_discriminator,
-    tenantCode: tenant?.external_tenant_code ?? '',
-    tenantName: tenant?.tenant_name ?? '',
+    tenantCode: parkingUnavailable ? '' : tenant?.external_tenant_code ?? '',
+    tenantName: parkingUnavailable ? '' : tenant?.tenant_name ?? '',
     area: currentAllocation?.leased_area_sqm ?? source.rentable_area_sqm,
-    rent: amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount),
-    commonCharge: amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
-    total: amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount) + amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
-    deposit: amount(terms?.deposit_amount ?? currentAllocation?.deposit_amount),
-    securityDeposit: amount(terms?.security_deposit_amount ?? currentAllocation?.security_deposit_amount),
-    keyMoney: amount(terms?.key_money_amount ?? currentAllocation?.key_money_amount),
-    renewalFee: amount(terms?.renewal_fee_amount ?? currentAllocation?.renewal_fee_amount),
-    parkingScope: parking?.parking_scope ?? null,
+    rent: parkingUnavailable ? 0 : amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount),
+    commonCharge: parkingUnavailable ? 0 : amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
+    total: parkingUnavailable ? 0 : amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount) + amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
+    deposit: parkingUnavailable ? 0 : amount(terms?.deposit_amount ?? currentAllocation?.deposit_amount),
+    securityDeposit: parkingUnavailable ? 0 : amount(terms?.security_deposit_amount ?? currentAllocation?.security_deposit_amount),
+    keyMoney: parkingUnavailable ? 0 : amount(terms?.key_money_amount ?? currentAllocation?.key_money_amount),
+    renewalFee: parkingUnavailable ? 0 : amount(terms?.renewal_fee_amount ?? currentAllocation?.renewal_fee_amount),
+    parkingScope: parkingUnavailable ? null : parking?.parking_scope ?? null,
     parkingSpaceNumber: parking?.space_number ?? '',
-    parkingAccessCode: parking?.access_code ?? '',
-    parkingVehicle: [parking?.vehicle_model, parking?.registration_number].filter(Boolean).join(' / '),
+    parkingAccessCode: parkingUnavailable ? '' : parking?.access_code ?? '',
+    parkingVehicle: parkingUnavailable ? '' : [parking?.vehicle_model, parking?.registration_number].filter(Boolean).join(' / '),
   };
 }
 
@@ -385,7 +389,7 @@ export function RentRollPage() {
       <div>
         <p className="section-kicker">RENT ROLL</p>
         <h2>レントロール</h2>
-        <p>取り込み済みの区画・賃貸借情報を、Excelに近い一覧で確認できます。</p>
+        <p>取り込み済みの区画・賃貸借情報を、指定した基準日時点で確認できます。</p>
       </div>
     </div>
 
@@ -407,6 +411,7 @@ export function RentRollPage() {
           <option value="occupied">入居中</option>
           <option value="scheduled">解約予定</option>
           <option value="vacant">空室</option>
+          <option value="unavailable">使用不可</option>
         </select>
       </label>
       <label>区画種別
