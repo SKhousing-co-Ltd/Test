@@ -156,7 +156,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   onSaved: () => Promise<void>;
 }) {
   const navigate = useNavigate();
-  const snapshotAsOfDate = (row as ParkingCurrentRow & { snapshot_as_of_date?: string }).snapshot_as_of_date ?? today;
+  const snapshotAsOfDate = row.snapshot_as_of_date ?? today;
   const [assignmentDetail, setAssignmentDetail] = useState<AssignmentDetail | null>(null);
   const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [mainContracts, setMainContracts] = useState<MainContractCandidate[]>([]);
@@ -190,7 +190,10 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     vehicle_effective_from: row.vehicle_effective_from ?? '',
     vehicle_effective_to: '',
   });
-  const occupied = Boolean(row.lease_contract_id && row.lease_contract_unit_id);
+  const unavailable = row.space_status === 'unavailable';
+  const occupied = row.space_status === 'occupied' && Boolean(row.lease_contract_id && row.lease_contract_unit_id);
+  const spaceStatusLabel = unavailable ? '使用不可' : occupied ? '契約中' : '空き';
+  const spaceStatusClass = unavailable ? 'unavailable' : occupied ? 'occupied' : 'vacant';
 
   useEffect(() => {
     if (!supabase) {
@@ -430,7 +433,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
         <section>
           <div className="parking-detail-section-title">
             <div><h3>駐車枠情報</h3><p>駐車場設備側の登録情報</p></div>
-            <span className={`parking-state ${occupied ? 'occupied' : 'vacant'}`}>{occupied ? '契約中' : '空き'}</span>
+            <span className={`parking-state ${spaceStatusClass}`}>{spaceStatusLabel}</span>
           </div>
           <div className="parking-detail-form-grid">
             <FormField label="物件" value={row.property_name} editing={false} />
@@ -449,7 +452,11 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
           <div className="parking-detail-section-title">
             <div>
               <h3>駐車場契約</h3>
-              <p>{occupied ? `${displayDate(snapshotAsOfDate)} 時点の契約情報` : `${displayDate(snapshotAsOfDate)} 時点では空き区画です`}</p>
+              <p>{occupied
+                ? `${displayDate(snapshotAsOfDate)} 時点の契約情報`
+                : unavailable
+                  ? `${displayDate(snapshotAsOfDate)} 時点では使用不可区画です`
+                  : `${displayDate(snapshotAsOfDate)} 時点では空き区画です`}</p>
             </div>
             {occupied ? <span className="parking-contract-status">基準日時点 契約中</span> : null}
           </div>
