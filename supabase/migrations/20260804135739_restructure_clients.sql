@@ -1,5 +1,36 @@
 -- Restructure business partners into a two-level classification.
 
+-- The legacy client tables existed in production before migration tracking.
+-- Bootstrap the same minimal source state for fresh preview databases.
+create table if not exists public.client_categories_master (
+  client_categories_id bigint primary key,
+  category_name text not null unique
+);
+
+insert into public.client_categories_master (client_categories_id, category_name) values
+  (1, '得意先'),
+  (2, '仕入先')
+on conflict (client_categories_id) do update set category_name = excluded.category_name;
+
+create table if not exists public.clients (
+  client_id uuid primary key default gen_random_uuid(),
+  company_name text not null,
+  client_categories_id bigint references public.client_categories_master(client_categories_id)
+);
+
+insert into public.clients (company_name, client_categories_id)
+select seed.company_name, seed.client_categories_id
+from (values
+  ('株式会社サンプルA', 1::bigint),
+  ('有限会社サンプルB', 2::bigint)
+) seed(company_name, client_categories_id)
+where not exists (
+  select 1 from public.clients existing where existing.company_name = seed.company_name
+);
+
+alter table public.client_categories_master enable row level security;
+alter table public.clients enable row level security;
+
 do $$
 begin
   if (select count(*) from public.client_categories_master) <> 2
