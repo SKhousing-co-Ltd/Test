@@ -1,17 +1,17 @@
--- segment_master は旧環境で先行作成されていたため、新規のPreview DBでも
--- asset_masterの外部キーと初期データを再現できるよう、ここで冪等に補完する。
+-- Fresh preview databases do not contain the legacy segment master that
+-- production had before migration tracking began. Recreate that dependency
+-- idempotently before asset_master adds its foreign key.
 create table if not exists segment_master (
   uid uuid primary key default gen_random_uuid(),
   segment_name text not null,
   created_at timestamptz not null default now()
 );
 
-alter table segment_master enable row level security;
-
 insert into segment_master (uid, segment_name) values
   ('4ab28b6d-20a9-438b-bff5-ae66678acc50', '本社'),
-  ('5022e780-d77d-4a6f-84b5-0aa3bd39047f', 'ビル事業部')
-on conflict (uid) do nothing;
+  ('5022e780-d77d-4a6f-84b5-0aa3bd39047f', 'ビル事業部'),
+  ('8ce4d194-6b78-404b-a000-060c623538cf', 'ホテル事業部')
+on conflict (uid) do update set segment_name = excluded.segment_name;
 
 -- アセットマスタ テーブル作成
 create table if not exists asset_master (
