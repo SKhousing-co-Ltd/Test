@@ -91,10 +91,10 @@ left join lateral (
 
 grant select on public.appsuite_sync_health to authenticated;
 
-select cron.alter_job(
-  job_id := (select jobid from cron.job where jobname = 'appsuite-daily-sync'),
-  schedule := '0 17 * * *',
-  command := $cron$
+do $job$
+declare
+  v_job_id bigint;
+  v_command text := $cron$
     select net.http_post(
       url := (select decrypted_secret from vault.decrypted_secrets where name = 'appsuite_sync_project_url_20260728') || '/functions/v1/sync-appsuite-records',
       headers := jsonb_build_object(
@@ -107,8 +107,20 @@ select cron.alter_job(
     )
     from public.appsuite_application as application
     where application.is_sync_enabled
-  $cron$,
-  active := true
-);
+  $cron$;
+begin
+  select jobid into v_job_id from cron.job where jobname = 'appsuite-daily-sync';
+  if v_job_id is null then
+    perform cron.schedule('appsuite-daily-sync', '0 17 * * *', v_command);
+  else
+    perform cron.alter_job(
+      job_id := v_job_id,
+      schedule := '0 17 * * *',
+      command := v_command,
+      active := true
+    );
+  end if;
+end;
+$job$;
 
 comment on view public.appsuite_sync_health is '同期対象アプリごとの鮮度、直近実行、取得件数、エラーを監視する。';
