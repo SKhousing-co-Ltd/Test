@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { ParkingDetailModal } from './ParkingDetailModal';
 
@@ -41,6 +42,9 @@ export type ParkingCurrentRow = {
   main_lease_contract_id: string | null;
   main_contract_start_date: string | null;
   main_contract_end_date: string | null;
+  main_lease_contract_unit_id: string | null;
+  monthly_parking_fee: number;
+  parking_fee_effective_from: string | null;
   access_code: string | null;
   tenant_location_label: string | null;
   notes: string | null;
@@ -77,6 +81,7 @@ type ImportRow = {
   registration_number: string | null;
   chassis_number: string | null;
   notes: string | null;
+  monthly_parking_fee: number | null;
   validation_messages: string[];
   raw_payload: Record<string, unknown> | null;
 };
@@ -306,6 +311,7 @@ async function downloadParkingTemplate(): Promise<void> {
     ['使用不可', '故障・工事・物理的制約などにより貸出できない区画に使用します。基準日から使用不可として履歴管理します。'],
     ['枠番', '必須。駐車場施設内で重複しない番号を入力してください。'],
     ['テナント名', '契約中の場合に入力。取込後、物件内の契約先候補から照合します。'],
+    ['月額駐車料', 'Excelには入力しません。取込後に自動作成される対応依頼から、金額・適用開始日・控除先を確認して登録します。'],
     ['契約開始日', '任意。YYYY/MM/DD またはExcelの日付形式で入力してください。'],
     ['その他', '暗証番号・車両情報・備考は分かる範囲で入力してください。'],
   ]);
@@ -466,15 +472,15 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       <div className="parking-panel">
         <header><div><h3>{selectedProperty?.asset_name ?? '物件を選択'}</h3><p>{loading ? '読み込み中…' : `${filteredRows.length} / ${rows.length} 枠を表示`}</p></div></header>
         <div className="parking-table-wrap"><table className="parking-table">
-          <thead><tr><th>状態</th><th>枠番</th><th>内外</th><th>テナント</th><th>暗証番号</th><th>車種</th><th>車両番号</th><th>車台番号</th><th>主契約</th></tr></thead>
+          <thead><tr><th>状態</th><th>枠番</th><th>内外</th><th>テナント</th><th>月額駐車料</th><th>暗証番号</th><th>車種</th><th>車両番号</th><th>車台番号</th><th>主契約</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={9} className="parking-empty">駐車場台帳を読み込んでいます。</td></tr> : null}
-            {!loading && !filteredRows.length ? <tr><td colSpan={9} className="parking-empty">条件に一致する駐車枠がありません。</td></tr> : null}
+            {loading ? <tr><td colSpan={10} className="parking-empty">駐車場台帳を読み込んでいます。</td></tr> : null}
+            {!loading && !filteredRows.length ? <tr><td colSpan={10} className="parking-empty">条件に一致する駐車枠がありません。</td></tr> : null}
             {!loading ? filteredRows.map((row) => <tr key={row.unit_id} className={selected?.unit_id === row.unit_id ? 'selected' : ''} onClick={() => { setSelected(row); setDetailOpen(false); }}>
               <td><span className={`parking-state ${row.space_status}`}>{parkingStatusLabel(row.space_status)}</span></td>
               <td><strong>{row.space_number}</strong><small>{row.facility_name}{row.parking_type_name ? ` / ${row.parking_type_name}` : ''}</small></td>
               <td>{row.parking_scope === 'internal' ? '内部' : row.parking_scope === 'external' ? '外部' : '—'}</td>
-              <td>{row.tenant_name || '—'}</td><td className="access-code">{row.access_code || '—'}</td>
+              <td>{row.tenant_name || '—'}</td><td>{row.space_status !== 'occupied' ? '—' : row.parking_fee_effective_from ? `${row.monthly_parking_fee.toLocaleString('ja-JP')}円` : <Link to={`/change-requests?parking=${encodeURIComponent(row.lease_contract_unit_id ?? '')}`} onClick={(event) => event.stopPropagation()}>未設定（対応依頼）</Link>}</td><td className="access-code">{row.access_code || '—'}</td>
               <td>{row.vehicle_model || '—'}</td><td>{row.registration_number || '—'}</td><td>{row.chassis_number || '—'}</td>
               <td>{row.main_lease_contract_id ? <span title={row.main_lease_contract_id}>事務所契約</span> : '—'}</td>
             </tr>) : null}
@@ -491,6 +497,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             <div><dt>状態</dt><dd>{parkingStatusLabel(selected.space_status)}</dd></div>
             <div><dt>区分</dt><dd>{selected.parking_scope === 'internal' ? '内部' : selected.parking_scope === 'external' ? '外部' : '—'}</dd></div>
             <div><dt>契約者</dt><dd>{selected.tenant_name || '—'}</dd></div>
+            <div><dt>月額駐車料</dt><dd>{selected.space_status !== 'occupied' ? '—' : selected.parking_fee_effective_from ? `${selected.monthly_parking_fee.toLocaleString('ja-JP')}円` : <Link to={`/change-requests?parking=${encodeURIComponent(selected.lease_contract_unit_id ?? '')}`}>未設定（対応依頼を開く）</Link>}</dd></div>
             <div><dt>所在</dt><dd>{selected.tenant_location_label || '—'}</dd></div>
             <div><dt>子契約期間</dt><dd>{displayDate(selected.contract_start_date)} ～ {displayDate(selected.contract_end_date)}</dd></div>
             <div><dt>主契約期間</dt><dd>{selected.main_lease_contract_id ? `${displayDate(selected.main_contract_start_date)} ～ ${displayDate(selected.main_contract_end_date)}` : '—'}</dd></div>
@@ -625,6 +632,7 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
       matched_tenant_id: status === 'occupied' ? row.matched_tenant_id : null,
       parking_scope: status === 'occupied' ? row.parking_scope : null,
       main_lease_contract_id: status === 'occupied' ? row.main_lease_contract_id : null,
+      monthly_parking_fee: null,
       raw_payload: { ...(row.raw_payload ?? {}), parking_status: status, is_vacant: status === 'vacant' },
     });
   };
@@ -651,7 +659,8 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
   };
 
   const ready = rows.length > 0 && rows.every((row) => isNonContractImportRow(row) || Boolean(
-    row.matched_tenant_id && row.parking_scope && (row.parking_scope === 'external' || row.main_lease_contract_id),
+    row.matched_tenant_id && row.parking_scope
+      && (row.parking_scope === 'external' || row.main_lease_contract_id),
   ));
 
   const commit = async () => {
@@ -665,7 +674,8 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
           matched_tenant_id: nonContract ? null : row.matched_tenant_id,
           parking_scope: nonContract ? null : row.parking_scope,
           main_lease_contract_id: nonContract || row.parking_scope !== 'internal' ? null : row.main_lease_contract_id,
-          raw_payload: { ...(row.raw_payload ?? {}), parking_status: status, is_vacant: status === 'vacant' },
+          monthly_parking_fee: null,
+          raw_payload: { ...(row.raw_payload ?? {}), parking_status: status, is_vacant: status === 'vacant', monthly_parking_fee: null },
           validation_status: 'ready',
           validation_messages: status === 'vacant'
             ? ['空き区画として登録します']
@@ -687,7 +697,8 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
   };
 
   const completedRows = rows.filter((row) => isNonContractImportRow(row) || Boolean(
-    row.matched_tenant_id && row.parking_scope && (row.parking_scope === 'external' || row.main_lease_contract_id),
+    row.matched_tenant_id && row.parking_scope
+      && (row.parking_scope === 'external' || row.main_lease_contract_id),
   )).length;
 
   return <div className="parking-import-backdrop"><div className="parking-import-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-import-title">
@@ -718,6 +729,7 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
     {message ? <p className="parking-import-message">{message}</p> : null}
     {rows.length ? <>
       <div className="parking-import-bulk"><span>契約中の行を一括設定</span><button onClick={() => applyScopeToAll('internal')}>すべて内部</button><button onClick={() => applyScopeToAll('external')}>すべて外部</button></div>
+      <p className="parking-import-message">月額駐車料はこの画面では入力しません。反映後、契約中の未設定枠が「対応依頼」に表示されます。</p>
       <div className="parking-import-table-wrap"><table className="parking-import-table"><thead><tr><th>行</th><th>枠</th><th>状態</th><th>契約先</th><th>内外</th><th>主契約</th><th>暗証番号</th><th>車両</th><th>備考</th></tr></thead><tbody>
         {rows.map((row) => {
           const status = importRowStatus(row);
