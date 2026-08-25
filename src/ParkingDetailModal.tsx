@@ -97,6 +97,8 @@ type FormState = {
   main_lease_contract_id: string;
   contract_start_date: string;
   contract_end_date: string;
+  monthly_parking_fee: string;
+  parking_fee_effective_from: string;
   access_code: string;
   notes: string;
   vehicle_model: string;
@@ -182,6 +184,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     main_lease_contract_id: row.main_lease_contract_id ?? '',
     contract_start_date: row.contract_start_date ?? '',
     contract_end_date: row.contract_end_date ?? '',
+    monthly_parking_fee: row.monthly_parking_fee.toString(),
+    parking_fee_effective_from: row.parking_fee_effective_from ?? row.contract_start_date ?? today,
     access_code: row.access_code ?? '',
     notes: row.notes ?? '',
     vehicle_model: row.vehicle_model ?? '',
@@ -324,6 +328,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
         width_mm: space.width_mm?.toString() ?? '',
         height_mm: space.height_mm?.toString() ?? '',
         weight_limit_kg: space.weight_limit_kg?.toString() ?? '',
+        monthly_parking_fee: row.monthly_parking_fee.toString(),
+        parking_fee_effective_from: row.parking_fee_effective_from ?? row.contract_start_date ?? today,
         vehicle_model: vehicle?.vehicle_model ?? current.vehicle_model,
         registration_number: vehicle?.registration_number ?? current.registration_number,
         chassis_number: vehicle?.chassis_number ?? current.chassis_number,
@@ -375,6 +381,15 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       setMessage('内部契約では主契約を選択してください。');
       return;
     }
+    const monthlyParkingFee = Number(form.monthly_parking_fee);
+    if (occupied && (!form.monthly_parking_fee.trim() || !Number.isSafeInteger(monthlyParkingFee) || monthlyParkingFee < 0)) {
+      setMessage('月額駐車料は0以上の整数で入力してください。');
+      return;
+    }
+    if (occupied && !form.parking_fee_effective_from) {
+      setMessage('駐車料の適用開始日を入力してください。');
+      return;
+    }
     setSaving(true);
     setMessage('');
     const { error } = await supabase.rpc('update_parking_registration', {
@@ -398,6 +413,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       p_chassis_number: occupied ? form.chassis_number : null,
       p_vehicle_effective_from: occupied ? form.vehicle_effective_from || null : null,
       p_vehicle_effective_to: occupied ? form.vehicle_effective_to || null : null,
+      p_monthly_parking_fee: occupied ? monthlyParkingFee : null,
+      p_parking_fee_effective_from: occupied ? form.parking_fee_effective_from : null,
     });
     if (error) {
       setMessage(`保存できませんでした: ${error.message}`);
@@ -495,9 +512,14 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
                   {contractChoices.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.unit_labels} / {displayDate(contract.contract_start_date)}</option>)}
                 </select> : null}
               </FormField>
-              <FormField label={`月額賃料（${displayDate(snapshotAsOfDate)}時点）`} value={currency(contractTotals.rent)} editing={false} />
+              <FormField label="月額駐車料" value={currency(Number(form.monthly_parking_fee || 0))} editing={editing}>
+                <input type="number" min="0" step="1" value={form.monthly_parking_fee} onChange={(event) => set('monthly_parking_fee', event.target.value)} />
+              </FormField>
+              <FormField label="駐車料適用開始日" value={displayDate(form.parking_fee_effective_from || null)} editing={editing}>
+                <input type="date" value={form.parking_fee_effective_from} onChange={(event) => set('parking_fee_effective_from', event.target.value)} />
+              </FormField>
               <FormField label="月額共益費" value={currency(contractTotals.common)} editing={false} />
-              <FormField label="月額合計" value={currency(contractTotals.total)} editing={false} />
+              <FormField label="月額合計" value={currency(Number(form.monthly_parking_fee || 0) + contractTotals.common)} editing={false} />
               <FormField label="敷金・保証金" value={currency(contractTotals.deposit)} editing={false} />
               <FormField label="暗証番号" value={form.access_code} editing={editing}><input value={form.access_code} onChange={(event) => set('access_code', event.target.value)} /></FormField>
               <FormField label="現在の契約管理状態" value={currentContractStatus} editing={false} />
