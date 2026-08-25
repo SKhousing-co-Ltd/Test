@@ -45,6 +45,17 @@ FROM map m
 JOIN asset_master a ON a.uid = m.asset_uid
 WHERE p.property_id = m.property_id;
 
+-- Fresh preview databases generate different property UUIDs in the initial
+-- seed migration. Complete the same mapping by the unique property name so
+-- existing properties are enriched instead of inserted a second time.
+UPDATE property_master p
+SET asset_code = a.asset_code,
+    segment_id = a.segment_id,
+    updated_at = now()
+FROM asset_master a
+WHERE p.property_name = a.asset_name
+  AND p.asset_code IS NULL;
+
 -- 3) 未対応アセット(44件)を新規追加
 INSERT INTO property_master (
   property_id, property_name, short_name, address,
