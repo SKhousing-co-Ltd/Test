@@ -72,9 +72,11 @@ Deno.serve(async (request) => {
       appIds = [application.app_id];
     } else {
       const { data: applications, error } = await adminClient().from('appsuite_application')
-        .select('app_id').eq('is_sync_enabled', true);
+        .select('app_id, contract_workflow_type').eq('is_sync_enabled', true);
       if (error) throw error;
-      appIds = (applications ?? []).map((application) => application.app_id);
+      appIds = (applications ?? [])
+        .sort((left, right) => Number(left.contract_workflow_type === 'approval_cancel') - Number(right.contract_workflow_type === 'approval_cancel'))
+        .map((application) => application.app_id);
     }
     const results = [];
     for (const appId of appIds) results.push(await syncApplication(appId));
