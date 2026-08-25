@@ -10,44 +10,9 @@ type PropertyOption = {
   shortName: string | null;
 };
 
-type Tenant = { external_tenant_code: string | null; tenant_name: string | null };
-type Contract = {
-  contract_status: string;
-  contract_start_date: string | null;
-  contract_end_date: string | null;
-  notes: string | null;
-  tenant: Tenant | Tenant[] | null;
-};
-
-type ContractAllocation = {
-  lease_start_date: string | null;
-  lease_end_date: string | null;
-  created_by_amendment: { status: string } | { status: string }[] | null;
-  leased_area_sqm: number | null;
-  monthly_rent_amount: number | null;
-  monthly_common_charge_amount: number | null;
-  monthly_total_amount: number | null;
-  deposit_amount: number | null;
-  security_deposit_amount: number | null;
-  key_money_amount: number | null;
-  renewal_fee_amount: number | null;
-  terms: ContractTerm[] | null;
-  contract: Contract | Contract[] | null;
-};
-
-type ContractTerm = {
-  effective_from: string;
-  effective_to: string | null;
-  monthly_rent_amount: number | null;
-  monthly_common_charge_amount: number | null;
-  deposit_amount: number | null;
-  security_deposit_amount: number | null;
-  key_money_amount: number | null;
-  renewal_fee_amount: number | null;
-  amendment: { status: string } | { status: string }[] | null;
-};
-
-type UnitSource = {
+type TenantBillingCode = { billing_code: string; is_primary: boolean; is_active: boolean; sort_order: number };
+type TenantBillingCodeRecord = TenantBillingCode & { tenant_id: string };
+type RentRollSource = {
   unit_id: string;
   unit_code: string;
   unit_name: string | null;
@@ -55,8 +20,30 @@ type UnitSource = {
   unit_type: string;
   rentable_area_sqm: number | null;
   source_discriminator: string | null;
-  leasing_status: { leasing_status: string } | { leasing_status: string }[] | null;
-  allocations: ContractAllocation[] | null;
+  leasing_status: string | null;
+  lease_contract_id: string | null;
+  contract_status: string | null;
+  contract_notes: string | null;
+  tenant_id: string | null;
+  external_tenant_code: string | null;
+  tenant_name: string | null;
+  billing_codes?: TenantBillingCode[] | null;
+  leased_area_sqm: number | null;
+  gross_monthly_rent_amount: number;
+  parking_fee_deduction_amount: number;
+  monthly_rent_amount: number;
+  monthly_common_charge_amount: number;
+  monthly_total_amount: number;
+  deposit_amount: number;
+  security_deposit_amount: number;
+  key_money_amount: number;
+  renewal_fee_amount: number;
+  space_status: 'occupied' | 'vacant' | 'unavailable' | null;
+  space_number: string | null;
+  parking_scope: 'internal' | 'external' | null;
+  access_code: string | null;
+  vehicle_model: string | null;
+  registration_number: string | null;
 };
 
 type RentRollRow = {
@@ -69,8 +56,11 @@ type RentRollRow = {
   unitName: string;
   discriminator: string | null;
   tenantCode: string;
+  tenantCodes: string[];
   tenantName: string;
   area: number | null;
+  grossRent: number;
+  parkingDeduction: number;
   rent: number;
   commonCharge: number;
   total: number;
@@ -82,16 +72,6 @@ type RentRollRow = {
   parkingSpaceNumber: string;
   parkingAccessCode: string;
   parkingVehicle: string;
-};
-
-type ParkingRollDetail = {
-  unit_id: string;
-  space_status: 'occupied' | 'vacant' | 'unavailable';
-  space_number: string;
-  parking_scope: 'internal' | 'external' | null;
-  access_code: string | null;
-  vehicle_model: string | null;
-  registration_number: string | null;
 };
 
 const today = new Date().toISOString().slice(0, 10);
@@ -148,32 +128,6 @@ function summarizeRows(targetRows: RentRollRow[]) {
   };
 }
 
-const amount = (value: number | null | undefined) => value ?? 0;
-
-function firstOf<T>(value: T | T[] | null | undefined): T | null {
-  return Array.isArray(value) ? value[0] ?? null : value ?? null;
-}
-
-function isCurrentContract(allocation: ContractAllocation, asOfDate: string): boolean {
-  const contract = firstOf(allocation.contract);
-  const originAmendment = firstOf(allocation.created_by_amendment);
-  return Boolean(
-    contract?.contract_status === 'active'
-    && (!contract.contract_start_date || contract.contract_start_date <= asOfDate)
-    && (!contract.contract_end_date || contract.contract_end_date >= asOfDate)
-    && (!allocation.lease_start_date || allocation.lease_start_date <= asOfDate)
-    && (!allocation.lease_end_date || allocation.lease_end_date >= asOfDate)
-    && (!originAmendment || originAmendment.status === 'executed'),
-  );
-}
-
-function currentTerms(allocation: ContractAllocation, asOfDate: string): ContractTerm | null {
-  return (allocation.terms ?? [])
-    .filter((term) => term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate))
-    .filter((term) => !firstOf(term.amendment) || firstOf(term.amendment)?.status === 'executed')
-    .sort((left, right) => right.effective_from.localeCompare(left.effective_from))[0] ?? null;
-}
-
 function floorOrder(label: string): number {
   const normalized = label.normalize('NFKC').trim().toUpperCase();
   const basement = normalized.match(/^B(\d+)/);
@@ -184,24 +138,19 @@ function floorOrder(label: string): number {
   return 5000;
 }
 
-function leasingStatus(source: UnitSource): string | null {
-  const value = Array.isArray(source.leasing_status) ? source.leasing_status[0] : source.leasing_status;
-  return value?.leasing_status ?? null;
-}
-
-function toRentRollRow(source: UnitSource, asOfDate: string, parking?: ParkingRollDetail): RentRollRow {
-  const currentAllocation = (source.allocations ?? []).find((allocation) => isCurrentContract(allocation, asOfDate));
-  const terms = currentAllocation ? currentTerms(currentAllocation, asOfDate) : null;
-  const manualStatus = leasingStatus(source);
-  const contract = firstOf(currentAllocation?.contract);
-  const tenant = firstOf(contract?.tenant);
-  const parkingUnavailable = source.unit_type === 'parking' && parking?.space_status === 'unavailable';
-  const isTerminationScheduled = Boolean(contract?.notes?.includes('解約予定'));
+function toRentRollRow(source: RentRollSource): RentRollRow {
+  const tenantCodes = (source.billing_codes ?? [])
+    .filter((code) => code.is_active)
+    .sort((left, right) => Number(right.is_primary) - Number(left.is_primary) || left.sort_order - right.sort_order || collator.compare(left.billing_code, right.billing_code))
+    .map((code) => code.billing_code);
+  const primaryTenantCode = tenantCodes[0] ?? source.external_tenant_code ?? '';
+  const parkingUnavailable = source.unit_type === 'parking' && source.space_status === 'unavailable';
+  const isTerminationScheduled = Boolean(source.contract_notes?.includes('解約予定'));
   const status: RentRollStatus = parkingUnavailable
     ? 'unavailable'
-    : manualStatus === 'applied' || manualStatus === 'unavailable'
-      ? manualStatus
-      : currentAllocation
+    : source.leasing_status === 'applied' || source.leasing_status === 'unavailable'
+      ? source.leasing_status
+      : source.lease_contract_id
         ? isTerminationScheduled ? 'scheduled' : 'occupied'
         : 'vacant';
 
@@ -214,20 +163,23 @@ function toRentRollRow(source: UnitSource, asOfDate: string, parking?: ParkingRo
     unitCode: source.unit_code,
     unitName: source.unit_name ?? source.unit_code,
     discriminator: source.source_discriminator,
-    tenantCode: parkingUnavailable ? '' : tenant?.external_tenant_code ?? '',
-    tenantName: parkingUnavailable ? '' : tenant?.tenant_name ?? '',
-    area: currentAllocation?.leased_area_sqm ?? source.rentable_area_sqm,
-    rent: parkingUnavailable ? 0 : amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount),
-    commonCharge: parkingUnavailable ? 0 : amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
-    total: parkingUnavailable ? 0 : amount(terms?.monthly_rent_amount ?? currentAllocation?.monthly_rent_amount) + amount(terms?.monthly_common_charge_amount ?? currentAllocation?.monthly_common_charge_amount),
-    deposit: parkingUnavailable ? 0 : amount(terms?.deposit_amount ?? currentAllocation?.deposit_amount),
-    securityDeposit: parkingUnavailable ? 0 : amount(terms?.security_deposit_amount ?? currentAllocation?.security_deposit_amount),
-    keyMoney: parkingUnavailable ? 0 : amount(terms?.key_money_amount ?? currentAllocation?.key_money_amount),
-    renewalFee: parkingUnavailable ? 0 : amount(terms?.renewal_fee_amount ?? currentAllocation?.renewal_fee_amount),
-    parkingScope: parkingUnavailable ? null : parking?.parking_scope ?? null,
-    parkingSpaceNumber: parking?.space_number ?? '',
-    parkingAccessCode: parkingUnavailable ? '' : parking?.access_code ?? '',
-    parkingVehicle: parkingUnavailable ? '' : [parking?.vehicle_model, parking?.registration_number].filter(Boolean).join(' / '),
+    tenantCode: parkingUnavailable ? '' : primaryTenantCode,
+    tenantCodes: parkingUnavailable ? [] : tenantCodes.length ? tenantCodes : primaryTenantCode ? [primaryTenantCode] : [],
+    tenantName: parkingUnavailable ? '' : source.tenant_name ?? '',
+    area: source.leased_area_sqm ?? source.rentable_area_sqm,
+    grossRent: parkingUnavailable ? 0 : Number(source.gross_monthly_rent_amount ?? 0),
+    parkingDeduction: parkingUnavailable ? 0 : Number(source.parking_fee_deduction_amount ?? 0),
+    rent: parkingUnavailable ? 0 : Number(source.monthly_rent_amount ?? 0),
+    commonCharge: parkingUnavailable ? 0 : Number(source.monthly_common_charge_amount ?? 0),
+    total: parkingUnavailable ? 0 : Number(source.monthly_total_amount ?? 0),
+    deposit: parkingUnavailable ? 0 : Number(source.deposit_amount ?? 0),
+    securityDeposit: parkingUnavailable ? 0 : Number(source.security_deposit_amount ?? 0),
+    keyMoney: parkingUnavailable ? 0 : Number(source.key_money_amount ?? 0),
+    renewalFee: parkingUnavailable ? 0 : Number(source.renewal_fee_amount ?? 0),
+    parkingScope: parkingUnavailable ? null : source.parking_scope,
+    parkingSpaceNumber: source.space_number ?? '',
+    parkingAccessCode: parkingUnavailable ? '' : source.access_code ?? '',
+    parkingVehicle: parkingUnavailable ? '' : [source.vehicle_model, source.registration_number].filter(Boolean).join(' / '),
   };
 }
 
@@ -301,38 +253,29 @@ export function RentRollPage() {
         setLoadingRows(false);
         return;
       }
-      const [unitResult, parkingResult] = await Promise.all([
-        supabase.from('unit_master').select(`
-          unit_id, unit_code, unit_name, floor_label, unit_type, rentable_area_sqm, source_discriminator,
-          leasing_status:unit_leasing_status(leasing_status),
-          allocations:lease_contract_unit(
-            lease_start_date, lease_end_date, created_by_amendment:lease_contract_amendment!lease_contract_unit_created_by_amendment_id_fkey(status), leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, monthly_total_amount,
-            deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount,
-            terms:lease_contract_unit_term(
-              effective_from, effective_to, monthly_rent_amount, monthly_common_charge_amount,
-              deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount,
-              amendment:lease_contract_amendment(status)
-            ),
-            contract:lease_contract(
-              contract_status, contract_start_date, contract_end_date, notes,
-              tenant:tenant_master(external_tenant_code, tenant_name)
-            )
-          )
-        `).eq('property_id', propertyId).eq('is_active', true),
-        supabase.rpc('parking_list_at_date', {
+      const [result, billingCodeResult] = await Promise.all([
+        supabase.rpc('rent_roll_list_at_date', {
           p_property_id: propertyId,
           p_as_of_date: asOfDate,
         }),
+        supabase.from('tenant_billing_code').select('tenant_id, billing_code, is_primary, is_active, sort_order').eq('is_active', true),
       ]);
 
       if (cancelled) return;
-      const loadError = unitResult.error ?? parkingResult.error;
-      if (loadError) {
+      if (result.error) {
         setRows([]);
-        setError(`レントロールの取得に失敗しました: ${loadError.message}`);
+        setError(`レントロールの取得に失敗しました: ${result.error.message}`);
       } else {
-        const parkingByUnit = new Map(((parkingResult.data ?? []) as ParkingRollDetail[]).map((parking) => [parking.unit_id, parking]));
-        setRows(((unitResult.data ?? []) as unknown as UnitSource[]).map((source) => toRentRollRow(source, asOfDate, parkingByUnit.get(source.unit_id))));
+        const billingCodesByTenant = new Map<string, TenantBillingCode[]>();
+        if (!billingCodeResult.error) {
+          for (const code of (billingCodeResult.data ?? []) as TenantBillingCodeRecord[]) {
+            billingCodesByTenant.set(code.tenant_id, [...(billingCodesByTenant.get(code.tenant_id) ?? []), code]);
+          }
+        }
+        setRows(((result.data ?? []) as RentRollSource[]).map((source) => toRentRollRow({
+          ...source,
+          billing_codes: source.tenant_id ? billingCodesByTenant.get(source.tenant_id) ?? null : null,
+        })));
       }
       setLoadingRows(false);
     };
@@ -352,7 +295,7 @@ export function RentRollPage() {
       const matchesProductCategory = selectedCategories.has(row.productCategory);
       const matchesStatus = statusFilter === 'all' || row.status === statusFilter;
       const matchesType = unitTypeFilter === 'all' || (unitTypeFilter === 'parking' ? row.unitType === 'parking' : row.unitType !== 'parking');
-      const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantCode, row.tenantName, row.parkingSpaceNumber, row.parkingAccessCode, row.parkingVehicle]
+      const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantCodes.join(' '), row.tenantName, row.parkingSpaceNumber, row.parkingAccessCode, row.parkingVehicle]
         .some((value) => value.toLocaleLowerCase('ja-JP').includes(normalizedQuery));
       return matchesProductCategory && matchesStatus && matchesType && matchesQuery;
     });
@@ -457,10 +400,10 @@ export function RentRollPage() {
       <div className="rent-roll-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}</p></div></div>
       <div className="rent-roll-table-wrap">
         <table className="rent-roll-table">
-          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>テナントコード</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
+          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>テナントコード</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>総額賃料</th><th>駐車料控除</th><th>表示賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
           <tbody>
-            {loadingRows && <tr><td colSpan={18} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
-            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={18} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
+            {loadingRows && <tr><td colSpan={20} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
+            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={20} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
             {!loadingRows && filteredRows.map((row) => <tr key={row.unitId}>
               <td><span className={`rent-roll-status ${row.status}`}>{statusLabel[row.status]}</span></td>
               <td><span className={`rent-roll-product-badge ${row.productCategory}`}>{productCategoryLabel[row.productCategory]}</span></td>
@@ -468,9 +411,9 @@ export function RentRollPage() {
               <td>{row.floor || '—'}</td>
               <td><strong>{row.parkingSpaceNumber ? `枠 ${row.parkingSpaceNumber}` : row.unitName}</strong>{row.discriminator && <small className="rent-roll-discriminator">暫定識別子: {row.discriminator}</small>}</td>
               <td>{row.parkingScope === 'internal' ? '内部' : row.parkingScope === 'external' ? '外部' : '—'}</td>
-              <td>{row.tenantCode || '—'}</td><td>{row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
+              <td>{row.tenantCode || '—'}{row.tenantCodes.length > 1 ? <span className="tenant-code-pill">＋{row.tenantCodes.length - 1}</span> : null}</td><td>{row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
               <td className="numeric">{row.area == null ? '—' : numberFormatter.format(row.area)}</td>
-              <td className="numeric">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.total)}</td>
+              <td className="numeric">{formatCurrency(row.grossRent)}</td><td className="numeric">{formatCurrency(row.parkingDeduction)}</td><td className="numeric emphasis">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.total)}</td>
               <td className="numeric">{formatCurrency(row.deposit)}</td><td className="numeric">{formatCurrency(row.securityDeposit)}</td><td className="numeric">{formatCurrency(row.keyMoney)}</td><td className="numeric">{formatCurrency(row.renewalFee)}</td>
             </tr>)}
           </tbody>

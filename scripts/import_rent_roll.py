@@ -80,10 +80,16 @@ def normalize_tenant_name(value: Any) -> str:
 
 
 def primary_tenant_code(value: str | None) -> str | None:
+    codes = tenant_codes(value)
+    return codes[0] if codes else None
+
+
+def tenant_codes(value: str | None) -> list[str]:
     if not value:
-        return None
-    parts = [normalize_identifier(part) for part in re.split(r"[\n/]", value) if normalize_identifier(part)]
-    return parts[0] if parts else None
+        return []
+    return list(dict.fromkeys(
+        normalize_identifier(part) for part in re.split(r"[\n/]", value) if normalize_identifier(part)
+    ))
 
 
 def contract_source_key(record: RentRollRecord) -> str:
@@ -234,7 +240,7 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
             if any(marker in unit_code for marker in ("〜", "~", "・")):
                 issues.append(ImportIssue(sheet.title, row_number, "combined_unit", "結合区画として暫定登録します。", payload))
             if tenant_code and re.search(r"[\n/]", tenant_code):
-                issues.append(ImportIssue(sheet.title, row_number, "multiple_tenant_codes", "先頭のテナントコードを代表値として暫定登録します。", payload))
+                issues.append(ImportIssue(sheet.title, row_number, "multiple_tenant_codes", "全テナントコードを保存しました。請求項目ごとのコード割当を確認してください。", payload))
             records.append(RentRollRecord(
                 sheet.title, row_number, property_name, source_status, inherited_wing, inherited_floor, unit_code, infer_unit_type(unit_code),
                 tenant_code, tenant_name, as_number(cell(row, columns["area"])), as_number(cell(row, columns["rent"])),
@@ -320,6 +326,52 @@ class SupabaseRest:
         return self.request("GET", table, query=query) or []
 
 
+def ensure_tenant_billing_codes(client: SupabaseRest, tenant_id: str, source_codes: list[str]) -> None:
+    if not source_codes:
+        return
+    existing_codes = client.many("tenant_billing_code", {
+        "select": "tenant_billing_code_id,billing_code,is_primary",
+        "tenant_id": f"eq.{tenant_id}",
+    })
+    existing_by_code = {row["billing_code"]: row for row in existing_codes}
+    primary = next((row for row in existing_codes if row["is_primary"]), None)
+    for index, billing_code in enumerate(source_codes):
+        if billing_code in existing_by_code:
+            continue
+        row = client.request("POST", "tenant_billing_code", body={
+            "tenant_id": tenant_id,
+            "billing_code": billing_code,
+            "is_primary": primary is None and index == 0,
+            "is_active": True,
+            "sort_order": len(existing_codes) + index,
+        }, prefer="return=representation")[0]
+        existing_by_code[billing_code] = row
+        if row["is_primary"]:
+            primary = row
+    if primary is None:
+        return
+    client.request("PATCH", "tenant_master", query={"tenant_id": f"eq.{tenant_id}"}, body={
+        "external_tenant_code": primary["billing_code"],
+    })
+    accounts = client.many("income_expense_account_master", {
+        "select": "account_id",
+        "income_expense_type": "eq.収入",
+    })
+    existing_assignments = client.many("tenant_billing_code_account", {
+        "select": "account_id",
+        "tenant_id": f"eq.{tenant_id}",
+    })
+    assigned = {row["account_id"] for row in existing_assignments}
+    for account in accounts:
+        if account["account_id"] in assigned:
+            continue
+        client.request("POST", "tenant_billing_code_account", body={
+            "tenant_id": tenant_id,
+            "account_id": account["account_id"],
+            "tenant_billing_code_id": primary["tenant_billing_code_id"],
+        })
+
+
 def terminate_source_contracts_for_unit(client: SupabaseRest, unit_id: str) -> None:
     allocations = client.many("lease_contract_unit", {"select": "lease_contract_id,lease_contract!inner(lease_contract_id,source_system,contract_status)", "unit_id": f"eq.{unit_id}", "lease_contract.source_system": f"eq.{SOURCE_SYSTEM}", "lease_contract.contract_status": "eq.active"})
     for allocation in allocations:
@@ -398,12 +450,13 @@ def persist(records: list[RentRollRecord], issues: list[ImportIssue], source_fil
             persisted += 1
             continue
         normalized_name = normalize_tenant_name(record.tenant_name)
-        tenant = client.one("tenant_master", {"select": "tenant_id", "normalized_tenant_name": f"eq.{normalized_name}"})
-        tenant_payload = {"external_tenant_code": primary_tenant_code(record.tenant_code), "tenant_name": record.tenant_name, "normalized_tenant_name": normalized_name}
+        tenant = client.one("tenant_master", {"select": "tenant_id,external_tenant_code", "normalized_tenant_name": f"eq.{normalized_name}"})
+        tenant_payload = {"external_tenant_code": tenant.get("external_tenant_code") if tenant else primary_tenant_code(record.tenant_code), "tenant_name": record.tenant_name, "normalized_tenant_name": normalized_name}
         if tenant:
             client.request("PATCH", "tenant_master", query={"tenant_id": f"eq.{tenant['tenant_id']}"}, body=tenant_payload)
         else:
             tenant = client.request("POST", "tenant_master", body=tenant_payload, prefer="return=representation")[0]
+        ensure_tenant_billing_codes(client, tenant["tenant_id"], tenant_codes(record.tenant_code))
         source_key = contract_source_key(record)
         contract = client.one("lease_contract", {"select": "lease_contract_id", "source_system": f"eq.{SOURCE_SYSTEM}", "source_record_key": f"eq.{source_key}"})
         contract_payload = {"tenant_id": tenant["tenant_id"], "contract_status": "active", "contract_start_date": record.contract_start_date, "contract_end_date": record.contract_end_date, "renewal_terms": record.renewal_terms, "payment_terms": record.payment_terms, "notes": import_notes(record), "source_system": SOURCE_SYSTEM, "source_record_key": source_key}
@@ -438,6 +491,7 @@ def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], s
         "unit_type": record.unit_type,
         "source_discriminator": record.source_unit_discriminator,
         "tenant_code": primary_tenant_code(record.tenant_code),
+        "tenant_codes": tenant_codes(record.tenant_code),
         "tenant_name": record.tenant_name,
         "normalized_tenant_name": normalize_tenant_name(record.tenant_name),
         "area_sqm": record.area_sqm,
@@ -468,7 +522,7 @@ def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], s
     sql = f'''{transaction_start}create temporary table rent_roll_stage (
   source_sheet_name text not null, source_row_number integer not null, property_name text not null,
   source_status text not null, wing_code text, floor_label text, unit_code text not null, unit_type text not null,
-  source_discriminator text not null, tenant_code text, tenant_name text, normalized_tenant_name text not null,
+  source_discriminator text not null, tenant_code text, tenant_codes jsonb not null, tenant_name text, normalized_tenant_name text not null,
   area_sqm numeric, monthly_rent_amount numeric, monthly_common_charge_amount numeric, deposit_amount numeric,
   security_deposit_amount numeric, key_money_amount numeric, renewal_fee_amount numeric,
   contract_start_date date, contract_end_date date, renewal_terms text, payment_terms text, notes text,
@@ -478,7 +532,7 @@ def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], s
 insert into rent_roll_stage
 select * from jsonb_to_recordset($rentroll${json.dumps(rows, ensure_ascii=False)}$rentroll$::jsonb) as r(
   source_sheet_name text, source_row_number integer, property_name text, source_status text, wing_code text,
-  floor_label text, unit_code text, unit_type text, source_discriminator text, tenant_code text, tenant_name text,
+  floor_label text, unit_code text, unit_type text, source_discriminator text, tenant_code text, tenant_codes jsonb, tenant_name text,
   normalized_tenant_name text, area_sqm numeric, monthly_rent_amount numeric, monthly_common_charge_amount numeric,
   deposit_amount numeric, security_deposit_amount numeric, key_money_amount numeric, renewal_fee_amount numeric,
   contract_start_date date, contract_end_date date, renewal_terms text, payment_terms text, notes text,
@@ -517,6 +571,8 @@ declare
   v_wing_id uuid;
   v_unit_id uuid;
   v_tenant_id uuid;
+  v_billing_code text;
+  v_primary_code_id uuid;
   v_contract_id uuid;
   v_allocation_id uuid;
 begin
@@ -558,6 +614,9 @@ begin
     select tenant_id into v_tenant_id from public.tenant_master where normalized_tenant_name = r.normalized_tenant_name;
     if v_tenant_id is null and r.tenant_code is not null then
       select tenant_id into v_tenant_id from public.tenant_master where external_tenant_code = r.tenant_code;
+      if v_tenant_id is null then
+        select tenant_id into v_tenant_id from public.tenant_billing_code where billing_code = r.tenant_code;
+      end if;
     end if;
     if v_tenant_id is null then
       insert into public.tenant_master (external_tenant_code, tenant_name, normalized_tenant_name)
@@ -565,6 +624,45 @@ begin
     else
       update public.tenant_master set external_tenant_code = coalesce(r.tenant_code, external_tenant_code), tenant_name = r.tenant_name, normalized_tenant_name = r.normalized_tenant_name, updated_at = now()
       where tenant_id = v_tenant_id;
+    end if;
+
+    select tenant_billing_code_id into v_primary_code_id
+    from public.tenant_billing_code
+    where tenant_id = v_tenant_id and is_primary;
+    for v_billing_code in select jsonb_array_elements_text(r.tenant_codes) loop
+      if not exists (
+        select 1 from public.tenant_billing_code
+        where tenant_id = v_tenant_id and billing_code = v_billing_code
+      ) then
+        if v_primary_code_id is null then
+          insert into public.tenant_billing_code(tenant_id, billing_code, is_primary, is_active, sort_order)
+          values (v_tenant_id, v_billing_code, true, true, 0)
+          returning tenant_billing_code_id into v_primary_code_id;
+        else
+          insert into public.tenant_billing_code(tenant_id, billing_code, is_primary, is_active, sort_order)
+          values (
+            v_tenant_id, v_billing_code, false, true,
+            coalesce((select max(sort_order) + 1 from public.tenant_billing_code where tenant_id = v_tenant_id), 0)
+          );
+        end if;
+      end if;
+    end loop;
+    if v_primary_code_id is null then
+      select tenant_billing_code_id into v_primary_code_id
+      from public.tenant_billing_code where tenant_id = v_tenant_id and is_primary;
+    end if;
+    if v_primary_code_id is not null then
+      insert into public.tenant_billing_code_account(tenant_id, account_id, tenant_billing_code_id)
+      select v_tenant_id, account.account_id, v_primary_code_id
+      from public.income_expense_account_master account
+      where account.income_expense_type = '収入'
+      on conflict (tenant_id, account_id) do nothing;
+      update public.tenant_master tenant
+      set external_tenant_code = code.billing_code, updated_at = now()
+      from public.tenant_billing_code code
+      where tenant.tenant_id = v_tenant_id
+        and code.tenant_billing_code_id = v_primary_code_id
+        and tenant.external_tenant_code is distinct from code.billing_code;
     end if;
 
     select lease_contract_id into v_contract_id from public.lease_contract
