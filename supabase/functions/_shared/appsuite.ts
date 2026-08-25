@@ -60,6 +60,9 @@ function value(payload: Record<string, unknown>, key: string): string | null {
 
 function workflowType(name: string | null, appId: string) {
   if (appId === '87') return '修繕発注稟議';
+  if (['23', '63', '65', '66', '67', '72', '78'].includes(appId)) return '新規契約';
+  if (['24', '69', '77', '79', '83', '84', '85', '143'].includes(appId)) return '契約内容変更';
+  if (appId === '100') return '決裁済み稟議取消';
   if (!name) return 'その他';
   if (/定期借家.*(?:まき直し|巻き直し)|(?:まき直し|巻き直し).*定期借家/.test(name)) return '定期借家まき直し稟議';
   if (name.includes('新規契約稟議')) return '新規契約稟議';
