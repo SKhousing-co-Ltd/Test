@@ -1,4 +1,8 @@
 -- Make AppSuite the reliable daily source for contract/rent-roll and procurement workflows.
+create extension if not exists pg_cron with schema pg_catalog;
+grant usage on schema cron to postgres;
+grant all privileges on all tables in schema cron to postgres;
+
 create index if not exists ix_appsuite_sync_run_app_started
   on public.appsuite_sync_run (app_id, started_at desc);
 
