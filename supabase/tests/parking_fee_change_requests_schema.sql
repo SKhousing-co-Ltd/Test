@@ -12,8 +12,11 @@ begin
   if to_regprocedure('public.enqueue_parking_fee_change_request(uuid,uuid,uuid)') is null then
     raise exception 'enqueue_parking_fee_change_request is missing';
   end if;
-  if to_regprocedure('public.apply_parking_fee_change_request(uuid,integer,numeric,date,uuid)') is null then
+  if to_regprocedure('public.apply_parking_fee_change_request(uuid,integer,numeric,date,date,uuid)') is null then
     raise exception 'apply_parking_fee_change_request is missing';
+  end if;
+  if to_regprocedure('public.apply_parking_fee_change_request(uuid,integer,numeric,date,uuid)') is not null then
+    raise exception 'obsolete apply_parking_fee_change_request overload remains';
   end if;
 
   if exists (

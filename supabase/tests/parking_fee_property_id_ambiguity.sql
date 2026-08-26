@@ -11,7 +11,7 @@ begin
     raise exception 'set_parking_fee_history still contains an ambiguous property_id variable';
   end if;
 
-  select pg_get_functiondef('private.apply_parking_fee_change_request(uuid,integer,numeric,date,uuid)'::regprocedure)
+  select pg_get_functiondef('private.apply_parking_fee_change_request(uuid,integer,numeric,date,date,uuid)'::regprocedure)
     into apply_definition;
   if apply_definition not like '%main_contract_id uuid%'
      or apply_definition not like '%parking_scope, main_contract_id, p_monthly_parking_fee%' then
