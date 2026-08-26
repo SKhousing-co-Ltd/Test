@@ -1,0 +1,3 @@
+-- Production migration history marker.
+-- The identical idempotent implementation is tracked locally by
+-- 20260824021200_prevent_cross_facility_parking_unit_reuse.sql.
