@@ -12,7 +12,7 @@ begin
   end if;
   if not has_function_privilege(
     'authenticated',
-    'public.apply_parking_fee_change_request(uuid,integer,numeric,date,uuid)',
+    'public.apply_parking_fee_change_request(uuid,integer,numeric,date,date,uuid)',
     'execute'
   ) then raise exception 'authenticated cannot execute the parking fee RPC'; end if;
 

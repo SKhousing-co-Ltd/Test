@@ -151,8 +151,10 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
   const propertyId = typeof payload.property_id === 'string' ? payload.property_id : '';
   const tenantId = typeof payload.tenant_id === 'string' ? payload.tenant_id : '';
   const initialStart = typeof payload.contract_start_date === 'string' ? payload.contract_start_date : '';
+  const initialEnd = typeof payload.contract_end_date === 'string' ? payload.contract_end_date : '';
   const [monthlyFee, setMonthlyFee] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(initialStart);
+  const [parkingContractEndDate, setParkingContractEndDate] = useState(initialEnd);
   const [mainContractUnitId, setMainContractUnitId] = useState('');
   const candidates = useMemo(() => contractUnits.filter((candidate) =>
     candidate.unit?.unit_type !== 'parking'
@@ -168,6 +170,9 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
       return;
     }
     if (!effectiveFrom) { onError('適用開始日を入力してください。'); return; }
+    if (!parkingContractEndDate) { onError('駐車場契約の終了日が未登録です。契約書を確認し、終了日を入力してください。'); return; }
+    if (parkingContractEndDate < effectiveFrom) { onError('駐車場契約終了日は適用開始日以降を指定してください。'); return; }
+    if (initialStart && parkingContractEndDate < initialStart) { onError('駐車場契約終了日は契約開始日以降を指定してください。'); return; }
     if (scope === 'internal' && !mainContractUnitId) { onError('内部契約は控除対象の主契約区画を選択してください。'); return; }
     if (!window.confirm('入力した駐車料を履歴へ反映し、この対応依頼を確定しますか？')) return;
     onWorking(true); onError('');
@@ -176,6 +181,7 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
       p_expected_row_version: request.row_version,
       p_monthly_parking_fee: amount,
       p_effective_from: effectiveFrom,
+      p_parking_contract_end_date: parkingContractEndDate,
       p_main_lease_contract_unit_id: scope === 'internal' ? mainContractUnitId : null,
     });
     onWorking(false);
@@ -188,7 +194,7 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
   return <section className="change-card">
     <p className="section-kicker">PARKING FEE</p>
     <h4>駐車料を手入力</h4>
-    <p>Excel取込では金額を登録していません。契約原本を確認し、基準日履歴へ反映します。</p>
+    <p>Excel取込では駐車料を登録していません。契約原本を確認し、月額駐車料・適用開始日・駐車場契約終了日を入力してください。</p>
     <div className="change-diff-table">
       <div className="change-diff-head"><span>物件・枠</span><span>テナント</span><span>区分</span></div>
       <div><strong>{String(payload.property_name ?? '物件未設定')} / {String(payload.space_number ?? '枠未設定')}</strong><span>{String(payload.tenant_name ?? 'テナント未設定')}</span><span>{scope === 'internal' ? '内部' : '外部'}</span></div>
@@ -196,6 +202,7 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
     {request.status === 'applied' ? <p className="notice">駐車料は登録済みです。</p> : <div className="change-item-editor">
       <label>月額駐車料<input type="number" min="0" step="1" value={monthlyFee} onChange={(event) => setMonthlyFee(event.target.value)} placeholder="例: 30000" /></label>
       <label>適用開始日<input type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></label>
+      <label>駐車場契約終了日<input type="date" value={parkingContractEndDate} onChange={(event) => setParkingContractEndDate(event.target.value)} /></label>
       {scope === 'internal' ? <label>控除対象の主契約区画<select value={mainContractUnitId} onChange={(event) => setMainContractUnitId(event.target.value)}><option value="">選択してください</option>{candidates.map((candidate) => <option key={candidate.lease_contract_unit_id} value={candidate.lease_contract_unit_id}>{contractUnitLabel(candidate)}｜{candidate.lease_start_date ?? '開始日未設定'}～{candidate.lease_end_date ?? '継続中'}</option>)}</select></label> : null}
       {(role === 'admin' || role === 'manager') ? <button className="primary-button" onClick={() => void applyParkingFee()} disabled={working}>履歴へ反映して確定</button> : <p className="notice">履歴への反映は管理者またはマネージャーが行います。</p>}
     </div>}
