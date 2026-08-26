@@ -1,0 +1,3 @@
+-- Production migration history marker.
+-- The idempotent function definitions are replayed by
+-- 20260826090000_fix_parking_fee_property_id_ambiguity.sql.
