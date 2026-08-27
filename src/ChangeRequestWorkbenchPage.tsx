@@ -173,7 +173,7 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
     if (!parkingContractEndDate) { onError('駐車場契約の終了日が未登録です。契約書を確認し、終了日を入力してください。'); return; }
     if (parkingContractEndDate < effectiveFrom) { onError('駐車場契約終了日は適用開始日以降を指定してください。'); return; }
     if (initialStart && parkingContractEndDate < initialStart) { onError('駐車場契約終了日は契約開始日以降を指定してください。'); return; }
-    if (scope === 'internal' && !mainContractUnitId) { onError('内部契約は控除対象の主契約区画を選択してください。'); return; }
+    if (scope === 'internal' && !mainContractUnitId) { onError('内部契約は関連する主契約区画を選択してください。'); return; }
     if (!window.confirm('入力した駐車料を履歴へ反映し、この対応依頼を確定しますか？')) return;
     onWorking(true); onError('');
     const { data, error } = await supabase.rpc('apply_parking_fee_change_request', {
@@ -203,7 +203,7 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
       <label>月額駐車料<input type="number" min="0" step="1" value={monthlyFee} onChange={(event) => setMonthlyFee(event.target.value)} placeholder="例: 30000" /></label>
       <label>適用開始日<input type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></label>
       <label>駐車場契約終了日<input type="date" value={parkingContractEndDate} onChange={(event) => setParkingContractEndDate(event.target.value)} /></label>
-      {scope === 'internal' ? <label>控除対象の主契約区画<select value={mainContractUnitId} onChange={(event) => setMainContractUnitId(event.target.value)}><option value="">選択してください</option>{candidates.map((candidate) => <option key={candidate.lease_contract_unit_id} value={candidate.lease_contract_unit_id}>{contractUnitLabel(candidate)}｜{candidate.lease_start_date ?? '開始日未設定'}～{candidate.lease_end_date ?? '継続中'}</option>)}</select></label> : null}
+      {scope === 'internal' ? <label>関連する主契約区画<select value={mainContractUnitId} onChange={(event) => setMainContractUnitId(event.target.value)}><option value="">選択してください</option>{candidates.map((candidate) => <option key={candidate.lease_contract_unit_id} value={candidate.lease_contract_unit_id}>{contractUnitLabel(candidate)}｜{candidate.lease_start_date ?? '開始日未設定'}～{candidate.lease_end_date ?? '継続中'}</option>)}</select></label> : null}
       {(role === 'admin' || role === 'manager') ? <button className="primary-button" onClick={() => void applyParkingFee()} disabled={working}>履歴へ反映して確定</button> : <p className="notice">履歴への反映は管理者またはマネージャーが行います。</p>}
     </div>}
   </section>;

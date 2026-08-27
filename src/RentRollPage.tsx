@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ContractDetailModal } from './ContractDetailModal';
+import { RentRollReconciliationPanel } from './RentRollReconciliationPanel';
+import type { ContractCapabilities } from './lib/contract-capabilities';
 import { supabase } from './lib/supabase';
 
 type RentRollStatus = 'occupied' | 'scheduled' | 'vacant' | 'applied' | 'unavailable';
@@ -21,6 +24,7 @@ type RentRollSource = {
   rentable_area_sqm: number | null;
   source_discriminator: string | null;
   leasing_status: string | null;
+  lease_contract_unit_id: string | null;
   lease_contract_id: string | null;
   contract_status: string | null;
   contract_notes: string | null;
@@ -29,10 +33,11 @@ type RentRollSource = {
   tenant_name: string | null;
   billing_codes?: TenantBillingCode[] | null;
   leased_area_sqm: number | null;
-  gross_monthly_rent_amount: number;
-  parking_fee_deduction_amount: number;
   monthly_rent_amount: number;
   monthly_common_charge_amount: number;
+  rent_common_total_amount: number;
+  monthly_parking_amount: number;
+  other_monthly_amount: number;
   monthly_total_amount: number;
   deposit_amount: number;
   security_deposit_amount: number;
@@ -48,6 +53,7 @@ type RentRollSource = {
 
 type RentRollRow = {
   unitId: string;
+  leaseContractUnitId: string | null;
   unitType: string;
   status: RentRollStatus;
   productCategory: ProductCategory;
@@ -59,10 +65,11 @@ type RentRollRow = {
   tenantCodes: string[];
   tenantName: string;
   area: number | null;
-  grossRent: number;
-  parkingDeduction: number;
   rent: number;
   commonCharge: number;
+  rentCommonTotal: number;
+  parkingAmount: number;
+  otherMonthlyAmount: number;
   total: number;
   deposit: number;
   securityDeposit: number;
@@ -156,6 +163,7 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
 
   return {
     unitId: source.unit_id,
+    leaseContractUnitId: source.lease_contract_unit_id,
     unitType: source.unit_type,
     status,
     productCategory: normalizeProductCategory(source.unit_type),
@@ -167,10 +175,11 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
     tenantCodes: parkingUnavailable ? [] : tenantCodes.length ? tenantCodes : primaryTenantCode ? [primaryTenantCode] : [],
     tenantName: parkingUnavailable ? '' : source.tenant_name ?? '',
     area: source.leased_area_sqm ?? source.rentable_area_sqm,
-    grossRent: parkingUnavailable ? 0 : Number(source.gross_monthly_rent_amount ?? 0),
-    parkingDeduction: parkingUnavailable ? 0 : Number(source.parking_fee_deduction_amount ?? 0),
     rent: parkingUnavailable ? 0 : Number(source.monthly_rent_amount ?? 0),
     commonCharge: parkingUnavailable ? 0 : Number(source.monthly_common_charge_amount ?? 0),
+    rentCommonTotal: parkingUnavailable ? 0 : Number(source.rent_common_total_amount ?? 0),
+    parkingAmount: parkingUnavailable ? 0 : Number(source.monthly_parking_amount ?? 0),
+    otherMonthlyAmount: parkingUnavailable ? 0 : Number(source.other_monthly_amount ?? 0),
     total: parkingUnavailable ? 0 : Number(source.monthly_total_amount ?? 0),
     deposit: parkingUnavailable ? 0 : Number(source.deposit_amount ?? 0),
     securityDeposit: parkingUnavailable ? 0 : Number(source.security_deposit_amount ?? 0),
@@ -187,7 +196,7 @@ function formatCurrency(value: number): string {
   return value === 0 ? '—' : currencyFormatter.format(value);
 }
 
-export function RentRollPage() {
+export function RentRollPage({ capabilities }: { capabilities: ContractCapabilities }) {
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [propertyId, setPropertyId] = useState('');
   const [rows, setRows] = useState<RentRollRow[]>([]);
@@ -199,6 +208,8 @@ export function RentRollPage() {
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingRows, setLoadingRows] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedLeaseContractUnitId, setSelectedLeaseContractUnitId] = useState<string | null>(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -281,7 +292,7 @@ export function RentRollPage() {
     };
     void loadRows();
     return () => { cancelled = true; };
-  }, [propertyId, asOfDate]);
+  }, [propertyId, asOfDate, refreshVersion]);
 
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
     const floorDifference = floorOrder(a.floor) - floorOrder(b.floor);
@@ -393,14 +404,14 @@ export function RentRollPage() {
       <div><span>表示中の区画数</span><strong>{numberFormatter.format(summary.units)} 区画</strong><small>全体 {numberFormatter.format(overallSummary.units)} 区画</small></div>
       <div><span>表示中の入居</span><strong>{numberFormatter.format(summary.occupied)} 区画</strong><small>全体 {numberFormatter.format(overallSummary.occupied)} 区画</small></div>
       <div><span>表示中の空室</span><strong>{numberFormatter.format(summary.vacant)} 区画</strong><small>全体 {numberFormatter.format(overallSummary.vacant)} 区画</small></div>
-      <div className="rent-roll-total"><span>表示中の月額合計</span><strong>{currencyFormatter.format(summary.monthlyTotal)}</strong><small>全体 {currencyFormatter.format(overallSummary.monthlyTotal)}</small></div>
+      <div className="rent-roll-total"><span>表示中の月額総計</span><strong>{currencyFormatter.format(summary.monthlyTotal)}</strong><small>賃料・共益費・駐車場代・その他を別項目で集計｜全体 {currencyFormatter.format(overallSummary.monthlyTotal)}</small></div>
     </div>}
 
     <div className="rent-roll-panel">
       <div className="rent-roll-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}</p></div></div>
-      <div className="rent-roll-table-wrap">
+      <div className="rent-roll-table-wrap" role="region" aria-label="レントロール一覧。縦横にスクロールできます" tabIndex={0}>
         <table className="rent-roll-table">
-          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>テナントコード</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>総額賃料</th><th>駐車料控除</th><th>表示賃料</th><th>共益費</th><th>賃料＋共益費</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
+          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>テナントコード</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>駐車場代</th><th>その他月額</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
           <tbody>
             {loadingRows && <tr><td colSpan={20} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
             {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={20} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
@@ -411,14 +422,16 @@ export function RentRollPage() {
               <td>{row.floor || '—'}</td>
               <td><strong>{row.parkingSpaceNumber ? `枠 ${row.parkingSpaceNumber}` : row.unitName}</strong>{row.discriminator && <small className="rent-roll-discriminator">暫定識別子: {row.discriminator}</small>}</td>
               <td>{row.parkingScope === 'internal' ? '内部' : row.parkingScope === 'external' ? '外部' : '—'}</td>
-              <td>{row.tenantCode || '—'}{row.tenantCodes.length > 1 ? <span className="tenant-code-pill">＋{row.tenantCodes.length - 1}</span> : null}</td><td>{row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
+              <td>{row.tenantCode || '—'}{row.tenantCodes.length > 1 ? <span className="tenant-code-pill">＋{row.tenantCodes.length - 1}</span> : null}</td><td>{row.tenantName && row.leaseContractUnitId && capabilities.canViewContract ? <button type="button" className="rent-roll-tenant-link" onClick={() => setSelectedLeaseContractUnitId(row.leaseContractUnitId)}>{row.tenantName}</button> : row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
               <td className="numeric">{row.area == null ? '—' : numberFormatter.format(row.area)}</td>
-              <td className="numeric">{formatCurrency(row.grossRent)}</td><td className="numeric">{formatCurrency(row.parkingDeduction)}</td><td className="numeric emphasis">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.total)}</td>
+              <td className="numeric emphasis">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.rentCommonTotal)}</td><td className="numeric">{formatCurrency(row.parkingAmount)}</td><td className="numeric">{formatCurrency(row.otherMonthlyAmount)}</td>
               <td className="numeric">{formatCurrency(row.deposit)}</td><td className="numeric">{formatCurrency(row.securityDeposit)}</td><td className="numeric">{formatCurrency(row.keyMoney)}</td><td className="numeric">{formatCurrency(row.renewalFee)}</td>
             </tr>)}
           </tbody>
         </table>
       </div>
     </div>
+    {capabilities.canViewAuditData && <RentRollReconciliationPanel selectedPropertyName={selectedProperty?.propertyName} canManage={capabilities.canEditContract} />}
+    {selectedLeaseContractUnitId && <ContractDetailModal leaseContractUnitId={selectedLeaseContractUnitId} asOfDate={asOfDate} capabilities={capabilities} onClose={() => setSelectedLeaseContractUnitId(null)} onChanged={() => setRefreshVersion((current) => current + 1)} />}
   </section>;
 }

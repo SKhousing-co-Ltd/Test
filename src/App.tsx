@@ -22,6 +22,7 @@ import { ProcurementPage } from './ProcurementPage';
 import { OperationsDashboard } from './OperationsDashboard';
 import { ParkingPage } from './ParkingPage';
 import { TenantBillingCodesPage } from './TenantBillingCodesPage';
+import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
 type ContractType = '新規' | '更新';
@@ -53,7 +54,6 @@ type LeaseContractRow = {
   contract_units: Array<{ unit: { asset: { asset_name: string } | null } | null }> | null;
 };
 
-type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
 type AccountStatus = 'pending' | 'active' | 'suspended';
 
 type Employee = {
@@ -129,7 +129,7 @@ function App() {
             <Route path="/dashboard" element={<OperationsDashboard userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
             <Route path="/financial" element={<FinancialPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/procurement" element={<ProcurementPage canEdit={profile?.role !== 'viewer'} canManageVendors={profile?.role === 'admin' || profile?.role === 'manager'} />} />
-            <Route path="/rent-roll" element={<RentRollPage />} />
+            <Route path="/rent-roll" element={<RentRollPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} />} />
             <Route path="/tenants" element={<TenantBillingCodesPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/parking" element={<ParkingPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/change-requests" element={<ChangeRequestWorkbenchPage role={profile?.role ?? 'viewer'} />} />
