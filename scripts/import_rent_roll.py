@@ -53,6 +53,8 @@ class RentRollRecord:
     area_sqm: float | None
     monthly_rent_amount: int | None
     monthly_common_charge_amount: int | None
+    monthly_parking_amount: int | None
+    other_monthly_amount: int | None
     deposit_amount: int | None
     security_deposit_amount: int | None
     key_money_amount: int | None
@@ -170,7 +172,15 @@ def find_column(headers: dict[int, str], candidates: tuple[str, ...]) -> int | N
     return None
 
 
-def detect_columns(sheet: Any) -> tuple[dict[str, int | None], int]:
+def find_columns(headers: dict[int, str], candidates: tuple[str, ...]) -> list[int]:
+    return [
+        column
+        for column, header in headers.items()
+        if any(candidate in re.sub(r"\s+", "", header) for candidate in candidates)
+    ]
+
+
+def detect_columns(sheet: Any) -> tuple[dict[str, Any], int]:
     headers: dict[int, str] = {}
     header_row = 0
     for column in range(1, sheet.max_column + 1):
@@ -185,6 +195,8 @@ def detect_columns(sheet: Any) -> tuple[dict[str, int | None], int]:
         "unit": find_column(headers, ("階-室", "室")), "tenant_code": find_column(headers, ("コード",)),
         "tenant_name": find_column(headers, ("テナント名",)), "area": find_column(headers, ("面積",)),
         "rent": find_column(headers, ("賃料",)), "common_charge": find_column(headers, ("共益費",)),
+        "parking_fee": find_column(headers, ("駐車場代", "駐車料")),
+        "other_fee_columns": find_columns(headers, ("TVアンテナ", "アンテナ料", "看板代", "清掃代")),
         "deposit": find_column(headers, ("敷金",)), "security_deposit": find_column(headers, ("保証金",)),
         "key_money": find_column(headers, ("礼金",)), "renewal_fee": find_column(headers, ("更新料",)),
         "contract_start": find_column(headers, ("契約開始", "開始日", "始期", "契約日")),
@@ -201,6 +213,11 @@ def detect_columns(sheet: Any) -> tuple[dict[str, int | None], int]:
 
 def cell(row: tuple[Any, ...], column: int | None) -> Any:
     return row[column - 1] if column and column <= len(row) else None
+
+
+def sum_columns(row: tuple[Any, ...], columns: list[int]) -> int | float | None:
+    values = [as_number(cell(row, column)) for column in columns]
+    return sum(value or 0 for value in values) if any(value is not None for value in values) else None
 
 
 def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> tuple[list[RentRollRecord], list[ImportIssue]]:
@@ -244,7 +261,8 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
             records.append(RentRollRecord(
                 sheet.title, row_number, property_name, source_status, inherited_wing, inherited_floor, unit_code, infer_unit_type(unit_code),
                 tenant_code, tenant_name, as_number(cell(row, columns["area"])), as_number(cell(row, columns["rent"])),
-                as_number(cell(row, columns["common_charge"])), as_number(cell(row, columns["deposit"])),
+                as_number(cell(row, columns["common_charge"])), as_number(cell(row, columns["parking_fee"])),
+                sum_columns(row, columns["other_fee_columns"]), as_number(cell(row, columns["deposit"])),
                 as_number(cell(row, columns["security_deposit"])), as_number(cell(row, columns["key_money"])),
                 as_number(cell(row, columns["renewal_fee"])), as_date(cell(row, columns["contract_start"])),
                 as_date(cell(row, columns["contract_end"])), normalize_text(cell(row, columns["renewal_terms"])) or None,
@@ -712,6 +730,123 @@ from jsonb_to_recordset($rentrollissues${json.dumps(issue_rows, ensure_ascii=Fal
     path.write_text(sql, encoding="utf-8")
 
 
+def write_reconciliation_sql(
+    records: list[RentRollRecord],
+    issues: list[ImportIssue],
+    workbook: Path,
+    as_of_date: str,
+    path: Path,
+) -> None:
+    """Write comparison-only SQL. This never updates contract or rent-roll master data."""
+    source_hash = sha256(workbook.read_bytes()).hexdigest()
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        monthly_values = (
+            record.monthly_rent_amount,
+            record.monthly_common_charge_amount,
+            record.monthly_parking_amount,
+            record.other_monthly_amount,
+        )
+        monthly_total = sum(value or 0 for value in monthly_values) if any(value is not None for value in monthly_values) else None
+        rows.append({
+            "source_sheet_name": record.source_sheet_name,
+            "source_row_number": record.source_row_number,
+            "property_name": record.property_name,
+            "wing_code": record.wing_code,
+            "floor_label": record.floor_label,
+            "unit_code": record.unit_code,
+            "unit_type": record.unit_type,
+            "tenant_code": primary_tenant_code(record.tenant_code),
+            "tenant_name": record.tenant_name,
+            "source_status": record.source_status,
+            "source_record_key": contract_source_key(record),
+            "source_area_sqm": record.area_sqm,
+            "source_monthly_rent_amount": record.monthly_rent_amount,
+            "source_monthly_common_charge_amount": record.monthly_common_charge_amount,
+            "source_monthly_parking_amount": record.monthly_parking_amount,
+            "source_other_monthly_amount": record.other_monthly_amount,
+            "source_monthly_total_amount": monthly_total,
+            "contract_start_date": record.contract_start_date,
+            "contract_end_date": record.contract_end_date,
+            "raw_payload": asdict(record),
+        })
+    source_file_sql = "'" + workbook.name.replace("'", "''") + "'"
+    payload = json.dumps(rows, ensure_ascii=False)
+    sql = f"""begin;
+
+with target_batch as (
+  insert into public.rent_roll_import_batch (
+    source_file_name, source_sha256, as_of_date, status, row_count, issue_count
+  ) values (
+    {source_file_sql}, '{source_hash}', '{as_of_date}'::date, 'uploaded', {len(rows)}, {len(issues)}
+  )
+  on conflict (source_sha256, as_of_date) do update set
+    source_file_name = excluded.source_file_name,
+    status = 'uploaded',
+    row_count = excluded.row_count,
+    issue_count = excluded.issue_count,
+    updated_at = now()
+  returning rent_roll_import_batch_id
+)
+insert into public.rent_roll_import_row (
+  rent_roll_import_batch_id, source_sheet_name, source_row_number,
+  property_name, wing_code, floor_label, unit_code, unit_type,
+  tenant_code, tenant_name, source_status, source_record_key,
+  source_area_sqm, source_monthly_rent_amount,
+  source_monthly_common_charge_amount, source_monthly_parking_amount,
+  source_other_monthly_amount,
+  source_monthly_total_amount, contract_start_date, contract_end_date, raw_payload
+)
+select
+  target_batch.rent_roll_import_batch_id,
+  source.source_sheet_name, source.source_row_number,
+  source.property_name, source.wing_code, source.floor_label,
+  source.unit_code, source.unit_type, source.tenant_code, source.tenant_name,
+  source.source_status, source.source_record_key, source.source_area_sqm,
+  source.source_monthly_rent_amount, source.source_monthly_common_charge_amount,
+  source.source_monthly_parking_amount, source.source_other_monthly_amount,
+  source.source_monthly_total_amount,
+  source.contract_start_date, source.contract_end_date, source.raw_payload
+from target_batch
+cross join jsonb_to_recordset($rentrollcomparison${payload}$rentrollcomparison$::jsonb) as source(
+  source_sheet_name text, source_row_number integer, property_name text,
+  wing_code text, floor_label text, unit_code text, unit_type text,
+  tenant_code text, tenant_name text, source_status text, source_record_key text,
+  source_area_sqm numeric, source_monthly_rent_amount numeric,
+  source_monthly_common_charge_amount numeric, source_monthly_parking_amount numeric,
+  source_other_monthly_amount numeric,
+  source_monthly_total_amount numeric, contract_start_date date, contract_end_date date,
+  raw_payload jsonb
+)
+on conflict (rent_roll_import_batch_id, source_sheet_name, source_row_number) do update set
+  property_name = excluded.property_name,
+  wing_code = excluded.wing_code,
+  floor_label = excluded.floor_label,
+  unit_code = excluded.unit_code,
+  unit_type = excluded.unit_type,
+  tenant_code = excluded.tenant_code,
+  tenant_name = excluded.tenant_name,
+  source_status = excluded.source_status,
+  source_record_key = excluded.source_record_key,
+  source_area_sqm = excluded.source_area_sqm,
+  source_monthly_rent_amount = excluded.source_monthly_rent_amount,
+  source_monthly_common_charge_amount = excluded.source_monthly_common_charge_amount,
+  source_monthly_parking_amount = excluded.source_monthly_parking_amount,
+  source_other_monthly_amount = excluded.source_other_monthly_amount,
+  source_monthly_total_amount = excluded.source_monthly_total_amount,
+  contract_start_date = excluded.contract_start_date,
+  contract_end_date = excluded.contract_end_date,
+  raw_payload = excluded.raw_payload,
+  matched_lease_contract_unit_id = null,
+  match_status = 'unmatched',
+  match_note = null,
+  updated_at = now();
+
+commit;
+"""
+    path.write_text(sql, encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Import a rent-roll workbook into Supabase.")
     parser.add_argument("workbook", type=Path)
@@ -719,6 +854,8 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Write to Supabase after reviewing the report.")
     parser.add_argument("--sql-file", type=Path, help="Write a transactional SQL import for `supabase db query --linked --file`.")
     parser.add_argument("--migration-file", type=Path, help="Write an idempotent, transactional Supabase migration.")
+    parser.add_argument("--comparison-sql", type=Path, help="Write SQL that stores every source row for reconciliation without changing contract data.")
+    parser.add_argument("--as-of-date", help="Comparison date in YYYY-MM-DD format. Required with --comparison-sql.")
     parser.add_argument("--sheet", action="append", dest="sheet_names", help="Import only the named worksheet. Repeat to select multiple sheets.")
     args = parser.parse_args()
     records, issues = read_workbook(args.workbook, set(args.sheet_names) if args.sheet_names else None)
@@ -733,9 +870,16 @@ def main() -> int:
     print(f"Dry-run report: {args.report} ({len(records)} records, {len(issues)} issues)")
     if not records:
         parser.error("No rent-roll records were found for the selected worksheets.")
+    output_modes = [args.apply, bool(args.sql_file), bool(args.migration_file), bool(args.comparison_sql)]
+    if sum(output_modes) > 1:
+        parser.error("Choose exactly one of --apply, --sql-file, --migration-file, or --comparison-sql.")
+    if args.comparison_sql:
+        if not args.as_of_date or as_date(args.as_of_date) != args.as_of_date:
+            parser.error("--comparison-sql requires --as-of-date in YYYY-MM-DD format.")
+        write_reconciliation_sql(records, issues, args.workbook, args.as_of_date, args.comparison_sql)
+        print(f"Prepared comparison-only SQL: {args.comparison_sql}")
+        return 0
     if args.sql_file or args.migration_file:
-        if args.apply or (args.sql_file and args.migration_file):
-            parser.error("Choose exactly one of --apply, --sql-file, or --migration-file.")
         output_path = args.sql_file or args.migration_file
         write_sql_import(records, issues, args.workbook.name, output_path, wrap_transaction=True)
         print(f"Prepared SQL import: {output_path}")

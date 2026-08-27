@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { ParkingDetailModal } from './ParkingDetailModal';
 
@@ -311,7 +311,7 @@ async function downloadParkingTemplate(): Promise<void> {
     ['使用不可', '故障・工事・物理的制約などにより貸出できない区画に使用します。基準日から使用不可として履歴管理します。'],
     ['枠番', '必須。駐車場施設内で重複しない番号を入力してください。'],
     ['テナント名', '契約中の場合に入力。取込後、物件内の契約先候補から照合します。'],
-    ['月額駐車料', 'Excelには入力しません。取込後に自動作成される対応依頼から、金額・適用開始日・控除先を確認して登録します。'],
+    ['月額駐車料', 'Excelには入力しません。取込後に自動作成される対応依頼から、金額・適用開始日・関連する主契約区画を確認して登録します。'],
     ['契約開始日', '任意。YYYY/MM/DD またはExcelの日付形式で入力してください。'],
     ['その他', '暗証番号・車両情報・備考は分かる範囲で入力してください。'],
   ]);
@@ -328,6 +328,8 @@ async function downloadParkingTemplate(): Promise<void> {
 }
 
 export function ParkingPage({ canManage }: { canManage: boolean }) {
+  const [searchParams] = useSearchParams();
+  const targetContractUnitId = searchParams.get('contractUnit');
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [facilities, setFacilities] = useState<ParkingFacility[]>([]);
   const [parkingTypes, setParkingTypes] = useState<ParkingType[]>([]);
@@ -381,6 +383,22 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   }, []);
 
   useEffect(() => { void loadParkingRows(propertyId, asOfDate); }, [asOfDate, propertyId]);
+
+  useEffect(() => {
+    if (!supabase || !targetContractUnitId) return;
+    void supabase.from('lease_contract_unit').select('unit:unit_master(property_id)').eq('lease_contract_unit_id', targetContractUnitId).maybeSingle()
+      .then(({ data }) => {
+        const unit = (data as { unit?: { property_id?: string } | { property_id?: string }[] } | null)?.unit;
+        const property = Array.isArray(unit) ? unit[0]?.property_id : unit?.property_id;
+        if (property) setPropertyId(property);
+      });
+  }, [targetContractUnitId]);
+
+  useEffect(() => {
+    if (!targetContractUnitId) return;
+    const target = rows.find((row) => row.lease_contract_unit_id === targetContractUnitId);
+    if (target) { setSelected(target); setDetailOpen(true); }
+  }, [rows, targetContractUnitId]);
 
   useEffect(() => {
     if (!supabase || !selected?.lease_contract_unit_id) { setVehicleHistory([]); return; }

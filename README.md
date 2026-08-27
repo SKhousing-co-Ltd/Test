@@ -35,7 +35,13 @@ Run a dry-run before writing any workbook data. It produces a JSON report with e
 python scripts/import_rent_roll.py "賃貸借状況表（最新）【改定版】.xlsx" --report rent_roll_import_report.json
 ```
 
-After reviewing the report, set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` and add `--apply`. The importer matches source names to the existing `asset_master`; it never creates unmatched assets.
+For rent-roll reconciliation, generate comparison-only SQL after reviewing the report. This stores every source row in `rent_roll_import_batch` / `rent_roll_import_row` and does not update contracts, units, or tenants.
+
+```powershell
+python scripts/import_rent_roll.py "賃貸借状況表（最新）【改定版】.xlsx" --comparison-sql rent_roll_comparison.sql --as-of-date 2026-08-26
+```
+
+The legacy `--apply`, `--sql-file`, and `--migration-file` modes write contract master data. Do not use them for reconciliation work.
 
 Vite の標準構成に近い React + TypeScript プロジェクトです。Vercel では通常、Framework Preset に `Vite`、Build Command に `npm run build`、Output Directory に `dist` を指定すると扱いやすい構成です。
 
