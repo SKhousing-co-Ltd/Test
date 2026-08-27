@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 
@@ -20,6 +20,9 @@ type UnitOption = { unit_id: string; property_id: string; unit_code: string; uni
 type ContractOption = { lease_contract_id: string; contract_type: string | null; contract_start_date: string | null; contract_end_date: string | null; tenant: { tenant_name: string } | null };
 type CancellationCandidate = { appsuite_record_id: string; ringi_number: string | null; property_name: string | null; tenant_name: string | null; approval_status: string | null; is_cancelled: boolean; lease_contract_id: string | null };
 type ContractOperation = { action: 'set_field' | 'link_unit' | 'unlink_unit'; entity_type?: 'lease_contract' | 'lease_contract_unit'; entity_id?: string; unit_id?: string; field_name?: string; value: unknown };
+type ParkingScope = 'internal' | 'external';
+type RecheckResult = { outcome?: 'applied' | 'open' | 'skipped' | 'not_eligible'; evaluation_kind?: string };
+type RecheckBatchResult = { checked_count?: number; applied_count?: number; open_count?: number; skipped_count?: number };
 type ContractUnitOption = {
   lease_contract_unit_id: string;
   lease_start_date: string | null;
@@ -137,7 +140,7 @@ function AppsuiteSourceContext({ request }: { request: ChangeRequest }) {
   </section>;
 }
 
-function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWorking, onError, onSaved }: {
+function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWorking, onError, onSaved, onHold }: {
   request: ChangeRequest;
   contractUnits: ContractUnitOption[];
   role: AccountRole;
@@ -145,9 +148,12 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
   onWorking: (working: boolean) => void;
   onError: (message: string) => void;
   onSaved: (message: string) => Promise<void>;
+  onHold: () => Promise<void>;
 }) {
   const payload = request.proposed_payload;
-  const scope = payload.parking_scope === 'external' ? 'external' : 'internal';
+  const scope: ParkingScope | null = payload.parking_scope === 'internal' || payload.parking_scope === 'external'
+    ? payload.parking_scope
+    : null;
   const propertyId = typeof payload.property_id === 'string' ? payload.property_id : '';
   const tenantId = typeof payload.tenant_id === 'string' ? payload.tenant_id : '';
   const initialStart = typeof payload.contract_start_date === 'string' ? payload.contract_start_date : '';
@@ -173,6 +179,7 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
     if (!parkingContractEndDate) { onError('駐車場契約の終了日が未登録です。契約書を確認し、終了日を入力してください。'); return; }
     if (parkingContractEndDate < effectiveFrom) { onError('駐車場契約終了日は適用開始日以降を指定してください。'); return; }
     if (initialStart && parkingContractEndDate < initialStart) { onError('駐車場契約終了日は契約開始日以降を指定してください。'); return; }
+    if (!scope) { onError('内部・外部の区分を確認できません。この対応依頼を再チェックしてください。'); return; }
     if (scope === 'internal' && !mainContractUnitId) { onError('内部契約は関連する主契約区画を選択してください。'); return; }
     if (!window.confirm('入力した駐車料を履歴へ反映し、この対応依頼を確定しますか？')) return;
     onWorking(true); onError('');
@@ -197,13 +204,14 @@ function ParkingFeeRequestEditor({ request, contractUnits, role, working, onWork
     <p>Excel取込では駐車料を登録していません。契約原本を確認し、月額駐車料・適用開始日・駐車場契約終了日を入力してください。</p>
     <div className="change-diff-table">
       <div className="change-diff-head"><span>物件・枠</span><span>テナント</span><span>区分</span></div>
-      <div><strong>{String(payload.property_name ?? '物件未設定')} / {String(payload.space_number ?? '枠未設定')}</strong><span>{String(payload.tenant_name ?? 'テナント未設定')}</span><span>{scope === 'internal' ? '内部' : '外部'}</span></div>
+      <div><strong>{String(payload.property_name ?? '物件未設定')} / {String(payload.space_number ?? '枠未設定')}</strong><span>{String(payload.tenant_name ?? 'テナント未設定')}</span><span>{scope === 'internal' ? '内部' : scope === 'external' ? '外部' : '区分未設定'}</span></div>
     </div>
     {request.status === 'applied' ? <p className="notice">駐車料は登録済みです。</p> : <div className="change-item-editor">
       <label>月額駐車料<input type="number" min="0" step="1" value={monthlyFee} onChange={(event) => setMonthlyFee(event.target.value)} placeholder="例: 30000" /></label>
       <label>適用開始日<input type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} /></label>
       <label>駐車場契約終了日<input type="date" value={parkingContractEndDate} onChange={(event) => setParkingContractEndDate(event.target.value)} /></label>
       {scope === 'internal' ? <label>関連する主契約区画<select value={mainContractUnitId} onChange={(event) => setMainContractUnitId(event.target.value)}><option value="">選択してください</option>{candidates.map((candidate) => <option key={candidate.lease_contract_unit_id} value={candidate.lease_contract_unit_id}>{contractUnitLabel(candidate)}｜{candidate.lease_start_date ?? '開始日未設定'}～{candidate.lease_end_date ?? '継続中'}</option>)}</select></label> : null}
+      {request.status === 'open' || request.status === 'in_review' ? <button className="secondary-button" onClick={() => void onHold()} disabled={working}>保留にする</button> : request.status === 'on_hold' ? <p className="notice">この対応依頼は保留中です。内容の確定後、そのまま履歴へ反映できます。</p> : null}
       {(role === 'admin' || role === 'manager') ? <button className="primary-button" onClick={() => void applyParkingFee()} disabled={working}>履歴へ反映して確定</button> : <p className="notice">履歴への反映は管理者またはマネージャーが行います。</p>}
     </div>}
   </section>;
@@ -355,6 +363,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [filter, setFilter] = useState<RequestStatus>('open');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [rechecking, setRechecking] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -367,6 +376,8 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [itemUnitId, setItemUnitId] = useState('');
   const [itemField, setItemField] = useState<(typeof editableFields)[number][0]>('leased_area_sqm');
   const [itemValue, setItemValue] = useState('');
+  const previousVisibleIds = useRef<string[]>([]);
+  const previousFilterKey = useRef(`${filter}\u0000${search}`);
 
   const loadRequests = useCallback(async () => {
     if (!supabase) return;
@@ -379,7 +390,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     const result = (data ?? []) as unknown as ChangeRequest[];
     setRequests(result);
     const parkingRequest = parkingTarget ? result.find((request) => request.items?.some((item) => item.entity_type === 'parking_fee_history' && item.entity_id === parkingTarget)) : null;
-    setSelectedId((current) => parkingRequest?.change_request_id ?? (current && result.some((item) => item.change_request_id === current) ? current : result[0]?.change_request_id ?? null));
+    setSelectedId((current) => parkingRequest?.change_request_id ?? current);
   }, [parkingTarget]);
 
   useEffect(() => { void loadRequests(); }, [loadRequests]);
@@ -413,11 +424,58 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     const text = `${request.title} ${request.summary ?? ''} ${JSON.stringify(request.source_payload)}`.toLocaleLowerCase();
     return matchesStatus && (!search.trim() || text.includes(search.trim().toLocaleLowerCase()));
   }), [filter, requests, search]);
+  useEffect(() => {
+    const nextVisibleIds = filtered.map((request) => request.change_request_id);
+    const filterKey = `${filter}\u0000${search}`;
+    const filterChanged = previousFilterKey.current !== filterKey;
+    setSelectedId((current) => {
+      if (current && nextVisibleIds.includes(current)) return current;
+      if (nextVisibleIds.length === 0) return null;
+      if (filterChanged) return nextVisibleIds[0];
+      const previousIndex = current ? previousVisibleIds.current.indexOf(current) : -1;
+      const nextIndex = previousIndex < 0 ? 0 : Math.min(previousIndex, nextVisibleIds.length - 1);
+      return nextVisibleIds[nextIndex];
+    });
+    previousVisibleIds.current = nextVisibleIds;
+    previousFilterKey.current = filterKey;
+  }, [filter, filtered, search]);
   const editable = selected?.status === 'open' || selected?.status === 'in_review' || selected?.status === 'on_hold';
   const reviewOnly = selected ? isReviewOnlyImport(selected) : false;
   const isAppsuiteContractRequest = selected ? ['contract_create', 'contract_update', 'approval_cancel', 'contract_cancellation_review'].includes(selected.request_type) : false;
   const isParkingFeeRequest = selected?.request_type === 'parking_fee_setup';
   const domainItems = selected?.items?.filter((item) => item.entity_type !== 'rent_roll_import_issue') ?? [];
+
+  const recheckAll = async () => {
+    if (!supabase) return;
+    setRechecking(true); setError(''); setMessage('');
+    const { data, error: recheckError } = await supabase.rpc('recheck_open_change_requests');
+    setRechecking(false);
+    if (recheckError) { setError(`対応依頼を再チェックできませんでした: ${recheckError.message}`); return; }
+    const result = (Array.isArray(data) ? data[0] : data) as RecheckBatchResult | null;
+    const appliedCount = Number(result?.applied_count ?? 0);
+    const checkedCount = Number(result?.checked_count ?? 0);
+    setMessage(appliedCount > 0
+      ? `${checkedCount}件を最新データで再チェックし、${appliedCount}件を確定済みにしました。`
+      : `${checkedCount}件を最新データで再チェックしました。`);
+    await loadRequests();
+  };
+
+  const recheckSelected = async () => {
+    if (!selected || !supabase) return;
+    setRechecking(true); setError(''); setMessage('');
+    const { data, error: recheckError } = await supabase.rpc('recheck_change_request', {
+      p_change_request_id: selected.change_request_id,
+      p_expected_row_version: selected.row_version,
+    });
+    setRechecking(false);
+    if (recheckError) { setError(`再チェックできませんでした: ${recheckError.message}`); return; }
+    const result = (Array.isArray(data) ? data[0] : data) as RecheckResult | null;
+    if (result?.outcome === 'applied') setMessage('最新データで問題の解消を確認し、対応依頼を確定済みにしました。');
+    else if (result?.outcome === 'open') setMessage('最新データで再チェックしました。引き続き確認が必要です。');
+    else if (result?.outcome === 'skipped') setMessage('この依頼は現在データだけでは自動判定できないため、状態を変更していません。');
+    else setMessage('この依頼は既に更新済みです。');
+    await loadRequests();
+  };
 
   const addComment = async () => {
     if (!selected || !supabase || !comment.trim()) return;
@@ -429,7 +487,10 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   };
   const setStatus = async (status: 'on_hold' | 'excluded') => {
     if (!selected || !supabase) return;
-    const note = window.prompt(status === 'on_hold' ? '保留にする理由を入力してください' : '対象外にする理由を入力してください');
+    const holdPrompt = selected.request_type === 'parking_fee_setup'
+      ? '保留にする理由を入力してください（例：複数台セット契約の1台あたり金額を後日確認）'
+      : '保留にする理由を入力してください';
+    const note = window.prompt(status === 'on_hold' ? holdPrompt : '対象外にする理由を入力してください');
     if (note === null) return;
     setWorking(true); setError('');
     const { error: statusError } = await supabase.rpc('set_change_request_status', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version, p_next_status: status, p_note: note || null });
@@ -457,7 +518,6 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (resolveError) { setError(`確認完了にできませんでした: ${resolveError.message}`); return; }
     const resolved = (Array.isArray(data) ? data[0] : data) as ChangeRequest | null;
     if (!resolved || resolved.status !== 'resolved') { setError('確認完了をDBで確認できませんでした。画面を更新して再試行してください。'); return; }
-    setFilter('resolved');
     setMessage('確認完了にしました。続けて「内容を確定」を押すと確定済みになります。'); await loadRequests();
   };
   const apply = async () => {
@@ -468,7 +528,6 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (applyError) { setError(`適用できませんでした: ${applyError.message}`); return; }
     const applied = (Array.isArray(data) ? data[0] : data) as ChangeRequest | null;
     if (!applied || applied.status !== 'applied') { setError('確定済みへの更新をDBで確認できませんでした。画面を更新して再試行してください。'); return; }
-    setFilter('applied');
     setMessage('内容を確定し、取込依頼を確定済みにしました。'); await loadRequests();
   };
 
@@ -476,21 +535,21 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     <div className="page-heading"><p className="section-kicker">DATA REVIEW WORKBENCH</p><h2>取込データ・対応依頼</h2><p>選択した依頼ごとに、取込元の記載と確認手順を見ながら判断します。</p></div>
     {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}</p>}
     <div className="change-workbench-layout">
-      <aside className="change-request-list"><header><div><h3>対応依頼</h3><p>未対応のものから順に確認します</p></div><button className="secondary-button" onClick={() => void loadRequests()} disabled={loading}>更新</button></header>
+      <aside className="change-request-list"><header><div><h3>対応依頼</h3><p>未対応のものから順に確認します</p></div><button className="secondary-button" onClick={() => void recheckAll()} disabled={loading || rechecking}>{rechecking ? '再チェック中…' : '更新'}</button></header>
         <div className="change-filters"><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="open">要確認</option><option value="on_hold">保留</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option><option value="all">すべて</option></select><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="区画・テナント名・コードで検索" /></div>
-        <div className="change-request-rows">{loading ? <p className="change-empty">読み込み中…</p> : filtered.length === 0 ? <p className="change-empty">該当する対応依頼はありません。</p> : filtered.map((request) => <button key={request.change_request_id} onClick={() => setSelectedId(request.change_request_id)} className={request.change_request_id === selectedId ? 'selected' : ''}><span className={`change-status ${request.status}`}>{statusLabel[request.status] ?? request.status}</span><strong>{request.title}</strong><small>{request.summary || '確認待ち'}</small></button>)}</div>
+        <div className="change-request-rows">{loading ? <p className="change-empty">読み込み中…</p> : filtered.length === 0 ? <p className="change-empty">{filter === 'open' && !search.trim() ? 'すべての要確認案件を処理しました。' : '該当する対応依頼はありません。'}</p> : filtered.map((request) => <button key={request.change_request_id} onClick={() => setSelectedId(request.change_request_id)} className={request.change_request_id === selectedId ? 'selected' : ''}><span className={`change-status ${request.status}`}>{statusLabel[request.status] ?? request.status}</span><strong>{request.title}</strong><small>{request.summary || '確認待ち'}</small></button>)}</div>
       </aside>
       <main className="change-request-detail">{selected ? <>
-        <header className="change-detail-heading"><div><p className="section-kicker">{selected.source_type === 'initial_import' ? 'INITIAL IMPORT' : selected.source_type}</p><h3>{selected.title}</h3><p>{selected.summary || '取込内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span></header>
+        <header className="change-detail-heading"><div><p className="section-kicker">{selected.source_type === 'initial_import' ? 'INITIAL IMPORT' : selected.source_type}</p><h3>{selected.title}</h3><p>{selected.summary || '取込内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><div className="change-detail-tools"><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span>{editable ? <button className="secondary-button" onClick={() => void recheckSelected()} disabled={working || rechecking}>{rechecking ? '再チェック中…' : '再チェック'}</button> : null}</div></header>
         <IssueContext request={selected} />
         <AppsuiteSourceContext request={selected} />
-        {isParkingFeeRequest ? <ParkingFeeRequestEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); setFilter('applied'); await loadRequests(); }} /> : null}
+        {isParkingFeeRequest ? <ParkingFeeRequestEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} onHold={() => setStatus('on_hold')} /> : null}
         {isAppsuiteContractRequest && (editable || selected.status === 'resolved') && <AppsuiteContractEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} properties={properties} tenants={tenants} units={units} contracts={contracts} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} />}
         {!isAppsuiteContractRequest && !isParkingFeeRequest && (reviewOnly ? <section className="change-card change-no-edit"><h4>契約条件の入力は不要です</h4><p>この依頼は、取込内容と元資料の一致を確認する作業です。確認した資料と結果を対応メモに残してください。</p></section> : <section className="change-card"><h4>反映する契約条件</h4><p>現在の値と反映予定の値を確認します。</p><div className="change-diff-table"><div className="change-diff-head"><span>項目</span><span>現在</span><span>反映予定</span></div>{domainItems.map((item) => <div key={item.change_request_item_id}><strong>{item.field_name || '未設定'}</strong><span>{prettyValue(item.current_value)}</span><span className="proposed-value">{prettyValue(item.proposed_value)}</span></div>)}</div></section>)}
         {editable && !reviewOnly && !isAppsuiteContractRequest && !isParkingFeeRequest && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画<select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}><option value="">選択してください</option>{availableContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
         <section className="change-card"><h4>対応メモ</h4><p>確認した資料、採用する区画・テナントコード、判断理由を残してください。</p><div className="change-comments">{selected.comments?.length ? selected.comments.map((entry) => <div key={entry.change_request_comment_id}><strong>開発メンバー</strong><time>{formatDate(entry.created_at)}</time><p>{entry.body}</p></div>) : <p className="muted">まだメモはありません。</p>}</div>{editable && <div className="comment-composer"><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="例：原本Excelの〇シートと契約書を確認。4F A〜Cを1契約として扱う。" /><button className="secondary-button" onClick={() => void addComment()} disabled={working || !comment.trim()}>メモを追加</button></div>}</section>
         {editable && !isParkingFeeRequest ? <footer className="change-actions"><button className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working}>保留にする</button><button className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working}>対象外にする</button><button className="primary-button" onClick={() => void resolve()} disabled={working}>{working ? '処理中…' : '確認完了にする'}</button></footer> : selected.status === 'resolved' && selected.request_type !== 'approval_cancel' && !isParkingFeeRequest ? <footer className="change-actions"><p>最終確認後、正本へ反映します。</p><button className="primary-button" onClick={() => void apply()} disabled={working}>{working ? '処理中…' : '内容を確定'}</button></footer> : null}
-      </> : <p className="change-empty">左側から対応依頼を選択してください。</p>}</main>
+      </> : <p className="change-empty">{filter === 'open' && !search.trim() && !loading ? 'すべての要確認案件を処理しました。' : '左側から対応依頼を選択してください。'}</p>}</main>
     </div>
   </section>;
 }
