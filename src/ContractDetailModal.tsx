@@ -23,8 +23,12 @@ export type ContractDetail = {
   unit_type: string;
   contract_status: string;
   contract_type: string | null;
+  lease_term_type: 'ordinary' | 'fixed_term' | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
+  renewal_due_date: string | null;
+  actual_end_date: string | null;
+  renewed_from_contract_id: string | null;
   lease_start_date: string | null;
   lease_end_date: string | null;
   leased_area_sqm: number | null;
@@ -106,6 +110,16 @@ function money(value: number | null | undefined): string {
   return value == null ? '—' : currency.format(Number(value));
 }
 
+function leaseTermLabel(value: ContractDetail['lease_term_type']): string {
+  return value === 'ordinary' ? '普通賃貸借' : value === 'fixed_term' ? '定期賃貸借' : '未確認';
+}
+
+function contractPeriod(contract: ContractDetail): string {
+  if (contract.lease_term_type === 'ordinary') return `${date(contract.contract_start_date)} ～ 無期限`;
+  if (contract.lease_term_type === 'fixed_term') return `${date(contract.contract_start_date)} ～ ${date(contract.contract_end_date)}`;
+  return `${date(contract.contract_start_date)} ～ ${date(contract.contract_end_date)}（形態未確認）`;
+}
+
 function Field({ label, value }: { label: string; value: string }) {
   return <div className="contract-detail-field"><span>{label}</span><strong>{value}</strong></div>;
 }
@@ -158,7 +172,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         setLoading(false);
         return;
       }
-      const { data, error: loadError } = await supabase.rpc('contract_detail_for_audit', {
+      const { data, error: loadError } = await supabase.rpc('contract_term_detail_for_audit', {
         p_lease_contract_unit_id: leaseContractUnitId,
         p_as_of_date: asOfDate,
       });
@@ -189,12 +203,15 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           <div className="contract-detail-badges"><span className={`contract-detail-status ${contract.contract_status}`}>{statusLabels[contract.contract_status] ?? contract.contract_status}</span>{capabilities.canEditContract && contract.unit_type !== 'parking' ? <button type="button" className="primary-button compact" onClick={() => setEditing(true)}>契約を編集</button> : <span className="contract-view-only">閲覧専用</span>}</div>
         </header>
         <div className="contract-detail-grid">
-          <Field label="テナントコード" value={contract.external_tenant_code || '—'} />
           <Field label="物件" value={contract.property_name} />
           <Field label="区画" value={[contract.floor_label, contract.unit_name || contract.unit_code].filter(Boolean).join(' ') || '—'} />
-          <Field label="契約期間" value={`${date(contract.lease_start_date || contract.contract_start_date)} ～ ${date(contract.lease_end_date || contract.contract_end_date)}`} />
+          <Field label="契約形態" value={leaseTermLabel(contract.lease_term_type)} />
+          <Field label="契約期間" value={contractPeriod(contract)} />
+          <Field label="次回更新予定日" value={contract.lease_term_type === 'ordinary' ? date(contract.renewal_due_date) : '—'} />
+          <Field label="実終了日" value={date(contract.actual_end_date)} />
+          <Field label="再契約元" value={contract.renewed_from_contract_id || '—'} />
           <Field label="面積" value={contract.leased_area_sqm == null ? '—' : `${number.format(Number(contract.leased_area_sqm))} ㎡`} />
-          <Field label="契約種別" value={contract.contract_type || '未設定'} />
+          <Field label="契約カテゴリ" value={contract.contract_type || '未設定'} />
           <Field label="賃料（DB登録値）" value={money(contract.monthly_rent_amount)} />
           <Field label="共益費" value={money(contract.monthly_common_charge_amount)} />
           <Field label="月額合計" value={money(contract.monthly_total_amount)} />

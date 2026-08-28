@@ -13,14 +13,18 @@ type FormState = Record<string, string>;
 type EditableField = {
   key: string;
   label: string;
-  scope: 'contract' | 'unit';
-  type?: 'date' | 'number' | 'textarea';
+  scope: 'contract' | 'term' | 'unit';
+  type?: 'date' | 'number' | 'textarea' | 'select';
+  leaseTerm?: 'ordinary' | 'fixed_term';
 };
 
 const fields: EditableField[] = [
-  { key: 'contract_type', label: '契約種別', scope: 'contract' },
+  { key: 'contract_type', label: '契約カテゴリ', scope: 'contract' },
+  { key: 'lease_term_type', label: '契約形態', scope: 'term', type: 'select' },
   { key: 'contract_start_date', label: '契約開始日', scope: 'contract', type: 'date' },
-  { key: 'contract_end_date', label: '契約終了日', scope: 'contract', type: 'date' },
+  { key: 'renewal_due_date', label: '次回更新予定日', scope: 'term', type: 'date', leaseTerm: 'ordinary' },
+  { key: 'contract_end_date', label: '契約終了日', scope: 'contract', type: 'date', leaseTerm: 'fixed_term' },
+  { key: 'actual_end_date', label: '実終了日', scope: 'term', type: 'date' },
   { key: 'lease_start_date', label: '区画利用開始日', scope: 'unit', type: 'date' },
   { key: 'lease_end_date', label: '区画利用終了日', scope: 'unit', type: 'date' },
   { key: 'leased_area_sqm', label: '面積（㎡）', scope: 'unit', type: 'number' },
@@ -55,6 +59,8 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const selectedLeaseTerm = form.lease_term_type as 'ordinary' | 'fixed_term' | '';
+  const visibleFields = useMemo(() => fields.filter((field) => !field.leaseTerm || field.leaseTerm === selectedLeaseTerm), [selectedLeaseTerm]);
   const diffs = useMemo(() => fields.flatMap((field) => {
     const before = contract[field.key as keyof ContractDetail] ?? null;
     const after = normalize(field, form[field.key]);
@@ -65,19 +71,28 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
     if (!supabase || !reason.trim() || diffs.length === 0) return;
     setSaving(true); setError('');
     const contractChanges = Object.fromEntries(diffs.filter(({ field }) => field.scope === 'contract').map(({ field, after }) => [field.key, after]));
+    const termChanges = Object.fromEntries(diffs.filter(({ field }) => field.scope === 'term').map(({ field, after }) => [field.key, after]));
     const unitChanges = Object.fromEntries(diffs.filter(({ field }) => field.scope === 'unit').map(({ field, after }) => [field.key, after]));
-    const { error: saveError } = await supabase.rpc('apply_rent_roll_contract_edit', {
+    const { error: saveError } = await supabase.rpc('apply_rent_roll_contract_edit_with_terms', {
       p_lease_contract_unit_id: contract.lease_contract_unit_id,
       p_expected_contract_row_version: contract.contract_row_version,
       p_expected_contract_unit_row_version: contract.contract_unit_row_version,
       p_contract_changes: contractChanges,
       p_contract_unit_changes: unitChanges,
+      p_term_changes: termChanges,
       p_reason: reason.trim(),
       p_as_of_date: asOfDate,
     });
     setSaving(false);
     if (saveError) { setError(`契約を更新できませんでした: ${saveError.message}`); return; }
     await onApplied();
+  };
+
+  const startConfirmation = () => {
+    if (!selectedLeaseTerm) { setError('契約形態を選択してください。'); return; }
+    if (selectedLeaseTerm === 'fixed_term' && !form.contract_end_date) { setError('定期賃貸借の契約終了日は必須です。'); return; }
+    setError('');
+    setConfirming(true);
   };
 
   if (confirming) return <section className="contract-editor">
@@ -92,9 +107,14 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
 
   return <section className="contract-editor">
     <div className="contract-detail-section-heading"><div><h3>主契約を編集</h3><p>駐車場代はここでは編集せず、駐車場台帳から独立して管理します。</p></div></div>
-    <div className="contract-editor-grid">{fields.map((field) => <label key={field.key}>{field.label}{field.type === 'textarea'
+    <div className="contract-editor-grid">{visibleFields.map((field) => <label key={field.key}>{field.label}{field.type === 'textarea'
       ? <textarea value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} />
+      : field.type === 'select' ? <select value={form[field.key]} onChange={(event) => {
+        const leaseTerm = event.target.value;
+        setForm({ ...form, lease_term_type: leaseTerm, ...(leaseTerm === 'ordinary' ? { contract_end_date: '' } : { renewal_due_date: '' }) });
+      }}><option value="">選択してください</option><option value="ordinary">普通賃貸借</option><option value="fixed_term">定期賃貸借</option></select>
       : <input type={field.type ?? 'text'} min={field.type === 'number' ? '0' : undefined} step={field.key === 'leased_area_sqm' ? '0.01' : field.type === 'number' ? '1' : undefined} value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} />}</label>)}</div>
-    <div className="contract-editor-actions"><button type="button" className="secondary-button" onClick={onCancel}>キャンセル</button><button type="button" className="primary-button" disabled={diffs.length === 0} onClick={() => setConfirming(true)}>変更内容を確認</button></div>
+    {error && <p className="contract-detail-error">{error}</p>}
+    <div className="contract-editor-actions"><button type="button" className="secondary-button" onClick={onCancel}>キャンセル</button><button type="button" className="primary-button" disabled={diffs.length === 0} onClick={startConfirmation}>変更内容を確認</button></div>
   </section>;
 }
