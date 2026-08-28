@@ -882,7 +882,9 @@ on public.lease_contract
 deferrable initially deferred
 for each row execute function private.sync_contract_deadline_requests_after_write();
 
-create extension if not exists pg_cron with schema pg_catalog;
+-- pg_cron is enabled by 20260817072921_repair_appsuite_scheduled_sync.sql.
+-- Do not recreate the managed extension here: Supabase Preview branches replay
+-- migrations in order and the duplicate CREATE can conflict with its privileges.
 do $$
 declare existing_job_id bigint;
 begin
