@@ -75,7 +75,7 @@ export function TenantBillingCodesPage({ canManage }: { canManage: boolean }) {
     ]);
     const loadError = tenantResult.error ?? codeResult.error ?? assignmentResult.error ?? accountResult.error;
     if (loadError) {
-      setError(`テナントコード設定を読み込めませんでした: ${loadError.message}`);
+      setError(`請求コード設定を読み込めませんでした: ${loadError.message}`);
       setLoading(false);
       return;
     }
@@ -185,7 +185,7 @@ export function TenantBillingCodesPage({ canManage }: { canManage: boolean }) {
   };
 
   return <section className="tenant-code-page">
-    <div className="page-heading"><div><p className="section-kicker">TENANT BILLING MASTER</p><h2>テナントコード管理</h2><p>請求項目ごとに使用する主コード・サブコードを設定します。</p></div></div>
+    <div className="page-heading"><div><p className="section-kicker">TENANT BILLING MASTER</p><h2>請求コード管理</h2><p>請求項目ごとに使用する主コード・サブコードを設定します。</p></div></div>
     {message ? <p className="tenant-code-message">{message}</p> : null}
     {error ? <p className="tenant-code-message error">{error}</p> : null}
     <div className="tenant-code-layout">

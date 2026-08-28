@@ -13,8 +13,6 @@ type PropertyOption = {
   shortName: string | null;
 };
 
-type TenantBillingCode = { billing_code: string; is_primary: boolean; is_active: boolean; sort_order: number };
-type TenantBillingCodeRecord = TenantBillingCode & { tenant_id: string };
 type RentRollSource = {
   unit_id: string;
   unit_code: string;
@@ -27,11 +25,14 @@ type RentRollSource = {
   lease_contract_unit_id: string | null;
   lease_contract_id: string | null;
   contract_status: string | null;
+  contract_start_date: string | null;
+  contract_end_date: string | null;
+  lease_term_type: 'ordinary' | 'fixed_term' | null;
+  renewal_due_date: string | null;
+  actual_end_date: string | null;
   contract_notes: string | null;
   tenant_id: string | null;
-  external_tenant_code: string | null;
   tenant_name: string | null;
-  billing_codes?: TenantBillingCode[] | null;
   leased_area_sqm: number | null;
   monthly_rent_amount: number;
   monthly_common_charge_amount: number;
@@ -61,9 +62,9 @@ type RentRollRow = {
   unitCode: string;
   unitName: string;
   discriminator: string | null;
-  tenantCode: string;
-  tenantCodes: string[];
   tenantName: string;
+  leaseTermLabel: string;
+  contractPeriod: string;
   area: number | null;
   rent: number;
   commonCharge: number;
@@ -146,12 +147,16 @@ function floorOrder(label: string): number {
 }
 
 function toRentRollRow(source: RentRollSource): RentRollRow {
-  const tenantCodes = (source.billing_codes ?? [])
-    .filter((code) => code.is_active)
-    .sort((left, right) => Number(right.is_primary) - Number(left.is_primary) || left.sort_order - right.sort_order || collator.compare(left.billing_code, right.billing_code))
-    .map((code) => code.billing_code);
-  const primaryTenantCode = tenantCodes[0] ?? source.external_tenant_code ?? '';
   const parkingUnavailable = source.unit_type === 'parking' && source.space_status === 'unavailable';
+  const isParking = source.unit_type === 'parking';
+  const leaseTermLabel = isParking ? '—' : source.lease_term_type === 'ordinary' ? '普通' : source.lease_term_type === 'fixed_term' ? '定期' : '未確認';
+  const contractPeriod = !source.lease_contract_id || isParking
+    ? '—'
+    : source.lease_term_type === 'ordinary'
+      ? `${source.contract_start_date ?? '開始日未設定'} ～ 無期限`
+      : source.lease_term_type === 'fixed_term'
+        ? `${source.contract_start_date ?? '開始日未設定'} ～ ${source.contract_end_date ?? '終了日未設定'}`
+        : `${source.contract_start_date ?? '開始日未設定'} ～ ${source.contract_end_date ?? '未確認'}`;
   const isTerminationScheduled = Boolean(source.contract_notes?.includes('解約予定'));
   const status: RentRollStatus = parkingUnavailable
     ? 'unavailable'
@@ -171,9 +176,9 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
     unitCode: source.unit_code,
     unitName: source.unit_name ?? source.unit_code,
     discriminator: source.source_discriminator,
-    tenantCode: parkingUnavailable ? '' : primaryTenantCode,
-    tenantCodes: parkingUnavailable ? [] : tenantCodes.length ? tenantCodes : primaryTenantCode ? [primaryTenantCode] : [],
     tenantName: parkingUnavailable ? '' : source.tenant_name ?? '',
+    leaseTermLabel,
+    contractPeriod,
     area: source.leased_area_sqm ?? source.rentable_area_sqm,
     rent: parkingUnavailable ? 0 : Number(source.monthly_rent_amount ?? 0),
     commonCharge: parkingUnavailable ? 0 : Number(source.monthly_common_charge_amount ?? 0),
@@ -264,29 +269,17 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         setLoadingRows(false);
         return;
       }
-      const [result, billingCodeResult] = await Promise.all([
-        supabase.rpc('rent_roll_list_at_date', {
+      const result = await supabase.rpc('rent_roll_list_with_terms_at_date', {
           p_property_id: propertyId,
           p_as_of_date: asOfDate,
-        }),
-        supabase.from('tenant_billing_code').select('tenant_id, billing_code, is_primary, is_active, sort_order').eq('is_active', true),
-      ]);
+        });
 
       if (cancelled) return;
       if (result.error) {
         setRows([]);
         setError(`レントロールの取得に失敗しました: ${result.error.message}`);
       } else {
-        const billingCodesByTenant = new Map<string, TenantBillingCode[]>();
-        if (!billingCodeResult.error) {
-          for (const code of (billingCodeResult.data ?? []) as TenantBillingCodeRecord[]) {
-            billingCodesByTenant.set(code.tenant_id, [...(billingCodesByTenant.get(code.tenant_id) ?? []), code]);
-          }
-        }
-        setRows(((result.data ?? []) as RentRollSource[]).map((source) => toRentRollRow({
-          ...source,
-          billing_codes: source.tenant_id ? billingCodesByTenant.get(source.tenant_id) ?? null : null,
-        })));
+        setRows(((result.data ?? []) as RentRollSource[]).map(toRentRollRow));
       }
       setLoadingRows(false);
     };
@@ -306,7 +299,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const matchesProductCategory = selectedCategories.has(row.productCategory);
       const matchesStatus = statusFilter === 'all' || row.status === statusFilter;
       const matchesType = unitTypeFilter === 'all' || (unitTypeFilter === 'parking' ? row.unitType === 'parking' : row.unitType !== 'parking');
-      const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantCodes.join(' '), row.tenantName, row.parkingSpaceNumber, row.parkingAccessCode, row.parkingVehicle]
+      const matchesQuery = !normalizedQuery || [row.floor, row.unitCode, row.unitName, row.tenantName, row.leaseTermLabel, row.contractPeriod, row.parkingSpaceNumber, row.parkingAccessCode, row.parkingVehicle]
         .some((value) => value.toLocaleLowerCase('ja-JP').includes(normalizedQuery));
       return matchesProductCategory && matchesStatus && matchesType && matchesQuery;
     });
@@ -357,7 +350,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         </select>
       </label>
       <label className="rent-roll-search">テナント・区画を検索
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="室名、テナント名、コード" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="室名、テナント名、契約形態" />
       </label>
       <label>状態
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | RentRollStatus)}>
@@ -411,10 +404,10 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       <div className="rent-roll-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}</p></div></div>
       <div className="rent-roll-table-wrap" role="region" aria-label="レントロール一覧。縦横にスクロールできます" tabIndex={0}>
         <table className="rent-roll-table">
-          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>テナントコード</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>駐車場代</th><th>その他月額</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
+          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>契約形態</th><th>契約期間</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>駐車場代</th><th>その他月額</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th></tr></thead>
           <tbody>
-            {loadingRows && <tr><td colSpan={20} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
-            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={20} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
+            {loadingRows && <tr><td colSpan={21} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
+            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={21} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}
             {!loadingRows && filteredRows.map((row) => <tr key={row.unitId}>
               <td><span className={`rent-roll-status ${row.status}`}>{statusLabel[row.status]}</span></td>
               <td><span className={`rent-roll-product-badge ${row.productCategory}`}>{productCategoryLabel[row.productCategory]}</span></td>
@@ -422,7 +415,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
               <td>{row.floor || '—'}</td>
               <td><strong>{row.parkingSpaceNumber ? `枠 ${row.parkingSpaceNumber}` : row.unitName}</strong>{row.discriminator && <small className="rent-roll-discriminator">暫定識別子: {row.discriminator}</small>}</td>
               <td>{row.parkingScope === 'internal' ? '内部' : row.parkingScope === 'external' ? '外部' : '—'}</td>
-              <td>{row.tenantCode || '—'}{row.tenantCodes.length > 1 ? <span className="tenant-code-pill">＋{row.tenantCodes.length - 1}</span> : null}</td><td>{row.tenantName && row.leaseContractUnitId && capabilities.canViewContract ? <button type="button" className="rent-roll-tenant-link" onClick={() => setSelectedLeaseContractUnitId(row.leaseContractUnitId)}>{row.tenantName}</button> : row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
+              <td>{row.leaseTermLabel}</td><td>{row.contractPeriod}</td><td>{row.tenantName && row.leaseContractUnitId && capabilities.canViewContract ? <button type="button" className="rent-roll-tenant-link" onClick={() => setSelectedLeaseContractUnitId(row.leaseContractUnitId)}>{row.tenantName}</button> : row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
               <td className="numeric">{row.area == null ? '—' : numberFormatter.format(row.area)}</td>
               <td className="numeric emphasis">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.rentCommonTotal)}</td><td className="numeric">{formatCurrency(row.parkingAmount)}</td><td className="numeric">{formatCurrency(row.otherMonthlyAmount)}</td>
               <td className="numeric">{formatCurrency(row.deposit)}</td><td className="numeric">{formatCurrency(row.securityDeposit)}</td><td className="numeric">{formatCurrency(row.keyMoney)}</td><td className="numeric">{formatCurrency(row.renewalFee)}</td>
