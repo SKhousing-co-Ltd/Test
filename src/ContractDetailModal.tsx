@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Dialog } from './components/Dialog';
 import { MainContractEditor } from './MainContractEditor';
 import type { ContractCapabilities } from './lib/contract-capabilities';
+import { productCategoryLabel, normalizeProductCategory } from './lib/product-categories';
 import { supabase } from './lib/supabase';
 import './ContractDetailModal.css';
 
@@ -21,6 +22,7 @@ export type ContractDetail = {
   unit_name: string | null;
   floor_label: string | null;
   unit_type: string;
+  unit_row_version: number;
   contract_status: string;
   contract_type: string | null;
   lease_term_type: 'ordinary' | 'fixed_term' | null;
@@ -211,7 +213,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           <Field label="実終了日" value={date(contract.actual_end_date)} />
           <Field label="再契約元" value={contract.renewed_from_contract_id || '—'} />
           <Field label="面積" value={contract.leased_area_sqm == null ? '—' : `${number.format(Number(contract.leased_area_sqm))} ㎡`} />
-          <Field label="契約カテゴリ" value={contract.contract_type || '未設定'} />
+          <Field label="商品" value={productCategoryLabel[normalizeProductCategory(contract.unit_type)]} />
           <Field label="賃料（DB登録値）" value={money(contract.monthly_rent_amount)} />
           <Field label="共益費" value={money(contract.monthly_common_charge_amount)} />
           <Field label="月額合計" value={money(contract.monthly_total_amount)} />

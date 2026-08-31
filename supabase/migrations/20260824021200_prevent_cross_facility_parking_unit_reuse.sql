@@ -5,6 +5,10 @@ declare
 begin
   select pg_get_functiondef('public.commit_parking_import(uuid)'::regprocedure)
     into v_definition;
+
+  -- Function bodies created from Windows checkouts can retain CRLF line endings.
+  -- Normalize them so the guarded source rewrite behaves identically on all OSes.
+  v_definition := replace(v_definition, E'\r\n', E'\n');
   v_original := v_definition;
 
   v_definition := replace(v_definition, E'  reusable_unit_id uuid;\n', '');

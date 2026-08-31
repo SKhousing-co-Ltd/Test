@@ -529,7 +529,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
 
             <div className="parking-contract-edit-scope-note">
               <strong>編集範囲</strong>
-              <span>区画利用開始日・終了日は選択中の「枠 {row.space_number}」だけに反映します。契約先・契約区分・主契約は同一駐車場契約全体の情報です。</span>
+              <span>区画利用開始日・終了日は選択中の「枠 {row.space_number}」だけに反映します。駐車料適用開始日は月額駐車料の履歴を切り替える日で、区画利用開始日とは別です。内部契約で主契約より前の駐車料期間は、控除しない外部扱いで保存します。契約先・契約区分・主契約は同一駐車場契約全体の情報です。</span>
             </div>
 
             <div className="parking-contract-subsection">
