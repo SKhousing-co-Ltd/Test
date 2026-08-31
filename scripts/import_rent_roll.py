@@ -89,8 +89,11 @@ def primary_tenant_code(value: str | None) -> str | None:
 def tenant_codes(value: str | None) -> list[str]:
     if not value:
         return []
+    def is_placeholder(code: str) -> bool:
+        return bool(re.fullmatch(r"[-－―—ー−]+", code))
     return list(dict.fromkeys(
-        normalize_identifier(part) for part in re.split(r"[\n/]", value) if normalize_identifier(part)
+        code for part in re.split(r"[\n/]", value)
+        if (code := normalize_identifier(part)) and not is_placeholder(code)
     ))
 
 
@@ -103,6 +106,17 @@ def contract_source_key(record: RentRollRecord) -> str:
         return base_key
     instance_raw = f"{base_key}|{record.source_contract_discriminator}"
     return f"rr:v3:{sha256(instance_raw.encode('utf-8')).hexdigest()}"
+
+
+def legacy_contract_source_key(record: RentRollRecord) -> str:
+    """Pre-placeholder-filter key, used only to adopt an already imported contract once."""
+    raw_codes = [normalize_identifier(part) for part in re.split(r"[\n/]", record.tenant_code or "") if normalize_identifier(part)]
+    tenant_identity = (raw_codes[0] if raw_codes else None) or normalize_tenant_name(record.tenant_name)
+    raw = "|".join((record.property_name, record.wing_code or "", record.floor_label or "", record.unit_code, tenant_identity))
+    base_key = f"rr:v2:{sha256(raw.encode('utf-8')).hexdigest()}"
+    if not record.source_contract_discriminator:
+        return base_key
+    return f"rr:v3:{sha256((base_key + '|' + record.source_contract_discriminator).encode('utf-8')).hexdigest()}"
 
 
 def import_notes(record: RentRollRecord) -> str | None:
@@ -476,7 +490,10 @@ def persist(records: list[RentRollRecord], issues: list[ImportIssue], source_fil
             tenant = client.request("POST", "tenant_master", body=tenant_payload, prefer="return=representation")[0]
         ensure_tenant_billing_codes(client, tenant["tenant_id"], tenant_codes(record.tenant_code))
         source_key = contract_source_key(record)
+        legacy_source_key = legacy_contract_source_key(record)
         contract = client.one("lease_contract", {"select": "lease_contract_id", "source_system": f"eq.{SOURCE_SYSTEM}", "source_record_key": f"eq.{source_key}"})
+        if not contract and legacy_source_key != source_key:
+            contract = client.one("lease_contract", {"select": "lease_contract_id", "source_system": f"eq.{SOURCE_SYSTEM}", "source_record_key": f"eq.{legacy_source_key}"})
         contract_payload = {"tenant_id": tenant["tenant_id"], "contract_status": "active", "contract_start_date": record.contract_start_date, "contract_end_date": record.contract_end_date, "renewal_terms": record.renewal_terms, "payment_terms": record.payment_terms, "notes": import_notes(record), "source_system": SOURCE_SYSTEM, "source_record_key": source_key}
         if contract:
             client.request("PATCH", "lease_contract", query={"lease_contract_id": f"eq.{contract['lease_contract_id']}"}, body=contract_payload)
@@ -525,6 +542,7 @@ def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], s
         "payment_terms": record.payment_terms,
         "notes": import_notes(record),
         "source_record_key": contract_source_key(record),
+        "legacy_source_record_key": legacy_contract_source_key(record),
         "is_vacant": not record.tenant_name or record.tenant_name in EMPTY_TENANT_VALUES or record.source_status.startswith("空室"),
     } for record in records]
     issue_rows = [{
@@ -544,7 +562,7 @@ def write_sql_import(records: list[RentRollRecord], issues: list[ImportIssue], s
   area_sqm numeric, monthly_rent_amount numeric, monthly_common_charge_amount numeric, deposit_amount numeric,
   security_deposit_amount numeric, key_money_amount numeric, renewal_fee_amount numeric,
   contract_start_date date, contract_end_date date, renewal_terms text, payment_terms text, notes text,
-  source_record_key text not null, is_vacant boolean not null
+  source_record_key text not null, legacy_source_record_key text not null, is_vacant boolean not null
 ) on commit drop;
 
 insert into rent_roll_stage
@@ -554,7 +572,7 @@ select * from jsonb_to_recordset($rentroll${json.dumps(rows, ensure_ascii=False)
   normalized_tenant_name text, area_sqm numeric, monthly_rent_amount numeric, monthly_common_charge_amount numeric,
   deposit_amount numeric, security_deposit_amount numeric, key_money_amount numeric, renewal_fee_amount numeric,
   contract_start_date date, contract_end_date date, renewal_terms text, payment_terms text, notes text,
-  source_record_key text, is_vacant boolean
+  source_record_key text, legacy_source_record_key text, is_vacant boolean
 );
 
 create temporary table rent_roll_active_source_key (source_record_key text primary key) on commit drop;
@@ -589,12 +607,15 @@ declare
   v_wing_id uuid;
   v_unit_id uuid;
   v_tenant_id uuid;
+  v_tenant_code text;
   v_billing_code text;
   v_primary_code_id uuid;
   v_contract_id uuid;
+  v_contract_count integer;
   v_allocation_id uuid;
 begin
   for r in select * from rent_roll_stage loop
+    v_tenant_code := public.normalize_rent_roll_tenant_code(r.tenant_code);
     select asset_id into v_property_id from public.asset_master where asset_name = r.property_name;
     if v_property_id is null then
       insert into public.rent_roll_import_issue (source_file_name, source_sheet_name, source_row_number, issue_type, message, source_payload)
@@ -630,17 +651,17 @@ begin
     end if;
 
     select tenant_id into v_tenant_id from public.tenant_master where normalized_tenant_name = r.normalized_tenant_name;
-    if v_tenant_id is null and r.tenant_code is not null then
-      select tenant_id into v_tenant_id from public.tenant_master where external_tenant_code = r.tenant_code;
+    if v_tenant_id is null and v_tenant_code is not null then
+      select tenant_id into v_tenant_id from public.tenant_master where external_tenant_code = v_tenant_code;
       if v_tenant_id is null then
-        select tenant_id into v_tenant_id from public.tenant_billing_code where billing_code = r.tenant_code;
+        select tenant_id into v_tenant_id from public.tenant_billing_code where billing_code = v_tenant_code and is_active;
       end if;
     end if;
     if v_tenant_id is null then
       insert into public.tenant_master (external_tenant_code, tenant_name, normalized_tenant_name)
-      values (r.tenant_code, r.tenant_name, r.normalized_tenant_name) returning tenant_id into v_tenant_id;
+      values (v_tenant_code, r.tenant_name, r.normalized_tenant_name) returning tenant_id into v_tenant_id;
     else
-      update public.tenant_master set external_tenant_code = coalesce(r.tenant_code, external_tenant_code), tenant_name = r.tenant_name, normalized_tenant_name = r.normalized_tenant_name, updated_at = now()
+      update public.tenant_master set external_tenant_code = coalesce(v_tenant_code, external_tenant_code), tenant_name = r.tenant_name, normalized_tenant_name = r.normalized_tenant_name, updated_at = now()
       where tenant_id = v_tenant_id;
     end if;
 
@@ -683,15 +704,19 @@ begin
         and tenant.external_tenant_code is distinct from code.billing_code;
     end if;
 
-    select lease_contract_id into v_contract_id from public.lease_contract
-      where source_system = '{SOURCE_SYSTEM}' and source_record_key = r.source_record_key;
+    select count(*), (array_agg(lease_contract_id))[1] into v_contract_count, v_contract_id from public.lease_contract
+      where source_system = '{SOURCE_SYSTEM}' and source_record_key in (r.source_record_key, r.legacy_source_record_key)
+      ;
+    if v_contract_count > 1 then
+      raise exception '新旧の取込キーが別契約へ重複一致しました: %', r.source_record_key;
+    end if;
     if v_contract_id is null then
       insert into public.lease_contract (tenant_id, contract_status, contract_start_date, contract_end_date, renewal_terms, payment_terms, notes, source_system, source_record_key)
       values (v_tenant_id, 'active', r.contract_start_date, r.contract_end_date, r.renewal_terms, r.payment_terms, r.notes, '{SOURCE_SYSTEM}', r.source_record_key)
       returning lease_contract_id into v_contract_id;
     else
       update public.lease_contract set tenant_id = v_tenant_id, contract_status = 'active', contract_start_date = r.contract_start_date, contract_end_date = r.contract_end_date,
-        renewal_terms = r.renewal_terms, payment_terms = r.payment_terms, notes = r.notes, updated_at = now() where lease_contract_id = v_contract_id;
+        renewal_terms = r.renewal_terms, payment_terms = r.payment_terms, notes = r.notes, source_record_key = r.source_record_key, updated_at = now() where lease_contract_id = v_contract_id;
     end if;
 
     select lease_contract_unit_id into v_allocation_id from public.lease_contract_unit where lease_contract_id = v_contract_id and unit_id = v_unit_id;
@@ -756,7 +781,7 @@ def write_reconciliation_sql(
             "floor_label": record.floor_label,
             "unit_code": record.unit_code,
             "unit_type": record.unit_type,
-            "tenant_code": primary_tenant_code(record.tenant_code),
+            "tenant_code": record.tenant_code,
             "tenant_name": record.tenant_name,
             "source_status": record.source_status,
             "source_record_key": contract_source_key(record),

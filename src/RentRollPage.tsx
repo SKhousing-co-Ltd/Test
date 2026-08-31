@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { ContractDetailModal } from './ContractDetailModal';
 import { RentRollReconciliationPanel } from './RentRollReconciliationPanel';
 import type { ContractCapabilities } from './lib/contract-capabilities';
+import { allProductCategories, normalizeProductCategory, productCategories, productCategoryLabel, type ProductCategory } from './lib/product-categories';
 import { supabase } from './lib/supabase';
 
 type RentRollStatus = 'occupied' | 'scheduled' | 'vacant' | 'applied' | 'unavailable';
-type ProductCategory = 'office' | 'residential' | 'parking' | 'bicycle_parking' | 'signage' | 'warehouse' | 'antenna' | 'other';
 
 type PropertyOption = {
   propertyId: string;
@@ -86,19 +86,6 @@ const today = new Date().toISOString().slice(0, 10);
 const currencyFormatter = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
 const numberFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });
 const collator = new Intl.Collator('ja-JP', { numeric: true, sensitivity: 'base' });
-const productCategories: Array<{ code: ProductCategory; label: string }> = [
-  { code: 'office', label: '事務所' },
-  { code: 'residential', label: '住居' },
-  { code: 'parking', label: '駐車場' },
-  { code: 'bicycle_parking', label: '駐輪場' },
-  { code: 'signage', label: '看板' },
-  { code: 'warehouse', label: '倉庫' },
-  { code: 'antenna', label: 'アンテナ' },
-  { code: 'other', label: 'その他' },
-];
-const allProductCategories = productCategories.map(({ code }) => code);
-const productCategoryLabel = Object.fromEntries(productCategories.map(({ code, label }) => [code, label])) as Record<ProductCategory, string>;
-const productCategorySet = new Set<ProductCategory>(allProductCategories);
 
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: '入居中',
@@ -107,12 +94,6 @@ const statusLabel: Record<RentRollStatus, string> = {
   applied: '申込中',
   unavailable: '使用不可',
 };
-
-function normalizeProductCategory(value: string): ProductCategory {
-  if (value === 'storage') return 'warehouse';
-  if (value === 'equipment' || value === 'retail') return 'other';
-  return productCategorySet.has(value as ProductCategory) ? value as ProductCategory : 'other';
-}
 
 function storedProductCategories(propertyId: string): ProductCategory[] {
   if (!propertyId) return allProductCategories;

@@ -8,7 +8,11 @@
     "typecheck": "tsc -b",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "start:local": "vite --host 127.0.0.1 --open /Test/"
+    "start:local": "vite --host 127.0.0.1 --open /Test/",
+    "supabase:start": "supabase start -x vector,logflare",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset --local",
+    "supabase:test": "supabase test db --local"
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",
@@ -24,6 +28,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
+    "supabase": "2.116.0",
     "typescript": "latest",
     "vite": "latest"
   },
