@@ -75,6 +75,11 @@ begin
   where normalized_tenant_name = lower(regexp_replace('(株)バイセップス', '[[:space:]　]+', '', 'g'));
   select tenant_id into sk_tenant_id from public.tenant_master
   where normalized_tenant_name = lower(regexp_replace('SKハウジング(株)', '[[:space:]　]+', '', 'g'));
+  -- データなしで作成されるPreview環境では、データ訂正だけを安全にスキップする。
+  if refresh_tenant_id is null and biceps_tenant_id is null and sk_tenant_id is null then
+    raise notice '東館訂正対象のテナントがないため、データ訂正をスキップします';
+    return;
+  end if;
   if refresh_tenant_id is null or biceps_tenant_id is null or sk_tenant_id is null then
     raise exception '東館訂正に必要なテナントが見つかりません';
   end if;
