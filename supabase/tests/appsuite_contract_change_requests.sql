@@ -18,9 +18,8 @@ begin
   values
     ('TEST-CONTRACT-CREATE', 'テスト新規契約', true, 'lease_contract', 'contract_create', '2026-01-01T00:00:00Z'),
     ('TEST-CONTRACT-CANCEL', 'テスト取消', true, 'workflow_control', 'approval_cancel', '2026-01-01T00:00:00Z'),
-    ('TEST-CONTRACT-REFERENCE', 'テスト照合対象', false, null, null, null),
-    ('TEST-SYNC-ONLY', 'テスト同期のみ', true, 'other', 'sync_only', null),
-    ('TEST-UNCLASSIFIED', 'テスト未分類', false, null, null, null);
+    ('TEST-CONTRACT-REFERENCE', 'テスト照合対象', false, 'other', 'sync_only', null),
+    ('TEST-SYNC-ONLY', 'テスト同期のみ', true, 'other', 'sync_only', null);
 
   if not exists (select 1 from public.appsuite_application where app_id = '87' and business_domain = 'procurement' and processing_type = 'repair_order')
      or not exists (select 1 from public.appsuite_application where app_id = '65' and business_domain = 'lease_contract' and processing_type = 'contract_create')
@@ -30,9 +29,10 @@ begin
   end if;
 
   begin
-    update public.appsuite_application set is_sync_enabled = true where app_id = 'TEST-UNCLASSIFIED';
+    insert into public.appsuite_application(app_id, app_name, is_sync_enabled, business_domain, processing_type)
+    values ('TEST-UNCLASSIFIED', 'テスト未分類', true, null, null);
     raise exception '同期有効アプリを未分類のまま保存してはいけません';
-  exception when check_violation then null;
+  exception when not_null_violation then null;
   end;
 
   insert into public.appsuite_record(app_id, data_id, workflow_type, approval_status, property_name, tenant_name, source_updated_at, raw_payload)
