@@ -21,7 +21,8 @@ begin
 
   select pg_get_functiondef('private.close_parking_fee_change_request()'::regprocedure)
   into close_definition;
-  if close_definition not like '%''parking_contract_end_date'', parking_contract_end_date%' then
+  if close_definition not like '%''parking_contract_end_date''%'
+     or close_definition not like '%parking_contract_end_date%' then
     raise exception 'parking contract end date is missing from resolution_payload';
   end if;
 
@@ -30,7 +31,7 @@ begin
   ) into enqueue_definition;
   if enqueue_definition not like '%月額駐車料・適用開始日・駐車場契約終了日%'
      or enqueue_definition not like '%控除対象の主契約区画%'
-     or enqueue_definition not like '%parking_record.parking_scope = ''external''%' then
+     or enqueue_definition not like '%state ->> ''parking_scope'' = ''external''%' then
     raise exception 'parking fee request guidance does not include the contract end date';
   end if;
 end;

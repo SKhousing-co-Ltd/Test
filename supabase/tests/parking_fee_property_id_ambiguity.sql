@@ -3,7 +3,9 @@ declare
   setter_definition text;
   apply_definition text;
 begin
-  select pg_get_functiondef('public.set_parking_fee_history(uuid,text,uuid,numeric,date,uuid,uuid,text,text,integer)'::regprocedure)
+  -- 公開関数は先行期間を外部扱いに分岐する薄いラッパーであり、
+  -- property_id を解決する処理は基底関数に集約されている。
+  select pg_get_functiondef('public.set_parking_fee_history_base(uuid,text,uuid,numeric,date,uuid,uuid,text,text,integer)'::regprocedure)
     into setter_definition;
   if setter_definition not like '%parking_property_id uuid%'
      or setter_definition like E'%\n  property_id uuid;%'

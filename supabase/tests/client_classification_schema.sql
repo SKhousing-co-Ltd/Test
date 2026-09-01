@@ -32,13 +32,15 @@ begin
     raise exception 'Expected client contact columns are missing';
   end if;
 
-  if (
-    select count(*)
+  if not exists (
+    select 1
     from pg_constraint constraint_record
-    where constraint_record.contype = 'f'
-      and constraint_record.confrelid = 'public.clients_table'::regclass
-  ) < 5 then
-    raise exception 'Expected foreign keys were not preserved after renaming clients';
+    where constraint_record.conname = 'fk_clients_table_category_subcategory'
+      and constraint_record.contype = 'f'
+      and constraint_record.conrelid = 'public.clients_table'::regclass
+      and constraint_record.confrelid = 'public.client_subcategories_master'::regclass
+  ) then
+    raise exception 'clients_table category/subcategory foreign key is missing';
   end if;
 
   if not exists (
