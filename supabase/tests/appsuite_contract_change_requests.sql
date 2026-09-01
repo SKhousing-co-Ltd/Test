@@ -14,11 +14,26 @@ declare
   v_staff_id uuid;
   v_issue_id uuid;
 begin
-  insert into public.appsuite_application(app_id, app_name, is_sync_enabled, contract_workflow_type, contract_workflow_start_at)
+  insert into public.appsuite_application(app_id, app_name, is_sync_enabled, business_domain, processing_type, workflow_start_at)
   values
-    ('TEST-CONTRACT-CREATE', 'テスト新規契約', true, 'contract_create', '2026-01-01T00:00:00Z'),
-    ('TEST-CONTRACT-CANCEL', 'テスト取消', true, 'approval_cancel', '2026-01-01T00:00:00Z'),
-    ('TEST-CONTRACT-REFERENCE', 'テスト照合対象', false, null, null);
+    ('TEST-CONTRACT-CREATE', 'テスト新規契約', true, 'lease_contract', 'contract_create', '2026-01-01T00:00:00Z'),
+    ('TEST-CONTRACT-CANCEL', 'テスト取消', true, 'workflow_control', 'approval_cancel', '2026-01-01T00:00:00Z'),
+    ('TEST-CONTRACT-REFERENCE', 'テスト照合対象', false, null, null, null),
+    ('TEST-SYNC-ONLY', 'テスト同期のみ', true, 'other', 'sync_only', null),
+    ('TEST-UNCLASSIFIED', 'テスト未分類', false, null, null, null);
+
+  if not exists (select 1 from public.appsuite_application where app_id = '87' and business_domain = 'procurement' and processing_type = 'repair_order')
+     or not exists (select 1 from public.appsuite_application where app_id = '65' and business_domain = 'lease_contract' and processing_type = 'contract_create')
+     or not exists (select 1 from public.appsuite_application where app_id = '79' and business_domain = 'lease_contract' and processing_type = 'contract_update')
+     or not exists (select 1 from public.appsuite_application where app_id = '100' and business_domain = 'workflow_control' and processing_type = 'approval_cancel') then
+    raise exception '代表アプリの業務分類が正しく移行されていません';
+  end if;
+
+  begin
+    update public.appsuite_application set is_sync_enabled = true where app_id = 'TEST-UNCLASSIFIED';
+    raise exception '同期有効アプリを未分類のまま保存してはいけません';
+  exception when check_violation then null;
+  end;
 
   insert into public.appsuite_record(app_id, data_id, workflow_type, approval_status, property_name, tenant_name, source_updated_at, raw_payload)
   values ('TEST-CONTRACT-CREATE', 'new-1', '新規契約', '完了', 'テスト物件', 'テストテナント', '2026-02-01T00:00:00Z', '{"稟議番号":{"val":"TEST-NEW-1"}}');
@@ -36,6 +51,24 @@ begin
   values ('TEST-CONTRACT-CREATE', 'old-1', '新規契約', '完了', '2025-12-31T23:59:59Z', '{}');
   if exists (select 1 from public.change_request where source_record_key = 'TEST-CONTRACT-CREATE:old-1') then
     raise exception '運用開始日前の申請は対応依頼へ展開してはいけません';
+  end if;
+
+  insert into public.appsuite_record(app_id, data_id, workflow_type, approval_status, source_updated_at, raw_payload)
+  values ('87', 'test-repair-route', 'その他', '完了', now(),
+    '{"発注先":{"val":"テスト修繕業者"},"発注金額1（税込）":{"val":"10000"},"発注内容1":{"val":"修繕テスト"}}');
+  if exists (select 1 from public.change_request where source_record_key = '87:test-repair-route') then
+    raise exception '修繕発注は契約対応依頼を生成してはいけません';
+  end if;
+  if not exists (
+    select 1 from public.appsuite_procurement_inbox inbox
+    join public.appsuite_record record on record.appsuite_record_id = inbox.appsuite_record_id
+    where record.app_id = '87' and record.data_id = 'test-repair-route'
+  ) then raise exception '修繕発注は発注受信箱へ展開する必要があります'; end if;
+
+  insert into public.appsuite_record(app_id, data_id, workflow_type, approval_status, source_updated_at, raw_payload)
+  values ('TEST-SYNC-ONLY', 'sync-only-1', 'その他', '完了', now(), '{}');
+  if exists (select 1 from public.change_request where source_record_key = 'TEST-SYNC-ONLY:sync-only-1') then
+    raise exception 'sync_only は契約対応依頼を生成してはいけません';
   end if;
 
   insert into public.appsuite_record(app_id, data_id, workflow_type, approval_status, ringi_number, source_updated_at, raw_payload)
