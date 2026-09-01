@@ -43,7 +43,11 @@ export function ParkingFeeCleanupPage({ role }: { role: Role }) {
     for (const [unitId, request] of byUnit) {
       const parking = parkingByUnit.get(unitId);
       if (!parking || parking.contract_status !== 'active' || parking.parking_fee_effective_from) continue;
-      const scope = text(request.proposed_payload, 'parking_scope') ?? parking.parking_scope; const start = parking.contract_start_date; const end = parking.contract_end_date;
+      const scope = text(request.proposed_payload, 'parking_scope') ?? parking.parking_scope;
+      // parking_list_at_date は親契約の終了日を返す。複数区画契約では親契約が未確定でも、
+      // 対応依頼の再評価時に保存された区画単位の期間は確定RPCへそのまま渡せる。
+      const start = parking.contract_start_date ?? text(request.proposed_payload, 'contract_start_date');
+      const end = parking.contract_end_date ?? text(request.proposed_payload, 'contract_end_date');
       const eligible = scope === 'external' && Boolean(start && end);
       next.push({ requestId: request.change_request_id, rowVersion: request.row_version, unitId, propertyId: parking.property_id, property: parking.property_name, tenant: parking.tenant_name ?? 'テナント未設定', space: parking.space_number, start, end, eligible, status: scope === 'internal' ? '内部契約のため個別処理' : !scope ? '契約区分を確認してください' : !start ? '契約開始日を確認してください' : !end ? '契約終了日を確認してください' : '一括確定可能' });
     }
