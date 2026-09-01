@@ -5,7 +5,7 @@ import './ParkingFeeCleanupPage.css';
 
 type Role = 'admin' | 'manager' | 'staff' | 'viewer';
 type Request = { change_request_id: string; row_version: number; proposed_payload: Record<string, unknown> | null; items: { entity_id: string | null }[] | null };
-type Unit = { lease_contract_unit_id: string; lease_start_date: string | null; lease_end_date: string | null; unit: { unit_code: string; unit_name: string | null; unit_type: string; property_id: string; asset: { asset_name: string } | null } | null; contract: { contract_status: string; contract_start_date: string | null; tenant: { tenant_name: string } | null } | null };
+type ParkingCurrent = { property_id: string; property_name: string; lease_contract_unit_id: string | null; contract_status: string | null; contract_start_date: string | null; contract_end_date: string | null; tenant_name: string | null; parking_scope: string | null; space_number: string; parking_type_name: string | null; monthly_parking_fee: number; parking_fee_effective_from: string | null };
 type Row = { requestId: string; rowVersion: number; unitId: string; propertyId: string; property: string; tenant: string; space: string; start: string | null; end: string | null; eligible: boolean; status: string };
 type Failure = Pick<Row, 'requestId' | 'property' | 'tenant' | 'space'> & { message: string };
 const today = new Date().toISOString().slice(0, 10);
@@ -26,28 +26,26 @@ export function ParkingFeeCleanupPage({ role }: { role: Role }) {
 
   const load = useCallback(async () => {
     if (!supabase || !allowed) return;
+    const client = supabase;
     setLoading(true); setError('');
     const { data: requestData, error: requestError } = await supabase.from('change_request').select('change_request_id, row_version, proposed_payload, items:change_request_item!inner(entity_id)').eq('request_type', 'parking_fee_setup').in('status', ['open', 'in_review', 'on_hold']);
     if (requestError) { setError(`対応依頼を読み込めませんでした: ${requestError.message}`); setLoading(false); return; }
     const byUnit = new Map<string, Request>();
     for (const request of (requestData ?? []) as unknown as Request[]) { const id = text(request.proposed_payload, 'parking_lease_contract_unit_id') ?? request.items?.[0]?.entity_id; if (id && !byUnit.has(id)) byUnit.set(id, request); }
-    const ids = [...byUnit.keys()];
-    if (!ids.length) { setRows([]); setSelected(new Set()); setLoading(false); return; }
-    const [unitResult, feeResult] = await Promise.all([
-      supabase.from('lease_contract_unit').select('lease_contract_unit_id, lease_start_date, lease_end_date, unit:unit_master(unit_code, unit_name, unit_type, property_id, asset:asset_master(asset_name)), contract:lease_contract(contract_status, contract_start_date, tenant:tenant_master(tenant_name))').in('lease_contract_unit_id', ids),
-      supabase.from('parking_fee_history').select('parking_lease_contract_unit_id').in('parking_lease_contract_unit_id', ids).lte('effective_from', today).or(`effective_to.is.null,effective_to.gte.${today}`),
-    ]);
-    const loadError = unitResult.error ?? feeResult.error;
+    if (!byUnit.size) { setRows([]); setSelected(new Set()); setLoading(false); return; }
+    const propertyIds = [...new Set([...byUnit.values()].map((request) => text(request.proposed_payload, 'property_id')).filter((id): id is string => Boolean(id)))];
+    const listResults = await Promise.all(propertyIds.map((propertyId) => client.rpc('parking_list_at_date', { p_property_id: propertyId, p_as_of_date: today })));
+    const loadError = listResults.find((item) => item.error)?.error;
     if (loadError) { setError(`正本データを読み込めませんでした: ${loadError.message}`); setLoading(false); return; }
-    const hasFee = new Set((feeResult.data ?? []).map((fee) => fee.parking_lease_contract_unit_id));
-    const unitById = new Map(((unitResult.data ?? []) as unknown as Unit[]).map((unit) => [unit.lease_contract_unit_id, unit]));
+    const parkingByUnit = new Map<string, ParkingCurrent>();
+    for (const result of listResults) for (const parking of (result.data ?? []) as unknown as ParkingCurrent[]) if (parking.lease_contract_unit_id) parkingByUnit.set(parking.lease_contract_unit_id, parking);
     const next: Row[] = [];
     for (const [unitId, request] of byUnit) {
-      const unit = unitById.get(unitId);
-      if (!unit || unit.unit?.unit_type !== 'parking' || unit.contract?.contract_status !== 'active' || hasFee.has(unitId)) continue;
-      const scope = text(request.proposed_payload, 'parking_scope'); const start = unit.lease_start_date ?? unit.contract?.contract_start_date ?? null; const end = unit.lease_end_date;
+      const parking = parkingByUnit.get(unitId);
+      if (!parking || parking.contract_status !== 'active' || parking.parking_fee_effective_from) continue;
+      const scope = text(request.proposed_payload, 'parking_scope') ?? parking.parking_scope; const start = parking.contract_start_date; const end = parking.contract_end_date;
       const eligible = scope === 'external' && Boolean(start && end);
-      next.push({ requestId: request.change_request_id, rowVersion: request.row_version, unitId, propertyId: unit.unit?.property_id ?? '', property: unit.unit?.asset?.asset_name ?? '物件未設定', tenant: unit.contract?.tenant?.tenant_name ?? 'テナント未設定', space: unit.unit?.unit_name ? `${unit.unit.unit_code} ${unit.unit.unit_name}` : unit.unit?.unit_code ?? '区画未設定', start, end, eligible, status: scope === 'internal' ? '内部契約のため個別処理' : !scope ? '契約区分を確認してください' : !start ? '契約開始日を確認してください' : !end ? '契約終了日を確認してください' : '一括確定可能' });
+      next.push({ requestId: request.change_request_id, rowVersion: request.row_version, unitId, propertyId: parking.property_id, property: parking.property_name, tenant: parking.tenant_name ?? 'テナント未設定', space: parking.space_number, start, end, eligible, status: scope === 'internal' ? '内部契約のため個別処理' : !scope ? '契約区分を確認してください' : !start ? '契約開始日を確認してください' : !end ? '契約終了日を確認してください' : '一括確定可能' });
     }
     next.sort((a, b) => `${a.property}${a.space}`.localeCompare(`${b.property}${b.space}`, 'ja-JP', { numeric: true }));
     setRows(next); setSelected((current) => new Set([...current].filter((id) => next.some((row) => row.requestId === id && row.eligible)))); setLoading(false);
