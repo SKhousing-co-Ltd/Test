@@ -72,7 +72,13 @@ export function ParkingFeeCleanupPage({ role }: { role: Role }) {
     if (!window.confirm(`${selectedRows.length}件を既存の確定処理で順次反映します。よろしいですか？`)) return;
     setProcessing(true); setError(''); setResult(null); let success = 0; const failures: Failure[] = [];
     for (const row of selectedRows) {
-      const { data, error: rpcError } = await supabase.rpc('apply_parking_fee_change_request', { p_change_request_id: row.requestId, p_expected_row_version: row.rowVersion, p_monthly_parking_fee: Number(amounts[row.requestId]), p_effective_from: row.start!, p_parking_contract_end_date: endDates[row.requestId] ?? row.end!, p_main_lease_contract_unit_id: null });
+      // A preceding row can recheck related requests and advance their row_version.
+      // Read the authoritative version immediately before each independent RPC call.
+      const { data: latestRequest, error: latestError } = await supabase.from('change_request')
+        .select('row_version, status').eq('change_request_id', row.requestId).maybeSingle();
+      if (latestError) { failures.push({ ...row, message: `対応依頼を再確認できませんでした: ${latestError.message}` }); continue; }
+      if (!latestRequest || !['open', 'in_review', 'on_hold'].includes(latestRequest.status)) { success += 1; continue; }
+      const { data, error: rpcError } = await supabase.rpc('apply_parking_fee_change_request', { p_change_request_id: row.requestId, p_expected_row_version: latestRequest.row_version, p_monthly_parking_fee: Number(amounts[row.requestId]), p_effective_from: row.start!, p_parking_contract_end_date: endDates[row.requestId] ?? row.end!, p_main_lease_contract_unit_id: null });
       const applied = (Array.isArray(data) ? data[0] : data) as { status?: string } | null;
       if (rpcError) failures.push({ ...row, message: rpcError.message }); else if (applied?.status !== 'applied') failures.push({ ...row, message: '確定済みへの更新を確認できませんでした。' }); else success += 1;
     }
