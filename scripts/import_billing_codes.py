@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""発行コード.xlsxを billing_code へ取り込む。既定では確認レポートだけを出力する。"""
+"""発行コード.xlsxを billing_code へ安全に取り込む。
+
+既定では照合レポートだけを出力する。--apply は service role key と
+--confirm-apply の両方を指定した場合だけ、新規の請求コードテーブルへ書き込む。
+"""
 from __future__ import annotations
 
 import argparse
@@ -59,45 +63,80 @@ class Rest:
             payload = response.read().decode("utf-8")
         return json.loads(payload) if payload else []
 
-    def property_for_code(self, code: str) -> str | None:
-        rows = self.request("GET", "lease_contract_unit", {
-            "select": "unit:unit_master!inner(property_id),contract:lease_contract!inner(tenant:tenant_master!inner(external_tenant_code))",
-            "contract.tenant.external_tenant_code": f"eq.{code}", "limit": "1",
-        })
-        if not rows:
+    def property_for_sheet(self, sheet_name: str) -> str | None:
+        if not sheet_name.isdigit():
             return None
-        unit = rows[0].get("unit") or {}
-        if isinstance(unit, list):
-            unit = unit[0] if unit else {}
-        return unit.get("property_id")
+        rows = self.request("GET", "asset_master", {
+            "select": "asset_id", "asset_code": f"eq.{sheet_name}", "limit": "2",
+        })
+        return rows[0].get("asset_id") if len(rows) == 1 else None
+
+    def tenant_ids_for_code(self, property_id: str, code: str) -> list[str]:
+        rows = self.request("GET", "lease_contract_unit", {
+            "select": "contract:lease_contract!inner(tenant_id,tenant:tenant_master!inner(external_tenant_code)),unit:unit_master!inner(property_id)",
+            "unit.property_id": f"eq.{property_id}",
+            "contract.tenant.external_tenant_code": f"eq.{code}",
+            "limit": "1000",
+        })
+        tenant_ids: set[str] = set()
+        for row in rows:
+            contract = row.get("contract") or {}
+            if isinstance(contract, list):
+                contract = contract[0] if contract else {}
+            tenant_id = contract.get("tenant_id")
+            if tenant_id:
+                tenant_ids.add(tenant_id)
+        return sorted(tenant_ids)
+
+
+def build_import_rows(by_sheet: dict[str, list[dict[str, Any]]], client: Rest) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    report: dict[str, Any] = {"sheets": {}, "summary": {"matched": 0, "unmatched": 0, "review_required": 0, "skipped": 0}, "examples": []}
+    for sheet_name, rows in by_sheet.items():
+        property_id = client.property_for_sheet(sheet_name)
+        sheet_summary = {"rows": len(rows), "property_id": property_id, "matched": 0, "unmatched": 0, "review_required": 0, "skipped": 0}
+        for row in rows:
+            if not property_id:
+                sheet_summary["skipped"] += 1
+                report["summary"]["skipped"] += 1
+                continue
+            tenant_ids = client.tenant_ids_for_code(property_id, row["issue_code"])
+            match_status = "matched" if len(tenant_ids) == 1 else "unmatched" if not tenant_ids else "review_required"
+            prepared.append({
+                **row,
+                "property_id": property_id,
+                "tenant_id": tenant_ids[0] if len(tenant_ids) == 1 else None,
+                "match_status": match_status,
+                "is_primary": len(tenant_ids) == 1,
+                "is_active": len(tenant_ids) == 1 and row["is_active"],
+            })
+            sheet_summary[match_status] += 1
+            report["summary"][match_status] += 1
+            if match_status != "matched" and len(report["examples"]) < 30:
+                report["examples"].append({"sheet": sheet_name, "row": row["source_row_number"], "issue_code": row["issue_code"], "recipient_name": row["recipient_name"], "status": match_status})
+        report["sheets"][sheet_name] = sheet_summary
+    return prepared, report
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("workbook", type=Path)
     parser.add_argument("--apply", action="store_true", help="Supabaseへ登録する")
+    parser.add_argument("--confirm-apply", action="store_true", help="照合結果を確認済みとして実際の登録を許可する")
     parser.add_argument("--supabase-url", default=os.getenv("VITE_SUPABASE_URL"))
     parser.add_argument("--service-role-key", default=os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
     args = parser.parse_args()
     by_sheet = read_codes(args.workbook)
-    report = {"sheets": {sheet: {"rows": len(rows), "property_id": None} for sheet, rows in by_sheet.items()}, "unmatched_sheets": []}
     if not args.apply:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps({"sheets": {sheet: {"rows": len(rows)} for sheet, rows in by_sheet.items()}, "message": "照合には --apply と接続情報が必要です。DBへの書き込みは行っていません。"}, ensure_ascii=False, indent=2))
         return
+    if not args.confirm_apply:
+        raise SystemExit("実際に登録するには --confirm-apply を指定してください。")
     if not args.supabase_url or not args.service_role_key:
         raise SystemExit("--apply には SUPABASE_URL と SUPABASE_SERVICE_ROLE_KEY が必要です。")
     client = Rest(args.supabase_url, args.service_role_key)
-    for sheet, rows in by_sheet.items():
-        property_id = None
-        for row in rows:
-            property_id = client.property_for_code(row["issue_code"])
-            if property_id:
-                break
-        report["sheets"][sheet]["property_id"] = property_id
-        if not property_id:
-            report["unmatched_sheets"].append(sheet)
-            continue
-        payload = [{**row, "property_id": property_id} for row in rows]
+    payload, report = build_import_rows(by_sheet, client)
+    if payload:
         client.request("POST", "billing_code", {"on_conflict": "property_id,issue_code"}, payload, "resolution=merge-duplicates")
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
