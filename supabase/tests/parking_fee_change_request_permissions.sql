@@ -3,6 +3,7 @@ begin;
 do $$
 declare
   trigger_function regprocedure;
+  commit_function_is_definer boolean;
 begin
   if has_table_privilege('authenticated', 'public.change_request', 'update') then
     raise exception 'change_request must remain read-only through the Data API';
@@ -15,6 +16,13 @@ begin
     'public.apply_parking_fee_change_request(uuid,integer,numeric,date,date,uuid)',
     'execute'
   ) then raise exception 'authenticated cannot execute the parking fee RPC'; end if;
+
+  select function.prosecdef into commit_function_is_definer
+  from pg_proc function
+  where function.oid = 'public.commit_parking_import(uuid)'::regprocedure;
+  if not coalesce(commit_function_is_definer, false) then
+    raise exception 'parking import must execute its authorized change-request workflow with definer privileges';
+  end if;
 
   select trigger.tgfoid::regprocedure into trigger_function
   from pg_trigger trigger
