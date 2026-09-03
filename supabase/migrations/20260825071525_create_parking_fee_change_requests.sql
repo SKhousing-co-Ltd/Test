@@ -1,0 +1,3 @@
+-- Production migration history marker.
+-- The idempotent implementation is replayed after the same-day workbench migrations in
+-- 20260825190000_create_parking_fee_change_requests.sql so its request-type constraints win.

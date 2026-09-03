@@ -19,7 +19,7 @@ begin
   values (property_uuid, '101', '1F', 'office', 100.00)
   returning unit_id into unit_a;
   insert into public.unit_master (property_id, unit_code, floor_label, unit_type, rentable_area_sqm)
-  values (property_uuid, '倉庫1', 'B1F', 'storage', 10.00)
+  values (property_uuid, '倉庫1', 'B1F', 'warehouse', 10.00)
   returning unit_id into unit_b;
   insert into public.tenant_master (external_tenant_code, tenant_name, normalized_tenant_name)
   values ('TEST-001', 'テストテナント', 'テストテナント')

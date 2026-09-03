@@ -1,0 +1,3 @@
+-- Production migration history marker.
+-- The idempotent implementation is replayed after same-day workflow migrations in
+-- 20260825200000_fix_parking_fee_change_request_permissions.sql.

@@ -1,0 +1,3 @@
+-- Production migration history marker.
+-- The idempotent hardening is replayed after same-day workbench migrations in
+-- 20260825190100_harden_parking_fee_change_requests.sql.

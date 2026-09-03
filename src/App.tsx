@@ -21,8 +21,41 @@ import { ChangeRequestWorkbenchPage } from './ChangeRequestWorkbenchPage';
 import { ProcurementPage } from './ProcurementPage';
 import { OperationsDashboard } from './OperationsDashboard';
 import { BillingCodePage } from './BillingCodePage';
+import { ParkingPage } from './ParkingPage';
+import { TenantBillingCodesPage } from './TenantBillingCodesPage';
+import { ParkingFeeCleanupPage } from './ParkingFeeCleanupPage';
+import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 
-type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
+type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
+type ContractType = '新規' | '更新';
+type ViewMode = 'table' | 'board';
+
+type Contract = {
+  id: string;
+  property: string;
+  tenant: string;
+  type: ContractType;
+  startDate: string;
+  endDate: string;
+  assignee: string;
+  status: ContractStatus;
+  note: string;
+  updatedAt: string;
+};
+
+type ContractDraft = Omit<Contract, 'id' | 'updatedAt'>;
+
+type LeaseContractRow = {
+  lease_contract_id: string;
+  contract_status: 'draft' | 'active' | 'terminated' | 'expired';
+  contract_type: string | null;
+  contract_start_date: string | null;
+  contract_end_date: string | null;
+  updated_at: string;
+  tenant: { tenant_name: string } | null;
+  contract_units: Array<{ unit: { asset: { asset_name: string } | null } | null }> | null;
+};
+
 type AccountStatus = 'pending' | 'active' | 'suspended';
 
 type Employee = {
@@ -98,15 +131,18 @@ function App() {
             <Route path="/dashboard" element={<OperationsDashboard userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
             <Route path="/financial" element={<FinancialPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/procurement" element={<ProcurementPage canEdit={profile?.role !== 'viewer'} canManageVendors={profile?.role === 'admin' || profile?.role === 'manager'} />} />
-            <Route path="/rent-roll" element={<RentRollPage />} />
+            <Route path="/rent-roll" element={<RentRollPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} />} />
             <Route path="/billing-codes" element={<BillingCodePage canEdit={profile?.role !== 'viewer'} />} />
-            <Route path="/change-requests" element={<ChangeRequestWorkbenchPage />} />
+            <Route path="/tenants" element={<TenantBillingCodesPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
+            <Route path="/parking" element={<ParkingPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
+            <Route path="/change-requests" element={<ChangeRequestWorkbenchPage role={profile?.role ?? 'viewer'} />} />
             <Route path="/appsuite-sync" element={<AppsuiteSyncPage isAdmin={profile?.role === 'admin'} />} />
             <Route path="/leasing-map" element={<LeasingMapPage />} />
             <Route path="/contracts" element={<ContractWorkflowPage canComplete={profile?.role !== 'viewer'} />} />
             <Route path="/contract-documents" element={<Navigate to="/contracts/90528c83-bff1-485b-8bc1-1b74bad9d6f7/document" replace />} />
             <Route path="/contracts/:contractId/document" element={<ContractDocumentPage />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
+            <Route path="/admin/parking-fee-cleanup" element={<ParkingFeeCleanupPage role={profile?.role ?? 'viewer'} />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
@@ -179,12 +215,12 @@ function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
 function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut: () => Promise<void> }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const pageTitle = location.pathname === '/appsuite-sync' ? 'AppSuite同期' : location.pathname === '/contracts' ? '契約業務フロー' : location.pathname.startsWith('/contract-documents') || location.pathname.endsWith('/document') ? '契約書作成' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/procurement' ? '発注・請求・支払管理' : location.pathname === '/financial' ? '収支管理' : location.pathname === '/rent-roll' ? 'レントロール' : location.pathname === '/billing-codes' ? '発行コード' : location.pathname === '/leasing-map' ? 'リーシング図面' : 'ダッシュボード';
+  const pageTitle = location.pathname === '/appsuite-sync' ? 'AppSuite同期' : location.pathname === '/change-requests' ? '対応依頼' : location.pathname === '/admin/parking-fee-cleanup' ? '駐車料金一括整備' : location.pathname === '/contracts' ? '契約業務フロー' : location.pathname.startsWith('/contract-documents') || location.pathname.endsWith('/document') ? '契約書作成' : location.pathname === '/accounts' ? 'アカウント管理' : location.pathname === '/billing-codes' ? '発行コード' : location.pathname === '/tenants' ? '請求コード管理' : location.pathname === '/procurement' ? '発注・請求・支払管理' : location.pathname === '/financial' ? '収支管理' : location.pathname === '/rent-roll' ? 'レントロール' : location.pathname === '/parking' ? '駐車場台帳' : location.pathname === '/leasing-map' ? 'リーシング図面' : 'ダッシュボード';
   const logout = async () => { await onSignOut(); navigate('/login', { replace: true }); };
   const userName = profile.employee?.employee_name ?? profile.email;
   return <div className="portal-shell"><NavLink to="/appsuite-sync" className="appsuite-sync-shortcut">AppSuite同期</NavLink>
     <aside className="sidebar"><div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div><p className="workspace-label">WORKSPACE</p>
-      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/change-requests" className="nav-item"><span>✓</span>対応依頼</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/procurement" className="nav-item"><span>◫</span>発注・請求・支払</NavLink><NavLink to="/billing-codes" className="nav-item"><span>＃</span>発行コード</NavLink><NavLink to="/rent-roll" className="nav-item"><span>▤</span>レントロール</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/contract-documents" className={({ isActive }) => isActive || location.pathname.endsWith('/document') ? 'nav-item active' : 'nav-item'}><span>▤</span>契約書作成</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
+      <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/change-requests" className="nav-item"><span>✓</span>対応依頼</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/procurement" className="nav-item"><span>◫</span>発注・請求・支払</NavLink><NavLink to="/billing-codes" className="nav-item"><span>＃</span>発行コード</NavLink><NavLink to="/rent-roll" className="nav-item"><span>▤</span>レントロール</NavLink><NavLink to="/tenants" className="nav-item"><span>♙</span>請求コード</NavLink><NavLink to="/parking" className="nav-item"><span>Ⓟ</span>駐車場台帳</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/contract-documents" className={({ isActive }) => isActive || location.pathname.endsWith('/document') ? 'nav-item active' : 'nav-item'}><span>▤</span>契約書作成</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{(profile.role === 'admin' || profile.role === 'manager') && <NavLink to="/admin/parking-fee-cleanup" className="nav-item"><span>¥</span>駐車料金一括整備</NavLink>}{profile.role === 'admin' && <NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink>}</nav>
       <p className="workspace-label">COMING SOON</p><nav className="disabled-nav"><span><i>▤</i>物件管理</span><span><i>◫</i>収支管理</span><span><i>♙</i>マスタ管理</span></nav>
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
     </aside>

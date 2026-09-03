@@ -20,17 +20,6 @@ Deno.serve(async (request) => {
     const records = snapshot.records.map((record) => ({ ...record, is_present: true, last_seen_at: now }));
     const { error: upsertError } = await admin.from('appsuite_record').upsert(records, { onConflict: 'app_id,data_id' });
     if (upsertError) throw upsertError;
-    if (claim.app_id === '65') {
-      for (const record of records) {
-        const dataId = typeof record.data_id === 'string' ? record.data_id : null;
-        if (!dataId) continue;
-        const { error: requestError } = await userClient.rpc('create_change_request_from_appsuite_record', {
-          p_app_id: claim.app_id,
-          p_data_id: dataId,
-        });
-        if (requestError) throw requestError;
-      }
-    }
     if (snapshot.missing_data_ids.length) {
       const { error: missingError } = await admin.from('appsuite_record').update({ is_present: false }).eq('app_id', claim.app_id).in('data_id', snapshot.missing_data_ids);
       if (missingError) throw missingError;
