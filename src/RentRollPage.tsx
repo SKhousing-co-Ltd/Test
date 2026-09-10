@@ -210,7 +210,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const { data, error: loadError } = await supabase
         .from('asset_master')
         .select('asset_id, asset_name, short_name')
-        .order('asset_name');
+        .eq('is_rent_roll_visible', true)
+        .order('asset_code');
 
       if (cancelled) return;
       if (loadError) {

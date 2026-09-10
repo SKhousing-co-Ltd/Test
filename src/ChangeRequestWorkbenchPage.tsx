@@ -122,7 +122,7 @@ function IssueContext({ request }: { request: ChangeRequest }) {
     <p className="section-kicker">IMPORT SOURCE</p>
     <h4>{detail.title}</h4>
     <div className="change-objective"><strong>この依頼で確定すること</strong><p>{detail.objective}</p></div>
-    {issueType === 'multiple_tenant_codes' && typeof request.proposed_payload.tenant_id === 'string' ? <div className="change-master-link"><Link className="primary-button" to={`/tenants?tenant=${encodeURIComponent(request.proposed_payload.tenant_id)}`}>請求コード設定を開く</Link><small>設定保存後、この依頼は自動的に確定済みになります。</small></div> : null}
+    {issueType === 'multiple_tenant_codes' && typeof request.proposed_payload.tenant_id === 'string' ? <div className="change-master-link"><Link className="primary-button" to="/billing-codes">テナント請求を開く</Link><small>請求先コードの状況を確認してください。</small></div> : null}
     <div className="change-diff-table">
       <div className="change-diff-head"><span>ソースシート（物件）</span><span>元Excelファイル</span><span>該当行</span></div>
       <div><strong>{importSource?.source_sheet_name ?? '確認中'}</strong><span>{importSource?.source_file_name ?? '確認中'}</span><span>{importSource?.source_row_number ? `${importSource.source_row_number} 行目` : '行番号なし'}</span></div>
