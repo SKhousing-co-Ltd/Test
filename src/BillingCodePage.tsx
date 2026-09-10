@@ -48,7 +48,7 @@ export function BillingCodePage({ canEdit }: { canEdit: boolean }) {
     const client = supabase;
     let cancelled = false;
     const loadProperties = async () => {
-      const { data, error: loadError } = await client.from('asset_master').select('asset_id, asset_name, short_name').order('asset_name');
+      const { data, error: loadError } = await client.from('asset_master').select('asset_id, asset_name, short_name').eq('is_tenant_billing_enabled', true).order('asset_code');
       if (cancelled) return;
       if (loadError) setError(`物件を読み込めませんでした: ${loadError.message}`);
       const next = (data ?? []) as Property[];
