@@ -21,6 +21,7 @@
     "pdfjs-dist": "^5.4.54",
     "react": "latest",
     "react-dom": "latest",
+    "react-force-graph-3d": "^1.28.0",
     "react-router-dom": "^7.18.1",
     "tesseract.js": "^7.0.0"
   },
