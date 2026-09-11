@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './lib/supabase';
+import type { BillingPeriod } from './TenantBillingControls';
 
-type Property = { asset_id: string; asset_name: string; short_name: string | null };
 type ChargeType = 'meeting_room' | 'electricity' | 'electricity_increment' | 'water' | 'gas' | 'fluorescent_light' | 'other';
 type ChargeFlag = { charge_type: ChargeType; is_enabled: boolean };
 type BillingAssignment = { billing_code_id: string; lease_contract_unit_id: string; charge_type: 'rent' | 'common_charge'; effective_from: string; effective_to: string | null };
@@ -13,7 +13,6 @@ type Unit = { unit_type: string; allocations: Allocation[] | null };
 type Amounts = { occupied: boolean; rent: number; commonCharge: number; parking: number; storage: number };
 
 const currency = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
-const currentMonth = new Date().toISOString().slice(0, 7);
 const flagColumns: Array<{ type: ChargeType; label: string }> = [
   { type: 'meeting_room', label: '会議室利用料' }, { type: 'electricity', label: '電気代' }, { type: 'electricity_increment', label: '電気増額分' },
   { type: 'water', label: '水道代' }, { type: 'gas', label: 'ガス代' }, { type: 'fluorescent_light', label: '蛍光灯代' }, { type: 'other', label: 'その他' },
@@ -33,34 +32,15 @@ const currentTerm = (allocation: Allocation, referenceDate: string) => (allocati
   .filter((term) => term.effective_from <= referenceDate && (!term.effective_to || term.effective_to >= referenceDate))
   .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0] ?? null;
 
-export function BillingCodePage({ canEdit }: { canEdit: boolean }) {
-  const [properties, setProperties] = useState<Property[]>([]);
-  const [propertyId, setPropertyId] = useState('');
-  const [month, setMonth] = useState(currentMonth);
+export function BillingCodePage({ canEdit, propertyId, period }: { canEdit: boolean; propertyId: string; period: BillingPeriod }) {
   const [codes, setCodes] = useState<BillingCode[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const referenceDate = `${month}-01`;
-
-  useEffect(() => {
-    if (!supabase) return;
-    const client = supabase;
-    let cancelled = false;
-    const loadProperties = async () => {
-      const { data, error: loadError } = await client.from('asset_master').select('asset_id, asset_name, short_name').eq('is_tenant_billing_enabled', true).order('asset_code');
-      if (cancelled) return;
-      if (loadError) setError(`物件を読み込めませんでした: ${loadError.message}`);
-      const next = (data ?? []) as Property[];
-      setProperties(next);
-      setPropertyId((current) => current || next[0]?.asset_id || '');
-    };
-    void loadProperties();
-    return () => { cancelled = true; };
-  }, []);
+  const referenceDate = `${period.fiscalYear + (period.month <= 3 ? 1 : 0)}-${String(period.month).padStart(2, '0')}-01`;
 
   const load = async () => {
-    if (!supabase || !propertyId) return;
+    if (!supabase || !propertyId) { setCodes([]); setUnits([]); setLoading(false); return; }
     setLoading(true); setError('');
     const [codeResult, unitResult] = await Promise.all([
       supabase.from('billing_code').select('billing_code_id, tenant_id, issue_code, recipient_name, notes, is_active, is_primary, match_status, flags:billing_code_charge_flag(charge_type, is_enabled), assignments:billing_code_assignment(billing_code_id, lease_contract_unit_id, charge_type, effective_from, effective_to)').eq('property_id', propertyId).order('issue_code'),
@@ -119,14 +99,9 @@ export function BillingCodePage({ canEdit }: { canEdit: boolean }) {
     if (saveError) setError(`請求対象フラグを保存できませんでした: ${saveError.message}`); else void load();
   };
 
-  const selectedProperty = properties.find((property) => property.asset_id === propertyId);
-  const activeCount = codes.filter((code) => amountsByCode.get(code.billing_code_id)?.occupied).length;
   return <section className="billing-code-page">
-    <div className="page-heading"><div><p className="section-kicker">TENANT BILLING</p><h2>テナント請求</h2><p>物件ごとの請求先コードと、基準月のレントロール金額・請求対象を確認します。</p></div></div>
-    <div className="billing-code-toolbar"><label>基準月<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><label>物件<select value={propertyId} onChange={(event) => setPropertyId(event.target.value)}>{properties.map((property) => <option key={property.asset_id} value={property.asset_id}>{property.short_name || property.asset_name}</option>)}</select></label></div>
     {error && <p className="billing-code-notice">{error}</p>}
-    {selectedProperty && <div className="billing-code-summary"><div><span>請求先コード</span><strong>{codes.length}件</strong></div><div><span>入居中</span><strong>{activeCount}件</strong></div><div><span>表示基準月</span><strong>{month.replace('-', '年')}月</strong></div></div>}
-    <div className="billing-code-panel"><div className="billing-code-panel-heading"><div><h3>{selectedProperty?.asset_name ?? '物件を選択'}</h3><p>金額は基準月時点の契約条件から集計します。複数コード時は主コードから個別項目を振り替えます。</p></div></div><div className="billing-code-table-wrap"><table className="billing-code-table"><thead><tr><th>入居状況</th><th>発行コード</th><th>テナント名</th><th>賃料</th><th>共益費</th><th>駐車料</th><th>看板料</th><th>倉庫料</th><th>駐輪場利用料</th>{flagColumns.map((column) => <th key={column.type}>{column.label}</th>)}</tr></thead><tbody>{loading && <tr><td colSpan={16} className="billing-code-empty">読み込み中…</td></tr>}{!loading && codes.map((code) => { const values = amountsByCode.get(code.billing_code_id) ?? { occupied: false, rent: 0, commonCharge: 0, parking: 0, storage: 0 }; const status = code.match_status !== 'matched' || !code.tenant_id ? '未照合' : values.occupied ? '入居中' : '解約済み'; return <tr key={code.billing_code_id}><td><span className={`billing-code-status ${status === '入居中' ? 'occupied' : 'terminated'}`}>{status}</span></td><td><strong>{code.issue_code}</strong>{code.is_primary && <small>主コード</small>}{code.notes && <small>{code.notes}</small>}</td><td>{code.recipient_name}</td><Amount value={values.rent} /><Amount value={values.commonCharge} /><Amount value={values.parking} /><Amount value={0} /><Amount value={values.storage} /><Amount value={0} />{flagColumns.map((column) => { const enabled = Boolean((code.flags ?? []).find((flag) => flag.charge_type === column.type)?.is_enabled); return <td className="billing-code-flag-cell" key={column.type}><button disabled={!canEdit} className={enabled ? 'enabled' : ''} onClick={() => void toggleFlag(code, column.type)} aria-label={`${code.issue_code}の${column.label}を${enabled ? '対象外' : '請求対象'}にする`}>{enabled ? '○' : '–'}</button></td>; })}</tr>; })}{!loading && codes.length === 0 && <tr><td colSpan={16} className="billing-code-empty">この物件の発行コードは未登録です。発行コード.xlsxを取込後に表示されます。</td></tr>}</tbody></table></div></div>
+    <div className="billing-code-panel"><div className="billing-code-table-wrap"><table className="billing-code-table"><thead><tr><th>入居状況</th><th>発行コード</th><th>テナント名</th><th>賃料</th><th>共益費</th><th>駐車料</th><th>看板料</th><th>倉庫料</th><th>駐輪場利用料</th>{flagColumns.map((column) => <th key={column.type}>{column.label}</th>)}</tr></thead><tbody>{loading && <tr><td colSpan={16} className="billing-code-empty">読み込み中…</td></tr>}{!loading && codes.map((code) => { const values = amountsByCode.get(code.billing_code_id) ?? { occupied: false, rent: 0, commonCharge: 0, parking: 0, storage: 0 }; const status = code.match_status !== 'matched' || !code.tenant_id ? '未照合' : values.occupied ? '入居中' : '解約済み'; return <tr key={code.billing_code_id}><td><span className={`billing-code-status ${status === '入居中' ? 'occupied' : 'terminated'}`}>{status}</span></td><td><strong>{code.issue_code}</strong>{code.is_primary && <small>主コード</small>}{code.notes && <small>{code.notes}</small>}</td><td>{code.recipient_name}</td><Amount value={values.rent} /><Amount value={values.commonCharge} /><Amount value={values.parking} /><Amount value={0} /><Amount value={values.storage} /><Amount value={0} />{flagColumns.map((column) => { const enabled = Boolean((code.flags ?? []).find((flag) => flag.charge_type === column.type)?.is_enabled); return <td className="billing-code-flag-cell" key={column.type}><button disabled={!canEdit} className={enabled ? 'enabled' : ''} onClick={() => void toggleFlag(code, column.type)} aria-label={`${code.issue_code}の${column.label}を${enabled ? '対象外' : '請求対象'}にする`}>{enabled ? '○' : '–'}</button></td>; })}</tr>; })}{!loading && codes.length === 0 && <tr><td colSpan={16} className="billing-code-empty">この物件の発行コードは未登録です。発行コード.xlsxを取込後に表示されます。</td></tr>}</tbody></table></div></div>
   </section>;
 }
 

@@ -1,0 +1,19 @@
+.tenant-billing-page { display: grid; gap: 14px; }
+@media (min-width: 1100px) { .page-content:has(.tenant-billing-page) { max-width: none; padding-right: clamp(32px, 3vw, 48px); padding-left: clamp(32px, 3vw, 48px); } }
+.tenant-billing-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding: 10px 14px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.tenant-billing-property, .tenant-billing-year, .tenant-billing-month { display: grid; gap: 5px; color: #607188; font-size: 12px; font-weight: 800; }
+.tenant-billing-property select, .tenant-billing-year select { border: 1px solid #d7e0eb; border-radius: 6px; padding: 8px 30px 8px 10px; color: #3f5069; background: #fff; font: inherit; font-size: 13px; }
+.tenant-billing-property select { min-width: 260px; }
+.tenant-billing-year select { min-width: 105px; }
+.tenant-billing-settings-link { align-self: end; margin-left: auto; white-space: nowrap; }
+.tenant-billing-month > div { display: flex; align-items: center; gap: 10px; }
+.tenant-billing-month button { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #d7e0eb; border-radius: 6px; color: #356eaa; background: #fff; font-size: 26px; font-weight: 400; line-height: 1; }
+.tenant-billing-month strong { min-width: 90px; color: #2b405d; font-size: 17px; text-align: center; }
+.tenant-billing-notice { margin: 0; padding: 11px 14px; border: 1px solid #efd7aa; border-radius: 8px; color: #846123; background: #fff9ec; font-size: 13px; }
+.tenant-billing-tabs { display: flex; gap: 2px; border-bottom: 1px solid #dfe6ef; }
+.tenant-billing-tabs button { flex: 1; border: 0; border-bottom: 3px solid transparent; padding: 13px 15px 11px; color: #718097; background: transparent; font-size: 13px; font-weight: 800; }
+.tenant-billing-tabs button.active { border-bottom-color: #1d6fc4; color: #1d6fc4; }
+.tenant-billing-workspace { min-height: 330px; padding: 25px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.tenant-billing-workspace h3 { margin: 5px 0 8px; color: #293f5c; font-size: 20px; }
+.tenant-billing-workspace p:not(.section-kicker) { margin: 0; color: #7e8c9f; font-size: 13px; }
+@media (max-width: 760px) { .tenant-billing-controls { align-items: stretch; flex-direction: column; }.tenant-billing-property select, .tenant-billing-year select { width: 100%; min-width: 0; }.tenant-billing-settings-link { margin-left: 0; }.tenant-billing-month > div { justify-content: space-between; }.tenant-billing-tabs { overflow-x: auto; }.tenant-billing-tabs button { flex: 0 0 auto; min-width: 105px; } }
