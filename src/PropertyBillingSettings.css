@@ -1,0 +1,36 @@
+.property-billing-settings { overflow: hidden; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.property-billing-settings > header { padding: 18px; border-bottom: 1px solid #e9eef4; }
+.property-billing-settings h3, .property-billing-settings h4, .property-billing-settings p { margin: 0; }
+.property-billing-settings h3 { color: #2b405d; font-size: 16px; }
+.property-billing-settings header p, .property-billing-items-heading p, .property-period-patterns p { margin-top: 6px; color: #728198; font-size: 12px; line-height: 1.6; }
+.property-billing-settings-notice { margin: 12px 16px; padding: 9px 11px; border: 1px solid #efd69e; border-radius: 7px; color: #876120; background: #fff9e9; font-size: 12px; }
+.property-billing-settings-notice.error { border-color: #f0c8c3; color: #9c443a; background: #fff1ef; }
+.property-billing-tabs { display: flex; gap: 4px; padding: 0 17px; border-bottom: 1px solid #dfe7f0; background: #f9fbfd; }
+.property-billing-tabs button { margin-bottom: -1px; padding: 12px 16px 10px; border: 0; border-bottom: 3px solid transparent; color: #718097; background: transparent; font-weight: 800; cursor: pointer; }
+.property-billing-tabs button.active { border-bottom-color: #1e72c9; color: #1767bb; }
+.property-billing-items-heading, .property-period-patterns { padding: 17px; }
+.property-billing-items-heading { border-bottom: 1px solid #e9eef4; }
+.property-billing-items-heading h4, .property-period-patterns h4 { color: #36506f; font-size: 14px; }
+.property-charge-type-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0; }
+.property-charge-type-list label { display: flex; align-items: center; gap: 9px; padding: 14px 17px; border-right: 1px solid #edf1f5; border-bottom: 1px solid #edf1f5; color: #425a76; font-size: 13px; font-weight: 700; }
+.property-charge-type-list input { accent-color: #1766c2; }
+.property-billing-item-form { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(150px, 1.2fr) minmax(120px, .8fr) minmax(105px, .6fr) minmax(180px, 1fr) auto; align-items: end; gap: 10px; padding: 16px 17px; border-bottom: 1px solid #e9eef4; background: #fbfcfe; }
+.property-billing-item-form label, .property-period-patterns label { display: grid; gap: 5px; color: #5f7087; font-size: 11px; font-weight: 800; }
+.property-billing-item-form input, .property-billing-item-form select, .property-period-patterns input, .property-period-patterns select { min-width: 0; border: 1px solid #d7e0eb; border-radius: 6px; padding: 8px 9px; color: #354c69; background: #fff; font: inherit; font-size: 12px; }
+.property-billing-item-form select:disabled { color: #98a4b4; background: #f1f4f7; }
+.property-billing-item-form small { color: #738298; font-size: 10px; }
+.property-billing-item-form .primary-button, .property-period-patterns .primary-button { padding: 9px 13px; }
+.property-billing-settings-table-wrap { overflow-x: auto; }
+.property-billing-settings table { width: 100%; min-width: 880px; border-collapse: collapse; }
+.property-billing-settings th, .property-billing-settings td { padding: 12px 16px; border-bottom: 1px solid #edf1f5; color: #56677d; font-size: 12px; text-align: left; vertical-align: top; }
+.property-billing-settings th { color: #75849a; background: #fbfcfe; font-size: 10px; }
+.property-billing-settings strong { color: #38506d; }
+.property-billing-settings td > span { border-radius: 999px; padding: 3px 7px; color: #356d9f; background: #e8f3ff; font-size: 10px; font-weight: 800; }
+.property-period-patterns { min-height: 320px; background: #fbfcfe; }
+.property-period-patterns form { display: grid; grid-template-columns: minmax(150px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr) auto; align-items: end; gap: 10px; margin-top: 12px; }
+.property-period-patterns label:nth-child(n+2) { grid-template-columns: 32px 1fr 1fr; align-items: center; }
+.property-period-pattern-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.property-period-pattern-list span { display: grid; gap: 2px; padding: 7px 9px; border: 1px solid #dce6f1; border-radius: 6px; color: #687990; background: #fff; font-size: 10px; }
+.property-period-pattern-list strong { color: #365270; font-size: 11px; }
+@media (max-width: 1120px) { .property-billing-item-form { grid-template-columns: repeat(3, minmax(150px, 1fr)); }.property-billing-item-form .primary-button { width: max-content; } }
+@media (max-width: 800px) { .property-billing-item-form, .property-period-patterns form { grid-template-columns: 1fr; }.property-billing-item-form .primary-button, .property-period-patterns .primary-button { width: 100%; } }

@@ -1,0 +1,22 @@
+.billing-statement-page { overflow: hidden; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.billing-statement-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px; border-bottom: 1px solid #e7edf4; }
+.billing-statement-heading h3 { margin: 3px 0 0; color: #2b405d; font-size: 17px; }
+.billing-statement-dates { display: flex; gap: 14px; color: #617187; font-size: 12px; font-weight: 700; }
+.billing-statement-notice { margin: 12px 16px; padding: 9px 11px; border: 1px solid #efd7aa; border-radius: 7px; color: #846123; background: #fff9ec; font-size: 12px; }
+.billing-statement-table-wrap { overflow: auto; max-height: calc(100vh - 270px); }
+.billing-statement-page table { width: 100%; min-width: 940px; border-collapse: collapse; table-layout: fixed; }
+.billing-statement-page col.statement-code { width: 72px; }
+.billing-statement-page col.statement-floor { width: 54px; }
+.billing-statement-page col.statement-tenant { width: 260px; }
+.billing-statement-page col.statement-money { width: 104px; }
+.billing-statement-page col.statement-date { width: 94px; }
+.billing-statement-page th, .billing-statement-page td { padding: 10px 11px; border-bottom: 1px solid #edf1f5; color: #52647c; font-size: 12px; text-align: left; white-space: nowrap; }
+.billing-statement-page td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
+.billing-statement-page thead th { position: sticky; top: 0; z-index: 1; color: #6d7f95; background: #f8fafc; font-size: 10px; }
+.billing-statement-page tbody tr:hover { background: #fbfdff; }
+.billing-statement-page strong { color: #344e6d; }
+.billing-statement-page .numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.billing-statement-page .total { color: #1d5f9d; font-weight: 800; }
+.billing-statement-page tfoot th, .billing-statement-page tfoot td { border-top: 2px solid #cfddea; border-bottom: 0; background: #f7fbff; color: #345575; font-weight: 800; }
+.billing-statement-empty { padding: 28px !important; color: #8190a3 !important; text-align: center !important; }
+@media (max-width: 760px) { .billing-statement-heading { align-items: flex-start; flex-direction: column; }.billing-statement-dates { flex-direction: column; gap: 4px; } }

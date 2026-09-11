@@ -1,0 +1,30 @@
+.tenant-billing-settings { display: grid; gap: 16px; }
+.tenant-billing-settings .page-heading { margin: 0; }
+.tenant-billing-settings-notice, .tenant-billing-settings-message { margin: 0; padding: 10px 13px; border-radius: 8px; font-size: 12px; }
+.tenant-billing-settings-notice { border: 1px solid #efd69e; color: #876120; background: #fff9e9; }
+.tenant-billing-settings-message { border: 1px solid #cce3f8; color: #2f679e; background: #eff7ff; }
+.tenant-billing-settings-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.tenant-billing-settings-panel { overflow: hidden; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.tenant-billing-settings-panel header { padding: 17px 18px 14px; border-bottom: 1px solid #e9eef4; }
+.tenant-billing-settings-panel h3, .tenant-billing-settings-panel p { margin: 0; }
+.tenant-billing-settings-panel h3 { color: #2b405d; font-size: 15px; }
+.tenant-billing-settings-panel header p { margin-top: 6px; color: #738299; font-size: 12px; line-height: 1.6; }
+.tenant-billing-settings-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; padding: 14px 18px; border-bottom: 1px solid #e9eef4; background: #fbfcfe; }
+.tenant-billing-settings-form label { display: grid; gap: 5px; color: #5f7087; font-size: 11px; font-weight: 800; }
+.tenant-billing-settings-form input, .tenant-billing-settings-form select { min-width: 0; border: 1px solid #d7e0eb; border-radius: 6px; padding: 9px 10px; color: #354c69; background: #fff; font: inherit; font-size: 13px; }
+.tenant-billing-settings-form .primary-button { padding: 9px 13px; white-space: nowrap; }
+.line-item-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(100px, .45fr) minmax(110px, .5fr) auto; }
+.tenant-billing-settings-table-wrap { overflow-x: auto; }
+.tenant-billing-settings-table { width: 100%; min-width: 360px; border-collapse: collapse; }
+.tenant-billing-settings-table th, .tenant-billing-settings-table td { border-bottom: 1px solid #edf1f5; padding: 10px 12px; color: #52647c; font-size: 12px; text-align: left; }
+.tenant-billing-settings-table th { color: #75849a; background: #fbfcfe; font-size: 10px; }
+.tenant-billing-settings-table th:first-child, .tenant-billing-settings-table td:first-child { width: 42px; padding-right: 0; text-align: center; }
+.tenant-billing-settings-table th:last-child, .tenant-billing-settings-table td:last-child { width: 58px; text-align: right; }
+.tenant-billing-settings-table strong { color: #3a506d; }
+.tenant-billing-settings-table span { border-radius: 999px; padding: 3px 7px; color: #356d9f; background: #e8f3ff; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.tenant-billing-settings-table tr:has(.drag-handle:hover) { background: #f8fbff; }
+.drag-handle { border: 0; padding: 3px 6px; color: #8b9bb0; background: transparent; cursor: grab; font-size: 18px; line-height: 1; }
+.drag-handle:active { cursor: grabbing; }
+.tenant-billing-delete { border: 0; padding: 4px; color: #b8545b; background: transparent; font-size: 11px; }
+.tenant-billing-settings-empty { padding: 26px !important; color: #8390a1 !important; text-align: center !important; }
+@media (max-width: 800px) { .tenant-billing-settings-grid, .line-item-form { grid-template-columns: 1fr; }.tenant-billing-settings-form .primary-button { width: 100%; } }
