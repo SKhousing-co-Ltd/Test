@@ -7,10 +7,11 @@
 .billing-statement-page table { width: 100%; min-width: 940px; border-collapse: collapse; table-layout: fixed; }
 .billing-statement-page col.statement-code { width: 72px; }
 .billing-statement-page col.statement-floor { width: 54px; }
-.billing-statement-page col.statement-tenant { width: auto; }
+.billing-statement-page col.statement-tenant { width: 260px; }
 .billing-statement-page col.statement-money { width: 104px; }
 .billing-statement-page col.statement-date { width: 94px; }
 .billing-statement-page th, .billing-statement-page td { padding: 10px 11px; border-bottom: 1px solid #edf1f5; color: #52647c; font-size: 12px; text-align: left; white-space: nowrap; }
+.billing-statement-page td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
 .billing-statement-page thead th { position: sticky; top: 0; z-index: 1; color: #6d7f95; background: #f8fafc; font-size: 10px; }
 .billing-statement-page tbody tr:hover { background: #fbfdff; }
 .billing-statement-page strong { color: #344e6d; }

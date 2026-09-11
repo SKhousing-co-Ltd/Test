@@ -25,6 +25,15 @@ create table if not exists public.asset_billing_period_pattern (
   constraint uq_asset_billing_period_pattern_name unique (asset_id, pattern_name)
 );
 
+create table if not exists public.asset_billing_charge_type_setting (
+  asset_id uuid not null references public.asset_master(asset_id) on delete cascade,
+  billing_charge_type_id uuid not null references public.billing_charge_type(billing_charge_type_id) on delete cascade,
+  is_enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (asset_id, billing_charge_type_id)
+);
+
 create table if not exists public.asset_billing_line_item (
   asset_billing_line_item_id uuid primary key default gen_random_uuid(),
   asset_id uuid not null references public.asset_master(asset_id) on delete cascade,
@@ -63,8 +72,11 @@ on conflict (charge_type_name) do nothing;
 
 alter table public.billing_charge_type enable row level security;
 alter table public.asset_billing_period_pattern enable row level security;
+alter table public.asset_billing_charge_type_setting enable row level security;
 alter table public.asset_billing_line_item enable row level security;
 grant select, insert, update, delete on public.billing_charge_type, public.asset_billing_period_pattern, public.asset_billing_line_item to authenticated;
+grant select, insert, update, delete on public.asset_billing_charge_type_setting to authenticated;
 create policy "active users manage billing charge types" on public.billing_charge_type for all to authenticated using (public.current_account_is_active()) with check (public.current_account_is_active());
 create policy "active users manage asset billing period patterns" on public.asset_billing_period_pattern for all to authenticated using (public.current_account_is_active()) with check (public.current_account_is_active());
+create policy "active users manage asset billing charge type settings" on public.asset_billing_charge_type_setting for all to authenticated using (public.current_account_is_active()) with check (public.current_account_is_active());
 create policy "active users manage asset billing line items" on public.asset_billing_line_item for all to authenticated using (public.current_account_is_active()) with check (public.current_account_is_active());

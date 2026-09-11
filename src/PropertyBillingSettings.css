@@ -11,6 +11,9 @@
 .property-billing-items-heading, .property-period-patterns { padding: 17px; }
 .property-billing-items-heading { border-bottom: 1px solid #e9eef4; }
 .property-billing-items-heading h4, .property-period-patterns h4 { color: #36506f; font-size: 14px; }
+.property-charge-type-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0; }
+.property-charge-type-list label { display: flex; align-items: center; gap: 9px; padding: 14px 17px; border-right: 1px solid #edf1f5; border-bottom: 1px solid #edf1f5; color: #425a76; font-size: 13px; font-weight: 700; }
+.property-charge-type-list input { accent-color: #1766c2; }
 .property-billing-item-form { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(150px, 1.2fr) minmax(120px, .8fr) minmax(105px, .6fr) minmax(180px, 1fr) auto; align-items: end; gap: 10px; padding: 16px 17px; border-bottom: 1px solid #e9eef4; background: #fbfcfe; }
 .property-billing-item-form label, .property-period-patterns label { display: grid; gap: 5px; color: #5f7087; font-size: 11px; font-weight: 800; }
 .property-billing-item-form input, .property-billing-item-form select, .property-period-patterns input, .property-period-patterns select { min-width: 0; border: 1px solid #d7e0eb; border-radius: 6px; padding: 8px 9px; color: #354c69; background: #fff; font: inherit; font-size: 12px; }
