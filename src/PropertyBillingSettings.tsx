@@ -74,6 +74,8 @@ export function PropertyBillingSettings({
   const [endMonth, setEndMonth] = useState(0);
   const [endDay, setEndDay] = useState<Day>("last");
   const [endMeterOffset, setEndMeterOffset] = useState(0);
+  const [editingItemId, setEditingItemId] = useState("");
+  const [editingPatternId, setEditingPatternId] = useState("");
   const [draggingItemId, setDraggingItemId] = useState("");
   const [draggingPatternId, setDraggingPatternId] = useState("");
   const [dropItemId, setDropItemId] = useState("");
@@ -160,7 +162,11 @@ export function PropertyBillingSettings({
           : null,
       sort_order: items.length + 1,
     };
-    if (db && supabase) {
+    if (db && supabase && editingItemId) {
+      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order").single();
+      if (error) { setNotice(`明細項目を更新できませんでした: ${error.message}`); return; }
+      setItems(items.map((item) => item.asset_billing_line_item_id === editingItemId ? data as LineItem : item)); setEditingItemId("");
+    } else if (db && supabase) {
       const { data, error } = await supabase
         .from("asset_billing_line_item")
         .insert({ asset_id: propertyId, ...draft })
@@ -178,7 +184,7 @@ export function PropertyBillingSettings({
     setDisplayName("");
     setRule("manual");
     setPatternId("");
-    setNotice("明細項目を登録しました。");
+    setNotice(editingItemId ? "明細項目を更新しました。" : "明細項目を登録しました。");
   };
   const removeItem = async (item: LineItem) => {
     if (db && supabase) {
@@ -234,7 +240,7 @@ export function PropertyBillingSettings({
       setPatterns([...patterns, data as Pattern]);
     } else { setNotice("データベースに接続できないため、請求期間パターンを登録できません。"); return; }
     setPatternName("");
-    setNotice("請求期間パターンを登録しました。");
+    setNotice(editingPatternId ? "請求期間パターンを更新しました。" : "請求期間パターンを登録しました。");
   };
   const description = (p: Pattern) =>
     `${monthLabel(p.start_month_offset)} ${dayLabel(p.start_day_type, p.start_meter_day_offset)} ～ ${monthLabel(p.end_month_offset)} ${dayLabel(p.end_day_type, p.end_meter_day_offset)}`;
@@ -357,7 +363,7 @@ export function PropertyBillingSettings({
               className="primary-button"
               disabled={!canEdit || !enabledTypes.length}
             >
-              登録
+              {editingItemId ? "更新" : "登録"}
             </button>
           </form>
           <div className="property-billing-settings-table-wrap">
@@ -405,6 +411,7 @@ export function PropertyBillingSettings({
                               )?.pattern_name ?? "請求期間パターン")}
                     </td>
                     <td>
+                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setKind(item.billing_kind); setRule(item.period_rule_type); setPatternId(item.billing_period_pattern_id ?? ""); }}>編集</button>
                       <button
                         className="tenant-billing-delete"
                         disabled={!canEdit}
@@ -461,7 +468,7 @@ export function PropertyBillingSettings({
               setMeterOffset={setEndMeterOffset}
             />
             <button className="primary-button" disabled={!canEdit}>
-              登録
+              {editingPatternId ? "更新" : "登録"}
             </button>
           </form>
           <div className="property-billing-settings-table-wrap">
@@ -482,7 +489,7 @@ export function PropertyBillingSettings({
                       <strong>{p.pattern_name}</strong>
                     </td>
                     <td>{description(p)}</td>
-                    <td><button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={() => void removePattern(p)}>削除</button></td>
+                    <td><button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingPatternId(p.billing_period_pattern_id); setPatternName(p.pattern_name); setStartMonth(p.start_month_offset); setStartDay(p.start_day_type); setStartMeterOffset(p.start_meter_day_offset); setEndMonth(p.end_month_offset); setEndDay(p.end_day_type); setEndMeterOffset(p.end_meter_day_offset); }}>編集</button><button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={() => void removePattern(p)}>削除</button></td>
                   </tr>
                 ))}
                 {!patterns.length && (

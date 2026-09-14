@@ -30,7 +30,7 @@ type BillingCode = {
   flags: ChargeFlag[] | null;
   assignments: BillingAssignment[] | null;
 };
-type Tenant = { tenant_id: string; external_tenant_code: string | null };
+type Tenant = { tenant_id: string; tenant_name: string; external_tenant_code: string | null };
 type Term = {
   effective_from: string;
   effective_to: string | null;
@@ -80,6 +80,7 @@ type AssignmentSource = {
   chargeType: "rent" | "common_charge";
   label: string;
 };
+type VisibleChargeType = { billing_charge_type_id: string; charge_type_name: string };
 
 const currency = new Intl.NumberFormat("ja-JP", {
   style: "currency",
@@ -120,6 +121,8 @@ const currentTerm = (allocation: Allocation, referenceDate: string) =>
     )
     .sort((a, b) => b.effective_from.localeCompare(a.effective_from))[0] ??
   null;
+const flagTypeFor = (name: string): ChargeType | null => ({ '会議室利用料': 'meeting_room', '電気代': 'electricity', '電気増額分': 'electricity_increment', '水道代': 'water', 'ガス代': 'gas', '蛍光灯代': 'fluorescent_light', 'その他': 'other' }[name] as ChargeType | undefined) ?? null;
+const amountFor = (values: Amounts, name: string) => name === '賃料' ? values.rent : name === '共益費' ? values.commonCharge : name === '駐車料' ? values.parking : name === '倉庫料' ? values.storage : 0;
 
 export function BillingCodePage({
   canEdit,
@@ -133,7 +136,10 @@ export function BillingCodePage({
   const [codes, setCodes] = useState<BillingCode[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [assetCode, setAssetCode] = useState("");
+  const [visibleChargeTypes, setVisibleChargeTypes] = useState<VisibleChargeType[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
+  const [editingCode, setEditingCode] = useState<BillingCode | null>(null);
+  const [editingTenantId, setEditingTenantId] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState("");
   const [error, setError] = useState("");
@@ -147,7 +153,7 @@ export function BillingCodePage({
     }
     setLoading(true);
     setError("");
-    const [codeResult, unitResult, assetResult] = await Promise.all([
+    const [codeResult, unitResult, assetResult, settingResult, typeResult] = await Promise.all([
       supabase
         .from("billing_code")
         .select(
@@ -158,7 +164,7 @@ export function BillingCodePage({
       supabase
         .from("unit_master")
         .select(
-          `unit_id, unit_code, unit_name, floor_label, unit_type, allocations:lease_contract_unit(lease_contract_unit_id, lease_start_date, lease_end_date, monthly_rent_amount, monthly_common_charge_amount, terms:lease_contract_unit_term(effective_from, effective_to, monthly_rent_amount, monthly_common_charge_amount), contract:lease_contract(contract_status, contract_start_date, contract_end_date, tenant:tenant_master(tenant_id, external_tenant_code)))`,
+          `unit_id, unit_code, unit_name, floor_label, unit_type, allocations:lease_contract_unit(lease_contract_unit_id, lease_start_date, lease_end_date, monthly_rent_amount, monthly_common_charge_amount, terms:lease_contract_unit_term(effective_from, effective_to, monthly_rent_amount, monthly_common_charge_amount), contract:lease_contract(contract_status, contract_start_date, contract_end_date, tenant:tenant_master(tenant_id, tenant_name, external_tenant_code)))`,
         )
         .eq("property_id", propertyId)
         .eq("is_active", true),
@@ -167,6 +173,8 @@ export function BillingCodePage({
         .select("asset_code")
         .eq("asset_id", propertyId)
         .maybeSingle(),
+      supabase.from('asset_billing_charge_type_setting').select('billing_charge_type_id').eq('asset_id', propertyId).eq('is_enabled', true),
+      supabase.from('billing_charge_type').select('billing_charge_type_id, charge_type_name').eq('is_active', true).order('sort_order'),
     ]);
     if (codeResult.error || unitResult.error)
       setError(
@@ -175,6 +183,9 @@ export function BillingCodePage({
     setCodes((codeResult.data ?? []) as unknown as BillingCode[]);
     setUnits((unitResult.data ?? []) as unknown as Unit[]);
     setAssetCode(String(assetResult.data?.asset_code ?? ""));
+    if (settingResult.error || typeResult.error) setError(`請求種別を読み込めませんでした: ${settingResult.error?.message ?? typeResult.error?.message}`);
+    const enabledIds = new Set((settingResult.data ?? []).map((row) => row.billing_charge_type_id));
+    setVisibleChargeTypes(((typeResult.data ?? []) as VisibleChargeType[]).filter((type) => enabledIds.has(type.billing_charge_type_id)));
     setLoading(false);
   };
   useEffect(() => {
@@ -182,6 +193,8 @@ export function BillingCodePage({
   }, [propertyId, referenceDate]);
   const isDepositCode = (code: BillingCode) =>
     Boolean(assetCode && code.issue_code === `${assetCode}00`);
+  const tenantOptions = useMemo(() => { const map = new Map<string, string>(); for (const unit of units) for (const allocation of unit.allocations ?? []) { const tenant = firstOf(firstOf(allocation.contract)?.tenant); if (tenant?.tenant_id) map.set(tenant.tenant_id, tenant.tenant_name); } return [...map.entries()].sort((left, right) => left[1].localeCompare(right[1], 'ja')); }, [units]);
+  const saveTenant = async () => { if (!supabase || !editingCode) return; const { error: saveError } = await supabase.from('billing_code').update({ tenant_id: editingTenantId || null, match_status: editingTenantId ? 'matched' : 'unmatched' }).eq('billing_code_id', editingCode.billing_code_id); if (saveError) { setError(`テナント紐づけを保存できませんでした: ${saveError.message}`); return; } setEditingCode(null); void load(); };
   const groupKeyOf = (code: BillingCode) =>
     code.recipient_name
       .normalize("NFKC")
@@ -431,22 +444,14 @@ export function BillingCodePage({
                 <th>入居状況</th>
                 <th>テナントコード</th>
                 <th>テナント名</th>
-                <th>賃料</th>
-                <th>共益費</th>
-                <th>駐車料</th>
-                <th>看板料</th>
-                <th>倉庫料</th>
-                <th>駐輪場利用料</th>
-                {flagColumns.map((column) => (
-                  <th key={column.type}>{column.label}</th>
-                ))}
+                {visibleChargeTypes.map((type) => <th key={type.billing_charge_type_id}>{type.charge_type_name}</th>)}
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={17} className="billing-code-empty">
+                  <td colSpan={4 + visibleChargeTypes.length} className="billing-code-empty">
                     読み込み中…
                   </td>
                 </tr>
@@ -471,7 +476,7 @@ export function BillingCodePage({
                           ? "入居中"
                           : "解約済み";
                   return (
-                    <tr key={code.billing_code_id}>
+                    <tr key={code.billing_code_id} onClick={() => { if (!deposit) { setEditingCode(code); setEditingTenantId(code.tenant_id ?? ""); } }}>
                       <td>
                         <span
                           className={`billing-code-status ${status === "入居中" ? "occupied" : "terminated"}`}
@@ -483,33 +488,15 @@ export function BillingCodePage({
                         <strong>{code.issue_code}</strong>
                       </td>
                       <td>{code.recipient_name}</td>
-                      <Amount value={values.rent} />
-                      <Amount value={values.commonCharge} />
-                      <Amount value={values.parking} />
-                      <Amount value={0} />
-                      <Amount value={values.storage} />
-                      <Amount value={0} />
-                      {flagColumns.map((column) => {
-                        const enabled = Boolean(
-                          (code.flags ?? []).find(
-                            (flag) => flag.charge_type === column.type,
-                          )?.is_enabled,
-                        );
-                        return (
-                          <td
-                            className="billing-code-flag-cell"
-                            key={column.type}
-                          >
+                      {visibleChargeTypes.map((type) => { const flagType = flagTypeFor(type.charge_type_name); if (!flagType) return <Amount key={type.billing_charge_type_id} value={amountFor(values, type.charge_type_name)} />; const enabled = Boolean((code.flags ?? []).find((flag) => flag.charge_type === flagType)?.is_enabled); return <td className="billing-code-flag-cell" key={type.billing_charge_type_id}>
                             <button
                               disabled={!canEdit || deposit || !code.is_active}
                               className={enabled ? "enabled" : ""}
-                              onClick={() => void toggleFlag(code, column.type)}
+                              onClick={(event) => { event.stopPropagation(); void toggleFlag(code, flagType); }}
                             >
                               {enabled ? "○" : "–"}
                             </button>
-                          </td>
-                        );
-                      })}
+                          </td>; })}
                       <td className="billing-code-actions">
                         {!deposit && (
                           <button
@@ -518,9 +505,7 @@ export function BillingCodePage({
                             disabled={
                               !canEdit || savingKey === code.billing_code_id
                             }
-                            onClick={() =>
-                              void setCodeActive(code, !code.is_active)
-                            }
+                            onClick={(event) => { event.stopPropagation(); void setCodeActive(code, !code.is_active); }}
                           >
                             {code.is_active ? "解約済みにする" : "有効に戻す"}
                           </button>
@@ -531,14 +516,20 @@ export function BillingCodePage({
                 })}
               {!loading && codes.length === 0 && (
                 <tr>
-                  <td colSpan={17} className="billing-code-empty">
+                  <td colSpan={4 + visibleChargeTypes.length} className="billing-code-empty">
                     この物件のテナントコードは未登録です。
                   </td>
                 </tr>
               )}
             </tbody>
             {!loading && codes.length > 0 && (
-              <tfoot><tr><th colSpan={3}>合計</th><Amount value={codeTotals.rent} /><Amount value={codeTotals.commonCharge} /><Amount value={codeTotals.parking} /><Amount value={0} /><Amount value={codeTotals.storage} /><Amount value={0} />{flagColumns.map((column) => <th key={column.type}>—</th>)}<th /></tr></tfoot>
+              <tfoot>
+                <tr>
+                  <th colSpan={3}>合計</th>
+                  {visibleChargeTypes.map((type) => flagTypeFor(type.charge_type_name) ? <th key={type.billing_charge_type_id}>—</th> : <Amount key={type.billing_charge_type_id} value={amountFor(codeTotals as Amounts, type.charge_type_name)} />)}
+                  <th />
+                </tr>
+              </tfoot>
             )}
           </table>
         </div>
@@ -624,6 +615,7 @@ export function BillingCodePage({
           </div>
         </section>
       )}
+      {editingCode && <div className="billing-code-modal-backdrop" onClick={() => setEditingCode(null)}><section className="billing-code-modal" onClick={(event) => event.stopPropagation()}><header><h3>テナントコードを編集</h3><button type="button" onClick={() => setEditingCode(null)}>×</button></header><p><strong>{editingCode.issue_code}</strong>　{editingCode.recipient_name}</p><label>紐づけるテナント<select value={editingTenantId} onChange={(event) => setEditingTenantId(event.target.value)}><option value="">未紐づけ</option>{tenantOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label><p className="billing-code-modal-note">変動費の請求対象は、上の一覧で有効にした請求種別ごとに○／－で設定します。</p><footer><button type="button" className="secondary-button" onClick={() => setEditingCode(null)}>キャンセル</button><button type="button" className="primary-button" onClick={() => void saveTenant()}>保存</button></footer></section></div>}
     </section>
   );
 }
