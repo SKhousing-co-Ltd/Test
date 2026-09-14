@@ -1,0 +1,2 @@
+-- This migration was already applied to the linked remote database, but its source
+-- was absent from the repository.  The no-op file preserves migration-history parity.

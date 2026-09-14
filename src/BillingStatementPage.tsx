@@ -5,7 +5,10 @@ import './BillingStatementPage.css';
 
 type StatementKind = 'payment' | 'invoice';
 type RentRollSource = { unit_code: string; unit_name: string | null; floor_label: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number; monthly_common_charge_amount: number; monthly_parking_amount: number; other_monthly_amount: number };
-type BillingCode = { tenant_id: string | null; issue_code: string; is_primary: boolean; match_status: string };
+type BillingCode = { billing_code_id: string; tenant_id: string | null; issue_code: string; is_primary: boolean; match_status: string };
+type ContractAllocation = { lease_contract_unit_id: string; billing_code_id: string };
+type ContractUnit = { lease_contract_unit_id: string; lease_contract_id: string };
+type LineItemAllocation = { billing_code_id: string; line_item: { billing_charge_type_id: string } | null; group: { tenant_id: string | null } | null };
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string; sort_order?: number };
 type EnabledChargeType = { billing_charge_type_id: string };
 type StatementRow = { key: string; code: string; floor: string; unitName: string; tenantName: string; rent: number; commonCharge: number; parking: number; other: number };
@@ -25,11 +28,14 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period }:
   useEffect(() => { const load = async () => {
     if (!supabase || !propertyId) { setRows([]); setChargeTypes([]); setLoading(false); return; }
     setLoading(true); setError('');
-    const [rentRollResult, codeResult, settingResult, typeResult] = await Promise.all([
+    const [rentRollResult, codeResult, settingResult, typeResult, allocationResult, unitResult, lineAllocationResult] = await Promise.all([
       supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: referenceDate(period) }),
-      supabase.from('billing_code').select('tenant_id, issue_code, is_primary, match_status').eq('property_id', propertyId).eq('is_active', true),
+      supabase.from('billing_code').select('billing_code_id, tenant_id, issue_code, is_primary, match_status').eq('property_id', propertyId).eq('is_active', true),
       supabase.from('asset_billing_charge_type_setting').select('billing_charge_type_id').eq('asset_id', propertyId).eq('is_enabled', true),
       supabase.from('billing_charge_type').select('billing_charge_type_id, charge_type_name, sort_order').eq('is_active', true).order('sort_order'),
+      supabase.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
+      supabase.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, unit:unit_master!inner(property_id)').eq('unit.property_id', propertyId),
+      supabase.from('billing_code_line_item_allocation').select('billing_code_id, line_item:asset_billing_line_item(billing_charge_type_id), group:billing_code_allocation_group(tenant_id)'),
     ]);
     if (rentRollResult.error || codeResult.error) { setError(`明細を読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`); setRows([]); setLoading(false); return; }
     if (settingResult.error || typeResult.error) { setError(`請求種別設定を読み込めませんでした: ${settingResult.error?.message ?? typeResult.error?.message}`); setChargeTypes([]); setLoading(false); return; }
@@ -37,9 +43,12 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period }:
     const allTypes = (typeResult.data ?? []) as ChargeType[];
     const enabledIds = new Set(configuredItems.map((item) => item.billing_charge_type_id));
     setChargeTypes(allTypes.filter((type) => enabledIds.has(type.billing_charge_type_id)));
-    const primaryCodes = new Map<string, BillingCode>(); for (const code of (codeResult.data ?? []) as BillingCode[]) if (code.tenant_id && code.is_primary && code.match_status === 'matched') primaryCodes.set(code.tenant_id, code);
-    const grouped = new Map<string, StatementRow>();
-    for (const source of (rentRollResult.data ?? []) as RentRollSource[]) { if (!source.lease_contract_id || !source.tenant_id || !source.tenant_name) continue; const existing = grouped.get(source.tenant_id); const row = existing ?? { key: source.tenant_id, code: primaryCodes.get(source.tenant_id)?.issue_code ?? '—', floor: source.floor_label ?? '', unitName: source.unit_name ?? source.unit_code, tenantName: source.tenant_name, rent: 0, commonCharge: 0, parking: 0, other: 0 }; row.rent += Number(source.monthly_rent_amount ?? 0); row.commonCharge += Number(source.monthly_common_charge_amount ?? 0); row.parking += Number(source.monthly_parking_amount ?? 0); row.other += Number(source.other_monthly_amount ?? 0); if (!existing || floorOrder(source.floor_label ?? '') < floorOrder(row.floor)) { row.floor = source.floor_label ?? ''; row.unitName = source.unit_name ?? source.unit_code; } grouped.set(source.tenant_id, row); }
+    const billingCodes = (codeResult.data ?? []) as BillingCode[]; const primaryCodes = new Map<string, BillingCode>(); const codeById = new Map(billingCodes.map((code) => [code.billing_code_id, code])); for (const code of billingCodes) if (code.tenant_id && code.is_primary && code.match_status === 'matched') primaryCodes.set(code.tenant_id, code);
+    const contractByUnit = new Map(((unitResult.data ?? []) as unknown as ContractUnit[]).map((unit) => [unit.lease_contract_unit_id, unit.lease_contract_id])); const allocatedCodeByContract = new Map<string, BillingCode>(); for (const allocation of (allocationResult.data ?? []) as ContractAllocation[]) { const contractId = contractByUnit.get(allocation.lease_contract_unit_id); const code = codeById.get(allocation.billing_code_id); if (contractId && code) allocatedCodeByContract.set(contractId, code); }
+    const allocatedCodeByTenantChargeType = new Map<string, BillingCode>(); for (const allocation of (lineAllocationResult.data ?? []) as unknown as LineItemAllocation[]) { const code = codeById.get(allocation.billing_code_id); const name = allTypes.find((type) => type.billing_charge_type_id === allocation.line_item?.billing_charge_type_id)?.charge_type_name; if (code && name && allocation.group?.tenant_id) allocatedCodeByTenantChargeType.set(`${allocation.group.tenant_id}:${name}`, code); }
+    const grouped = new Map<string, StatementRow>(); const tenantInfo = new Map<string, Omit<StatementRow, 'key' | 'code' | 'rent' | 'commonCharge' | 'parking' | 'other'>>();
+    for (const source of (rentRollResult.data ?? []) as RentRollSource[]) { if (!source.lease_contract_id || !source.tenant_id || !source.tenant_name) continue; if (!tenantInfo.has(source.tenant_id)) tenantInfo.set(source.tenant_id, { floor: source.floor_label ?? '', unitName: source.unit_name ?? source.unit_code, tenantName: source.tenant_name }); const fallback = allocatedCodeByContract.get(source.lease_contract_id) ?? primaryCodes.get(source.tenant_id); for (const [name, value, field] of [['賃料', Number(source.monthly_rent_amount ?? 0), 'rent'], ['共益費', Number(source.monthly_common_charge_amount ?? 0), 'commonCharge'], ['駐車料', Number(source.monthly_parking_amount ?? 0), 'parking'], ['その他', Number(source.other_monthly_amount ?? 0), 'other']] as const) { if (!value) continue; const target = allocatedCodeByTenantChargeType.get(`${source.tenant_id}:${name}`) ?? fallback; const key = `${source.tenant_id}:${target?.billing_code_id ?? 'unassigned'}`; const row = grouped.get(key) ?? { key, code: target?.issue_code ?? '—', floor: source.floor_label ?? '', unitName: source.unit_name ?? source.unit_code, tenantName: source.tenant_name, rent: 0, commonCharge: 0, parking: 0, other: 0 }; row[field] += value; grouped.set(key, row); } }
+    for (const code of billingCodes) { if (!code.tenant_id || code.match_status !== 'matched') continue; const info = tenantInfo.get(code.tenant_id); if (!info) continue; const key = `${code.tenant_id}:${code.billing_code_id}`; if (!grouped.has(key)) grouped.set(key, { key, code: code.issue_code, ...info, rent: 0, commonCharge: 0, parking: 0, other: 0 }); }
     setRows([...grouped.values()].sort((left, right) => floorOrder(left.floor) - floorOrder(right.floor) || collator.compare(left.floor, right.floor) || collator.compare(left.unitName, right.unitName))); setLoading(false);
   }; void load(); }, [propertyId, period.fiscalYear, period.month]);
   const title = kind === 'payment' ? '入金明細表' : '請求明細表';
