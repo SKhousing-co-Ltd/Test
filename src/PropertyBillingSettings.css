@@ -30,13 +30,14 @@
 .property-billing-settings strong { color: #38506d; }
 .property-billing-settings td > span { border-radius: 999px; padding: 3px 7px; color: #356d9f; background: #e8f3ff; font-size: 10px; font-weight: 800; }
 .property-period-patterns { min-height: 320px; background: #fbfcfe; }
-.property-period-patterns form { display: grid; grid-template-columns: minmax(250px, 1fr) auto auto auto; align-items: end; gap: 10px; margin-top: 12px; }
+.property-period-patterns form { display: grid; grid-template-columns: minmax(420px, 1fr) 285px 285px auto; align-items: end; gap: 10px; margin-top: 12px; }
 .property-period-patterns .period-field-label { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .property-period-patterns .period-field-label > span { color: #5f7087; }
 .property-period-pattern-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
 .property-period-pattern-list span { display: grid; gap: 2px; padding: 7px 9px; border: 1px solid #dce6f1; border-radius: 6px; color: #687990; background: #fff; font-size: 10px; }
 .property-period-pattern-list strong { color: #365270; font-size: 11px; }
-.period-field { display: flex; gap: 5px; }
+.period-field { display: grid; grid-template-columns: 76px 76px 76px; gap: 5px; min-width: 238px; }
+.period-field select { width: 76px; }
 .period-field-label { display: grid; gap: 5px; }
 .property-period-patterns .property-billing-settings-table-wrap { margin-top: 18px; }
 .allocation-layout { display: grid; grid-template-columns: minmax(230px, .8fr) minmax(420px, 1.4fr); gap: 22px; padding: 17px; }
