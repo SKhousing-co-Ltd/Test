@@ -350,7 +350,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const loadReferenceData = async () => {
     if (!supabase) return;
     const [propertyResult, facilityResult, typeResult] = await Promise.all([
-      supabase.from('asset_master').select('asset_id, asset_name, short_name').eq('is_parking_ledger_visible', true).order('asset_name'),
+      supabase.from('asset_master').select('asset_id, asset_name, short_name').eq('is_parking_ledger_visible', true).order('asset_code'),
       supabase.from('parking_facility_master').select('parking_facility_id, property_id, facility_code, facility_name, parking_type_id').eq('is_active', true).order('facility_name'),
       supabase.from('parking_type_master').select('parking_type_id, parking_type_name').order('parking_type_id'),
     ]);
