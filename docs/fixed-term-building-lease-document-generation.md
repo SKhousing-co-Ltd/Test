@@ -27,6 +27,6 @@ $python = 'C:\Users\本庄幸人\.cache\codex-runtimes\codex-primary-runtime\dep
 npx.cmd supabase@latest --experimental storage cp $template 'ss:///contract-documents/templates/fixed_term_building_lease/fixed_term_building_lease_document_generation_v1.docx' --linked --content-type application/vnd.openxmlformats-officedocument.wordprocessingml.document
 ```
 
-Storageへの配置後に `20260907130000_publish_fixed_term_building_lease_document_generation.sql` を適用する。既存の契約書・出力履歴は更新しない。新規の定期建物賃貸借契約書だけがこのリビジョンを使用する。
+Storageへの配置後に `20260915020000_publish_fixed_term_building_lease_document_generation.sql` を適用する。既存の契約書・出力履歴は更新しない。新規の定期建物賃貸借契約書だけがこのリビジョンを使用する。
 
 画面では対象区画の選択が必須であり、そのスナップショットを `{{planImage}}` に差し込む。契約要項の入力項目はテナント、保証人、物件・区画、面積、使用目的、契約開始・終了日、契約年数、賃料・敷金・特約・仲介業者である。
