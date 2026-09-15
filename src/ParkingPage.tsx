@@ -350,7 +350,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const loadReferenceData = async () => {
     if (!supabase) return;
     const [propertyResult, facilityResult, typeResult] = await Promise.all([
-      supabase.from('asset_master').select('asset_id, asset_name, short_name').order('asset_name'),
+      supabase.from('asset_master').select('asset_id, asset_name, short_name').eq('is_parking_ledger_visible', true).order('asset_code'),
       supabase.from('parking_facility_master').select('parking_facility_id, property_id, facility_code, facility_name, parking_type_id').eq('is_active', true).order('facility_name'),
       supabase.from('parking_type_master').select('parking_type_id, parking_type_name').order('parking_type_id'),
     ]);
@@ -361,6 +361,10 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
     setFacilities((facilityResult.data ?? []) as ParkingFacility[]);
     setParkingTypes((typeResult.data ?? []) as ParkingType[]);
     setPropertyId((current) => current || propertyRows[0]?.asset_id || '');
+    if (!propertyRows.length) {
+      setRows([]);
+      setLoading(false);
+    }
   };
 
   const loadParkingRows = async (nextPropertyId: string, nextAsOfDate: string) => {
@@ -385,14 +389,14 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   useEffect(() => { void loadParkingRows(propertyId, asOfDate); }, [asOfDate, propertyId]);
 
   useEffect(() => {
-    if (!supabase || !targetContractUnitId) return;
+    if (!supabase || !targetContractUnitId || !properties.length) return;
     void supabase.from('lease_contract_unit').select('unit:unit_master(property_id)').eq('lease_contract_unit_id', targetContractUnitId).maybeSingle()
       .then(({ data }) => {
         const unit = (data as { unit?: { property_id?: string } | { property_id?: string }[] } | null)?.unit;
         const property = Array.isArray(unit) ? unit[0]?.property_id : unit?.property_id;
-        if (property) setPropertyId(property);
+        if (property && properties.some((option) => option.asset_id === property)) setPropertyId(property);
       });
-  }, [targetContractUnitId]);
+  }, [properties, targetContractUnitId]);
 
   useEffect(() => {
     if (!targetContractUnitId) return;
