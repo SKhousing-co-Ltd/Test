@@ -525,7 +525,6 @@ export function BillingCodePage({
               <tr>
                 <th>入居状況</th>
                 <th>テナントコード</th>
-                <th>テナント名</th>
                 <th>請求書表示名</th>
                 <th>請求書表示件名</th>
                 <th>操作</th>
@@ -535,7 +534,7 @@ export function BillingCodePage({
               {loading && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={5}
                     className="billing-code-empty"
                   >
                     読み込み中…
@@ -583,8 +582,7 @@ export function BillingCodePage({
                       <td>
                         <strong>{code.issue_code}</strong>
                       </td>
-                      <td>{code.recipient_name}</td>
-                      <td>{code.invoice_display_name ?? "—"}</td>
+                      <td>{code.invoice_display_name || code.recipient_name}</td>
                       <td>{code.invoice_subject ?? "—"}</td>
                       <td className="billing-code-actions">
                         {!deposit && (
@@ -609,7 +607,7 @@ export function BillingCodePage({
               {!loading && codes.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={5}
                     className="billing-code-empty"
                   >
                     この物件のテナントコードは未登録です。

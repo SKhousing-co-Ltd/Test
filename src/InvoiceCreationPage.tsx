@@ -20,7 +20,21 @@ const fixedItems: Array<{ name: string; field: keyof Pick<RentRollSource, 'month
   { name: '賃料', field: 'monthly_rent_amount' }, { name: '共益費', field: 'monthly_common_charge_amount' }, { name: '駐車料', field: 'monthly_parking_amount' }, { name: 'その他', field: 'other_monthly_amount' },
 ];
 const emptyValues = () => Array.from({ length: csvHeaders.length }, () => '');
-const lastDay = (year: number, month: number) => new Date(year, month, 0).getDate();
+const numberValue = (value: string) => Number(value.split(',').join('') || 0);
+const patternMark = (number: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(number - 1) || String(number);
+const duePatternLabel = (pattern: DuePattern) => `${patternMark(pattern.pattern_number)} ${pattern.month_offset ? '翌月' : '当月'}${pattern.day_of_month === 0 ? '末日' : `${pattern.day_of_month}日`}（休日は${pattern.holiday_adjustment === 'previous' ? '前日' : '翌日'}）`;
+
+function dueDate(year: number, month: number, pattern: DuePattern | undefined): string {
+  if (!pattern) return '';
+  const targetMonth = month - 1 + pattern.month_offset;
+  const targetYear = year + Math.floor(targetMonth / 12);
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12;
+  const end = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+  const date = new Date(targetYear, normalizedMonth, pattern.day_of_month === 0 ? end : Math.min(pattern.day_of_month, end));
+  const step = pattern.holiday_adjustment === 'previous' ? -1 : 1;
+  while (date.getDay() === 0 || date.getDay() === 6) date.setDate(date.getDate() + step);
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+}
 
 export function InvoiceCreationPage({ propertyId, propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [rows, setRows] = useState<InvoiceRow[]>([]);
@@ -29,7 +43,9 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const [showInvoiceNote, setShowInvoiceNote] = useState(false);
   const [invoiceNote, setInvoiceNote] = useState('');
   const [duePatterns, setDuePatterns] = useState<DuePattern[]>([]);
-  const [duePatternId, setDuePatternId] = useState('');
+  const [duePatternByInvoice, setDuePatternByInvoice] = useState<Record<string, string>>({});
+  const [lineItem1Filter, setLineItem1Filter] = useState('all');
+  const [lineItem2Filter, setLineItem2Filter] = useState('all');
   const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
 
   useEffect(() => {
@@ -50,7 +66,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       if (cancelled) return;
       if (rentRollResult.error || codeResult.error) { setError(`請求データを読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`); setRows([]); setLoading(false); return; }
       const codes = (codeResult.data ?? []) as BillingCode[]; const codeById = new Map(codes.map((code) => [code.billing_code_id, code])); const primaryCodeByTenant = new Map<string, BillingCode>(); for (const code of codes) if (code.tenant_id && code.is_primary) primaryCodeByTenant.set(code.tenant_id, code);
-      const nextDuePatterns = (dueResult.data ?? []) as DuePattern[]; setDuePatterns(nextDuePatterns); setDuePatternId((current) => nextDuePatterns.some((pattern) => pattern.billing_due_date_pattern_id === current) ? current : (nextDuePatterns[0]?.billing_due_date_pattern_id ?? ''));
+      const nextDuePatterns = (dueResult.data ?? []) as DuePattern[]; setDuePatterns(nextDuePatterns);
       const contractByUnit = new Map(((unitResult.data ?? []) as unknown as ContractUnit[]).map((unit) => [unit.lease_contract_unit_id, unit.lease_contract_id])); const codeByContract = new Map<string, BillingCode>(); for (const allocation of (allocationResult.data ?? []) as ContractAllocation[]) { const contractId = contractByUnit.get(allocation.lease_contract_unit_id); const code = codeById.get(allocation.billing_code_id); if (contractId && code) codeByContract.set(contractId, code); }
       const typeNameById = new Map(((typeResult.data ?? []) as ChargeType[]).map((type) => [type.billing_charge_type_id, type.charge_type_name])); const codeByTenantItem = new Map<string, BillingCode>(); for (const allocation of (lineAllocationResult.data ?? []) as unknown as LineItemAllocation[]) { const code = codeById.get(allocation.billing_code_id); const name = typeNameById.get(allocation.line_item?.billing_charge_type_id ?? ''); if (code && name && allocation.group?.tenant_id) codeByTenantItem.set(`${allocation.group.tenant_id}:${name}`, code); }
       const invoices = new Map<string, { code: string; tenantName: string; displayName: string | null; subject: string | null; unitNames: Set<string>; lines: Map<string, number> }>();
@@ -66,23 +82,39 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       const next: InvoiceRow[] = [];
       for (const [invoiceKey, invoice] of invoices) {
         const total = [...invoice.lines.values()].reduce((sum, value) => sum + value, 0); const tax = Math.floor(total * 0.1);
-        [...invoice.lines.entries()].forEach(([name, amount], index) => { const values = emptyValues(); if (index === 0) { values[1] = invoice.code; values[2] = invoice.displayName || invoice.tenantName; values[3] = invoice.subject || `${propertyName}${[...invoice.unitNames].join('・')} 御請求書`; values[4] = `${calendarYear}/${period.month}/${lastDay(calendarYear, period.month)}`; values[5] = yen.format(total); values[6] = yen.format(tax); values[7] = yen.format(total + tax); }
+        [...invoice.lines.entries()].forEach(([name, amount], index) => { const values = emptyValues(); if (index === 0) { values[1] = invoice.code; values[2] = invoice.displayName || invoice.tenantName; values[3] = invoice.subject || `${propertyName}${[...invoice.unitNames].join('・')} 御請求書`; values[4] = dueDate(calendarYear, period.month, nextDuePatterns[0]); values[5] = yen.format(total); values[6] = yen.format(tax); values[7] = yen.format(total + tax); }
           values[10] = '未設定'; values[11] = name; values[12] = '1'; values[13] = '式'; values[14] = yen.format(amount); values[15] = yen.format(amount); values[18] = '課税'; values[19] = '10%（仮）'; next.push({ id: `${invoiceKey}:${index}:${name}`, invoiceKey, values }); });
       }
-      setRows(next); setLoading(false);
+      setRows(next);
+      setDuePatternByInvoice(Object.fromEntries([...invoices.keys()].map((invoiceKey) => [invoiceKey, nextDuePatterns[0]?.billing_due_date_pattern_id ?? ''])));
+      setLineItem1Filter('all'); setLineItem2Filter('all'); setLoading(false);
     };
     void load(); return () => { cancelled = true; };
   }, [propertyId, propertyName, period.fiscalYear, period.month, calendarYear]);
 
-  const fixedTotal = useMemo(() => rows.reduce((sum, row) => sum + Number(row.values[15].split(',').join('') || 0), 0), [rows]);
+  const lineItem1Options = useMemo(() => [...new Set(rows.map((row) => row.values[10]).filter(Boolean))].sort(), [rows]);
+  const lineItem2Options = useMemo(() => [...new Set(rows.map((row) => row.values[11]).filter(Boolean))].sort(), [rows]);
+  const filteredRows = useMemo(() => rows.filter((row) => (lineItem1Filter === 'all' || row.values[10] === lineItem1Filter) && (lineItem2Filter === 'all' || row.values[11] === lineItem2Filter)), [lineItem1Filter, lineItem2Filter, rows]);
+  const invoiceSummaryByKey = useMemo(() => { const result = new Map<string, InvoiceRow>(); for (const row of rows) if (!result.has(row.invoiceKey)) result.set(row.invoiceKey, row); return result; }, [rows]);
+  const firstVisibleRowIds = useMemo(() => { const result = new Set<string>(); const seen = new Set<string>(); for (const row of filteredRows) if (!seen.has(row.invoiceKey)) { seen.add(row.invoiceKey); result.add(row.id); } return result; }, [filteredRows]);
+  const visibleInvoiceKeys = useMemo(() => [...new Set(filteredRows.map((row) => row.invoiceKey))], [filteredRows]);
+  const totals = useMemo(() => ({
+    5: visibleInvoiceKeys.reduce((sum, key) => sum + numberValue(invoiceSummaryByKey.get(key)?.values[5] ?? ''), 0),
+    6: visibleInvoiceKeys.reduce((sum, key) => sum + numberValue(invoiceSummaryByKey.get(key)?.values[6] ?? ''), 0),
+    7: visibleInvoiceKeys.reduce((sum, key) => sum + numberValue(invoiceSummaryByKey.get(key)?.values[7] ?? ''), 0),
+    12: filteredRows.reduce((sum, row) => sum + numberValue(row.values[12]), 0),
+    15: filteredRows.reduce((sum, row) => sum + numberValue(row.values[15]), 0),
+  }), [filteredRows, invoiceSummaryByKey, visibleInvoiceKeys]);
   const updateCell = (rowId: string, column: number, value: string) => setRows((current) => current.map((row) => row.id === rowId ? { ...row, values: row.values.map((cell, index) => index === column ? value : cell) } : row));
+  const updateInvoiceCell = (invoiceKey: string, column: number, value: string) => setRows((current) => { let updated = false; return current.map((row) => { if (updated || row.invoiceKey !== invoiceKey) return row; updated = true; return { ...row, values: row.values.map((cell, index) => index === column ? value : cell) }; }); });
+  const selectDuePattern = (invoiceKey: string, patternId: string) => { setDuePatternByInvoice((current) => ({ ...current, [invoiceKey]: patternId })); updateInvoiceCell(invoiceKey, 4, dueDate(calendarYear, period.month, duePatterns.find((pattern) => pattern.billing_due_date_pattern_id === patternId))); };
   const updateInvoiceNote = (value: string) => { setInvoiceNote(value); setRows((current) => { const written = new Set<string>(); return current.map((row) => { if (written.has(row.invoiceKey)) return row; written.add(row.invoiceKey); return { ...row, values: row.values.map((cell, index) => index === 9 ? value : cell) }; }); }); };
   const setInvoiceNoteEnabled = (enabled: boolean) => { setShowInvoiceNote(enabled); if (!enabled) updateInvoiceNote(''); };
+  const invoiceLevelColumns = new Set([1, 2, 4, 5, 6, 7]);
+  const totalColumns = new Set([5, 6, 7, 12, 15]);
 
-  return <section className="invoice-creation-page"><header className="invoice-creation-heading"><div><p className="section-kicker">INVOICE CSV</p><h3>請求書作成</h3><p>{propertyName}・{calendarYear}年{period.month}月分</p></div><button className="primary-button" disabled>CSVを出力</button></header>
-    <p className="invoice-creation-notice">画面では不要な列を非表示にしています。CSV出力時は請求書番号を自動採番し、モデルCSVの列順で出力します。複数テナントコードの設定は、明細項目・契約の割り振り順に反映します。</p>{error && <p className="invoice-creation-notice invoice-creation-error">{error}</p>}
-    <div className="invoice-note-control"><label>入金期日パターン<select value={duePatternId} onChange={(event) => setDuePatternId(event.target.value)}><option value="">未選択</option>{duePatterns.map((pattern) => <option key={pattern.billing_due_date_pattern_id} value={pattern.billing_due_date_pattern_id}>{'①②③④⑤⑥⑦⑧⑨⑩'.charAt(pattern.pattern_number - 1) || pattern.pattern_number}</option>)}</select></label><label><input type="checkbox" checked={showInvoiceNote} onChange={(event) => setInvoiceNoteEnabled(event.target.checked)} />請求書備考を表示する</label><input value={invoiceNote} disabled={!showInvoiceNote} onChange={(event) => updateInvoiceNote(event.target.value)} placeholder="請求書に表示する共通備考を入力" /></div>
-    <div className="invoice-creation-summary"><span>請求書数 <strong>{new Set(rows.map((row) => row.invoiceKey)).size}件</strong></span><span>明細行数 <strong>{rows.length}行</strong></span><span>固定費合計（税抜） <strong>{yen.format(fixedTotal)}円</strong></span><span>出力形式 <strong>CSV 21列</strong></span></div>
-    <div className="invoice-creation-table-wrap invoice-csv-table-wrap"><table className="invoice-csv-table"><thead><tr>{visibleColumns.map((column) => <th key={csvHeaders[column]}>{csvHeaders[column]}</th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">レントロールを読み込み中…</td></tr> : !rows.length ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">表示できる固定費の契約データがありません。</td></tr> : rows.map((row) => <tr key={row.id}>{visibleColumns.map((column) => <td key={`${row.id}-${column}`}><input aria-label={`${csvHeaders[column]} ${row.id}`} value={row.values[column]} onChange={(event) => updateCell(row.id, column, event.target.value)} /></td>)}</tr>)}</tbody></table></div>
+  return <section className="invoice-creation-page"><header className="invoice-creation-heading"><div><p className="section-kicker">INVOICE CSV</p><h3>請求書作成</h3><p>{propertyName}・{calendarYear}年{period.month}月分</p></div><div className="invoice-creation-actions"><label><input type="checkbox" checked={showInvoiceNote} onChange={(event) => setInvoiceNoteEnabled(event.target.checked)} />請求書備考を表示</label><input value={invoiceNote} disabled={!showInvoiceNote} onChange={(event) => updateInvoiceNote(event.target.value)} placeholder="全請求書共通の備考" /><button className="primary-button" disabled>CSVを出力</button></div></header>
+    {error && <p className="invoice-creation-notice invoice-creation-error">{error}</p>}
+    <div className="invoice-creation-table-wrap invoice-csv-table-wrap"><table className="invoice-csv-table"><thead><tr className="invoice-total-row">{visibleColumns.map((column) => <th key={`total-${csvHeaders[column]}`}>{totalColumns.has(column) ? <><span>表示中合計</span><strong>{yen.format(totals[column as keyof typeof totals])}</strong></> : null}</th>)}</tr><tr>{visibleColumns.map((column) => <th key={csvHeaders[column]}>{column === 10 || column === 11 ? <label>{csvHeaders[column]}<select value={column === 10 ? lineItem1Filter : lineItem2Filter} onChange={(event) => column === 10 ? setLineItem1Filter(event.target.value) : setLineItem2Filter(event.target.value)}><option value="all">すべて</option>{(column === 10 ? lineItem1Options : lineItem2Options).map((option) => <option key={option} value={option}>{option}</option>)}</select></label> : csvHeaders[column]}</th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">レントロールを読み込み中…</td></tr> : !filteredRows.length ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">条件に一致する固定費の契約データがありません。</td></tr> : filteredRows.map((row) => { const firstVisible = firstVisibleRowIds.has(row.id); const summary = invoiceSummaryByKey.get(row.invoiceKey) ?? row; return <tr key={row.id}>{visibleColumns.map((column) => <td key={`${row.id}-${column}`}>{column === 4 && firstVisible ? <select className="invoice-due-pattern" aria-label={`入金期日パターン ${row.invoiceKey}`} value={duePatternByInvoice[row.invoiceKey] ?? ''} onChange={(event) => selectDuePattern(row.invoiceKey, event.target.value)}><option value="">未選択</option>{duePatterns.map((pattern) => <option key={pattern.billing_due_date_pattern_id} value={pattern.billing_due_date_pattern_id}>{duePatternLabel(pattern)}</option>)}</select> : invoiceLevelColumns.has(column) && !firstVisible ? null : <input aria-label={`${csvHeaders[column]} ${row.id}`} value={(invoiceLevelColumns.has(column) ? summary : row).values[column]} onChange={(event) => invoiceLevelColumns.has(column) ? updateInvoiceCell(row.invoiceKey, column, event.target.value) : updateCell(row.id, column, event.target.value)} />}</td>)}</tr>; })}</tbody></table></div>
   </section>;
 }

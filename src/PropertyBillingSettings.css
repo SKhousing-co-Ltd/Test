@@ -31,6 +31,8 @@
 .property-billing-settings td > span { border-radius: 999px; padding: 3px 7px; color: #356d9f; background: #e8f3ff; font-size: 10px; font-weight: 800; }
 .property-period-patterns { min-height: 320px; background: #fbfcfe; }
 .property-period-patterns form { display: grid; grid-template-columns: minmax(420px, 1fr) 285px 285px auto; align-items: end; gap: 10px; margin-top: 12px; }
+.property-period-patterns .due-pattern-form { grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(150px, 1fr) auto; }
+.due-pattern-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .property-period-patterns .period-field-label { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
 .property-period-patterns .period-field-label > span { color: #5f7087; }
 .property-period-pattern-list { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
