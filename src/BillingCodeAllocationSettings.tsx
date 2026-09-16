@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
+import { Dialog } from "./components/Dialog";
 
 type Code = {
   billing_code_id: string;
@@ -43,6 +44,7 @@ export function BillingCodeAllocationSettings({
   const [loading, setLoading] = useState(true);
   const [savedGroups, setSavedGroups] = useState<SavedGroup[]>([]);
   const [editingGroupId, setEditingGroupId] = useState('');
+  const [editorOpen, setEditorOpen] = useState(false);
   useEffect(() => {
     const load = async () => {
       if (!supabase || !propertyId) {
@@ -173,89 +175,71 @@ export function BillingCodeAllocationSettings({
       }
     }
     setNotice(editingGroupId ? "複数テナントコードの設定を更新しました。" : "複数テナントコードの設定を保存しました。");
-    setSavedGroups((current) => [...current.filter((item) => item.billing_code_allocation_group_id !== editingGroupId), { billing_code_allocation_group_id: group.billing_code_allocation_group_id, tenant_id: tenantId, allocation_mode: mode, tenant: tenantCodes[0]?.tenant ?? null, members: tenantCodes.map((code) => ({ code: { issue_code: code.issue_code } })) }]); setEditingGroupId('');
+    setSavedGroups((current) => [...current.filter((item) => item.billing_code_allocation_group_id !== editingGroupId), { billing_code_allocation_group_id: group.billing_code_allocation_group_id, tenant_id: tenantId, allocation_mode: mode, tenant: tenantCodes[0]?.tenant ?? null, members: tenantCodes.map((code) => ({ code: { issue_code: code.issue_code } })) }]); setEditingGroupId(''); setEditorOpen(false);
   };
   const deleteGroup = async (id: string) => { if (!supabase) return; const { error } = await supabase.from('billing_code_allocation_group').delete().eq('billing_code_allocation_group_id', id); if (error) { setNotice(`設定を削除できませんでした: ${error.message}`); return; } setSavedGroups((current) => current.filter((group) => group.billing_code_allocation_group_id !== id)); if (editingGroupId === id) setEditingGroupId(''); };
+  const multiCodeTenants = useMemo(() => [...codeGroups.entries()].filter(([, group]) => group.length > 1), [codes]);
+  const savedGroupFor = (id: string) => savedGroups.find((group) => group.tenant_id === id);
+  const editingGroup = multiCodeTenants.find(([id]) => id === tenantId);
+  // 保存済みの設定を開くときは、登録済みの割り当てを読み込んで初期表示します。
+  const loadAssignments = async (groupId: string, allocationMode: "contract" | "line_item") => {
+    if (!supabase) return;
+    const result = allocationMode === "contract"
+      ? await supabase.from("billing_code_contract_allocation").select("lease_contract_unit_id, billing_code_id").eq("billing_code_allocation_group_id", groupId)
+      : await supabase.from("billing_code_line_item_allocation").select("asset_billing_line_item_id, billing_code_id").eq("billing_code_allocation_group_id", groupId);
+    if (result.error) { setNotice(`保存済みの割り当てを読み込めませんでした: ${result.error.message}`); return; }
+    const rows = (result.data ?? []) as Array<Record<string, string | null>>;
+    setAssignments(Object.fromEntries(rows.map((row) => [row[allocationMode === "contract" ? "lease_contract_unit_id" : "asset_billing_line_item_id"] ?? "", row.billing_code_id ?? ""]).filter(([target]) => target)));
+  };
+  const openEditor = (id: string) => {
+    const saved = savedGroupFor(id);
+    setTenantId(id); setMode(saved?.allocation_mode ?? "contract"); setEditingGroupId(saved?.billing_code_allocation_group_id ?? ""); setAssignments({}); setNotice(""); setEditorOpen(true);
+    if (saved) void loadAssignments(saved.billing_code_allocation_group_id, saved.allocation_mode);
+  };
+  const closeEditor = () => { setEditorOpen(false); setEditingGroupId(""); setTenantId(""); };
+  const tenantLabel = (group: Code[]) => firstOf(group[0].tenant)?.tenant_name ?? group[0].recipient_name;
+
   return (
     <section className="property-billing-items">
       <div className="property-billing-items-heading">
         <h4>複数テナントコード</h4>
-        <p>
-          同一テナントに紐づく複数コードを選び、契約または請求する明細項目だけを請求先コードへ割り振ります。
-        </p>
+        <p>複数のコードが紐づいたテナントを一覧表示します。行を選ぶと、契約または明細項目ごとの割り当てを編集できます。</p>
       </div>
       {notice && <p className="property-billing-settings-notice">{notice}</p>}
-      {savedGroups.length > 0 && <div className="property-billing-settings-table-wrap"><table><thead><tr><th>テナント名</th><th>テナントコード</th><th>請求の分け方</th><th /></tr></thead><tbody>{savedGroups.map((group) => <tr key={group.billing_code_allocation_group_id}><td><strong>{firstOf(group.tenant)?.tenant_name ?? '—'}</strong></td><td>{(group.members ?? []).map((member) => member.code?.issue_code).filter(Boolean).join(' / ')}</td><td>{group.allocation_mode === 'contract' ? '契約から分ける' : '明細項目ごとに分ける'}</td><td><button type="button" className="text-button" onClick={() => { setEditingGroupId(group.billing_code_allocation_group_id); setTenantId(group.tenant_id ?? ''); setMode(group.allocation_mode); }}>編集</button><button type="button" className="tenant-billing-delete" onClick={() => void deleteGroup(group.billing_code_allocation_group_id)}>削除</button></td></tr>)}</tbody></table></div>}
-      <div className="allocation-layout">
-        <div>
-          <h5>1. テナントを選択</h5>
-          {loading ? (
-            <p>読み込み中…</p>
-          ) : (
-            <><select value={tenantId} onChange={(event) => setTenantId(event.target.value)}><option value="">選択してください</option>{[...codeGroups.entries()].filter(([, group]) => group.length > 1).map(([id, group]) => { const configured = savedGroups.some((saved) => saved.tenant_id === id && saved.billing_code_allocation_group_id !== editingGroupId); return <option key={id} value={id} disabled={configured}>{firstOf(group[0].tenant)?.tenant_name ?? group[0].recipient_name}（{group.map((code) => code.issue_code).join(' / ')}）{configured ? '・設定済み' : ''}</option>; })}</select>{tenantCodes.map((code) => <p className="allocation-code" key={code.billing_code_id}><strong>{code.issue_code}</strong><span>{code.recipient_name}</span></p>)}</>
-          )}
-        </div>
-        <div>
-          <h5>2. 請求の分け方</h5>
-          <label>
-            <input
-              type="radio"
-              checked={mode === "contract"}
-              onChange={() => setMode("contract")}
-            />{" "}
-            契約から分ける
-          </label>
-          <label>
-            <input
-              type="radio"
-              checked={mode === "line_item"}
-              onChange={() => setMode("line_item")}
-            />{" "}
-            明細項目ごとに分ける
-          </label>
-          <h5>3. 割り当て</h5>
-          {selected.length < 2 ? (
-            <p>複数のテナントコードを持つテナントを選択してください。</p>
-          ) : !sameTenant ? (
-            <p>同一テナントに紐づくコードだけを選択してください。</p>
-          ) : (
-            <div className="allocation-targets">
-              {targets.map((target) => (
-                <label key={target.id}>
-                  {target.label}
-                  <select
-                    value={assignments[target.id] ?? ""}
-                    onChange={(e) =>
-                      setAssignments({
-                        ...assignments,
-                        [target.id]: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="">選択してください</option>
-                    {tenantCodes.map((code) => (
-                      <option
-                        key={code.billing_code_id}
-                        value={code.billing_code_id}
-                      >
-                        {code.issue_code}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-              {!targets.length && <p>{mode === "contract" ? "選択したテナントに有効な契約がありません。" : "請求対象の明細項目が未登録です。"}</p>}
-            </div>
-          )}
-          <button
-            className="primary-button"
-            disabled={!canEdit || selected.length < 2 || !sameTenant}
-            onClick={() => void save()}
-          >
-            {editingGroupId ? '設定を更新' : '設定を保存'}
-          </button>
-        </div>
+      <div className="property-billing-settings-table-wrap">
+        <table>
+          <thead><tr><th>テナント名</th><th>テナントコード</th><th>請求の分け方</th><th /></tr></thead>
+          <tbody>
+            {loading ? <tr><td colSpan={4}>読み込み中…</td></tr> : multiCodeTenants.map(([id, group]) => {
+              const saved = savedGroupFor(id);
+              return <tr key={id} className="billing-settings-row" tabIndex={0} role="button" aria-label={`${tenantLabel(group)}の割り当てを編集`} onClick={() => openEditor(id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openEditor(id); } }}>
+                <td><strong>{tenantLabel(group)}</strong></td>
+                <td>{group.map((code) => code.issue_code).join(" / ")}</td>
+                <td>{saved ? saved.allocation_mode === "contract" ? "契約から分ける" : "明細項目ごとに分ける" : "未設定"}</td>
+                <td>{saved && <button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={(event) => { event.stopPropagation(); void deleteGroup(saved.billing_code_allocation_group_id); }}>削除</button>}</td>
+              </tr>;
+            })}
+            {!loading && !multiCodeTenants.length && <tr><td colSpan={4}>複数のコードが紐づいたテナントはありません。</td></tr>}
+          </tbody>
+        </table>
       </div>
+      {editorOpen && editingGroup && <Dialog title={`${tenantLabel(editingGroup[1])}の請求コード割り当て`} onClose={closeEditor} className="billing-settings-dialog">
+        <div className="billing-settings-dialog-body">
+          <p className="billing-settings-dialog-codes">{editingGroup[1].map((code) => <span key={code.billing_code_id}><strong>{code.issue_code}</strong>{code.recipient_name}</span>)}</p>
+          <h5>1. 請求の分け方</h5>
+          <label><input type="radio" checked={mode === "contract"} onChange={() => setMode("contract")} /> 契約から分ける</label>
+          <label><input type="radio" checked={mode === "line_item"} onChange={() => setMode("line_item")} /> 明細項目ごとに分ける</label>
+          <h5>2. 割り当て</h5>
+          {selected.length < 2 ? <p>このテナントには複数のテナントコードがありません。</p> : !sameTenant ? <p>同一テナントに紐づくコードだけを選択してください。</p> : <div className="allocation-targets">
+            {targets.map((target) => <label key={target.id}>{target.label}<select value={assignments[target.id] ?? ""} onChange={(event) => setAssignments({ ...assignments, [target.id]: event.target.value })}><option value="">選択してください</option>{tenantCodes.map((code) => <option key={code.billing_code_id} value={code.billing_code_id}>{code.issue_code}</option>)}</select></label>)}
+            {!targets.length && <p>{mode === "contract" ? "選択したテナントに有効な契約がありません。" : "請求対象の明細項目が未登録です。"}</p>}
+          </div>}
+          <div className="billing-settings-dialog-actions">
+            <button type="button" className="text-button" onClick={closeEditor}>取消</button>
+            <button className="primary-button" disabled={!canEdit || selected.length < 2 || !sameTenant} onClick={() => void save()}>{editingGroupId ? "設定を更新" : "設定を保存"}</button>
+          </div>
+        </div>
+      </Dialog>}
     </section>
   );
 }

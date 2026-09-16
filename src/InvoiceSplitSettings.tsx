@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './lib/supabase';
+import { Dialog } from './components/Dialog';
 
 type Item = { asset_billing_line_item_id: string; line_item_name: string; display_name: string };
 type Code = { billing_code_id: string; tenant_id: string | null; issue_code: string; recipient_name: string; tenant: { tenant_name: string } | { tenant_name: string }[] | null };
@@ -17,6 +18,7 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -47,7 +49,9 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
   const chooseCode = (codeId: string) => {
     const setting = settings.find((row) => row.billing_code_id === codeId); setSelectedCodeId(codeId); setMode(setting?.split_mode ?? 'unit');
     setAssignments(Object.fromEntries((setting?.assignments ?? []).map((row) => [row.asset_billing_line_item_id, setting?.split_mode === 'unit' ? row.lease_contract_unit_id ?? '' : String(row.invoice_number ?? '')])));
+    setNotice(''); setEditorOpen(true);
   };
+  const closeEditor = () => { setEditorOpen(false); setSelectedCodeId(''); setAssignments({}); };
   const changeMode = (nextMode: 'unit' | 'line_item') => { setMode(nextMode); setAssignments({}); };
   const complete = Boolean(selectedCodeId) && lineItems.length > 0 && lineItems.every((item) => assignments[item.asset_billing_line_item_id]);
 
@@ -64,7 +68,7 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
     const assignmentResult = await supabase.from('billing_invoice_split_assignment').insert(rows);
     if (assignmentResult.error) { setNotice(`明細項目の分割先を保存できませんでした: ${assignmentResult.error.message}`); return; }
     const next: Setting = { ...data, assignments: rows.map((row) => ({ asset_billing_line_item_id: row.asset_billing_line_item_id, lease_contract_unit_id: row.lease_contract_unit_id, invoice_number: row.invoice_number })) } as Setting;
-    setSettings((current) => [...current.filter((row) => row.billing_code_id !== selectedCodeId), next]); setNotice('請求書分割設定を保存しました。');
+    setSettings((current) => [...current.filter((row) => row.billing_code_id !== selectedCodeId), next]); setNotice('請求書分割設定を保存しました。'); setEditorOpen(false);
   };
   const remove = async (setting: Setting) => {
     if (!supabase) return;
@@ -76,9 +80,42 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
   };
 
   return <section className="property-billing-items">
-    <div className="property-billing-items-heading"><h4>請求書分割設定</h4><p>入居中のテナントコードごとに、区画または明細項目で請求書を分割します。</p></div>
+    <div className="property-billing-items-heading"><h4>請求書分割設定</h4><p>入居中のテナントを一覧表示します。行を選ぶと、区画または明細項目での請求書の分け方を編集できます。</p></div>
     {notice && <p className="property-billing-settings-notice">{notice}</p>}
-    <div className="property-billing-settings-table-wrap invoice-split-code-list"><table><thead><tr><th>テナント名</th><th>テナントコード</th><th>分割設定</th><th /></tr></thead><tbody>{activeCodes.map((code) => { const setting = settings.find((row) => row.billing_code_id === code.billing_code_id); return <tr key={code.billing_code_id}><td><strong>{tenantName(code)}</strong></td><td>{code.issue_code}</td><td>{setting ? setting.split_mode === 'unit' ? '区画で分ける' : '明細項目で分ける' : '未設定'}</td><td><button type="button" className="text-button" onClick={() => chooseCode(code.billing_code_id)}>{setting ? '編集' : '設定'}</button>{setting && <button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={() => void remove(setting)}>削除</button>}</td></tr>; })}{!loading && !activeCodes.length && <tr><td colSpan={4}>入居中のテナントコードはありません。</td></tr>}</tbody></table></div>
-    <div className="allocation-layout invoice-split-layout"><div><h5>1. テナントコードを選択</h5><select value={selectedCodeId} onChange={(event) => chooseCode(event.target.value)}><option value="">選択してください</option>{activeCodes.map((code) => <option key={code.billing_code_id} value={code.billing_code_id}>{tenantName(code)}（{code.issue_code}）</option>)}</select></div><div><h5>2. 請求書の分け方</h5><label><input type="radio" checked={mode === 'unit'} onChange={() => changeMode('unit')} /> 区画で分ける</label><label><input type="radio" checked={mode === 'line_item'} onChange={() => changeMode('line_item')} /> 明細項目で分ける</label><h5>3. 明細項目の分割先</h5>{!selectedCode ? <p>テナントコードを選択してください。</p> : <div className="allocation-targets">{lineItems.map((item) => <label key={item.asset_billing_line_item_id}><span>{item.display_name || item.line_item_name}</span><select value={assignments[item.asset_billing_line_item_id] ?? ''} onChange={(event) => setAssignments({ ...assignments, [item.asset_billing_line_item_id]: event.target.value })}><option value="">選択してください</option>{mode === 'unit' ? tenantUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{unitLabel(unit)}</option>) : [1, 2, 3].map((number) => <option key={number} value={number}>請求書 {number}</option>)}</select></label>)}{mode === 'unit' && !tenantUnits.length && <p>契約中の区画がありません。</p>}{!lineItems.length && <p>請求対象の明細項目が未登録です。</p>}</div>}<button className="primary-button" disabled={!canEdit || !complete} onClick={() => void save()}>{selectedSetting ? '設定を更新' : '設定を保存'}</button></div></div>
+    <div className="property-billing-settings-table-wrap invoice-split-code-list">
+      <table>
+        <thead><tr><th>テナント名</th><th>テナントコード</th><th>分割設定</th><th /></tr></thead>
+        <tbody>
+          {loading ? <tr><td colSpan={4}>読み込み中…</td></tr> : activeCodes.map((code) => {
+            const setting = settings.find((row) => row.billing_code_id === code.billing_code_id);
+            return <tr key={code.billing_code_id} className="billing-settings-row" tabIndex={0} role="button" aria-label={`${tenantName(code)}の請求書分割設定を編集`} onClick={() => chooseCode(code.billing_code_id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseCode(code.billing_code_id); } }}>
+              <td><strong>{tenantName(code)}</strong></td>
+              <td>{code.issue_code}</td>
+              <td>{setting ? setting.split_mode === 'unit' ? '区画で分ける' : '明細項目で分ける' : '未設定'}</td>
+              <td>{setting && <button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={(event) => { event.stopPropagation(); void remove(setting); }}>削除</button>}</td>
+            </tr>;
+          })}
+          {!loading && !activeCodes.length && <tr><td colSpan={4}>入居中のテナントはありません。</td></tr>}
+        </tbody>
+      </table>
+    </div>
+    {editorOpen && selectedCode && <Dialog title={`${tenantName(selectedCode)}の請求書分割設定`} onClose={closeEditor} className="billing-settings-dialog">
+      <div className="billing-settings-dialog-body">
+        <p className="billing-settings-dialog-codes"><span><strong>{selectedCode.issue_code}</strong>{selectedCode.recipient_name}</span></p>
+        <h5>1. 請求書の分け方</h5>
+        <label><input type="radio" checked={mode === 'unit'} onChange={() => changeMode('unit')} /> 区画で分ける</label>
+        <label><input type="radio" checked={mode === 'line_item'} onChange={() => changeMode('line_item')} /> 明細項目で分ける</label>
+        <h5>2. 明細項目の分割先</h5>
+        <div className="allocation-targets">
+          {lineItems.map((item) => <label key={item.asset_billing_line_item_id}><span>{item.display_name || item.line_item_name}</span><select value={assignments[item.asset_billing_line_item_id] ?? ''} onChange={(event) => setAssignments({ ...assignments, [item.asset_billing_line_item_id]: event.target.value })}><option value="">選択してください</option>{mode === 'unit' ? tenantUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{unitLabel(unit)}</option>) : [1, 2, 3].map((number) => <option key={number} value={number}>請求書 {number}</option>)}</select></label>)}
+          {mode === 'unit' && !tenantUnits.length && <p>契約中の区画がありません。</p>}
+          {!lineItems.length && <p>請求対象の明細項目が未登録です。</p>}
+        </div>
+        <div className="billing-settings-dialog-actions">
+          <button type="button" className="text-button" onClick={closeEditor}>取消</button>
+          <button className="primary-button" disabled={!canEdit || !complete} onClick={() => void save()}>{selectedSetting ? '設定を更新' : '設定を保存'}</button>
+        </div>
+      </div>
+    </Dialog>}
   </section>;
 }
