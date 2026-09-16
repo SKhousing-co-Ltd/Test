@@ -9,11 +9,11 @@
 
 
 /* 表題の右に置く入金期限・請求期間の確認欄です。請求設定のパターンごとに実日付を表示します。 */
-.invoice-date-panel { display: flex; flex-wrap: wrap; gap: 6px 20px; flex: 1 1 auto; min-width: 0; }
-.invoice-date-panel section { display: flex; align-items: flex-start; gap: 8px; }
+.invoice-date-panel { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 44px; flex: 1 1 auto; min-width: 0; padding: 0 24px; }
+.invoice-date-panel section { display: flex; align-items: flex-start; gap: 12px; }
 .invoice-date-panel h4 { margin: 3px 0 0; color: #35516f; font-size: 12px; white-space: nowrap; }
-.invoice-date-panel ul { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
-.invoice-date-panel li { display: flex; align-items: center; gap: 3px; }
+.invoice-date-panel ul { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.invoice-date-panel li { display: flex; align-items: center; gap: 5px; }
 .invoice-date-panel li > span { min-width: 34px; color: #566b84; font-size: 12px; text-align: right; white-space: nowrap; }
 .invoice-date-panel li > span::after { content: '：'; }
 .invoice-date-panel em { color: #74849a; font-size: 12px; font-style: normal; }

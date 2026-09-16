@@ -19,14 +19,19 @@ type InvoiceRow = { id: string; invoiceKey: string; values: string[] };
 
 // CSV出力時の列順です。請求書番号は画面生成時に請求書単位で採番し、編集はできません。
 const csvHeaders = ['請求書番号', '発行先コード', '会社名', '件名', '入金期限', '今回請求金額（税抜）', '今回消費税額', '今回請求金額（税込）', '締日', '備考', '明細項目１', '明細項目２', '数量', '単位', '単価', '金額', '消費税額', '請求金額', '税区分', '税率', '備考'];
-const screenHeaders = csvHeaders.map((header, index) => index === 5 ? '請求金額（税抜）' : index === 6 ? '消費税額' : index === 7 ? '請求金額（税込）' : header);
-const visibleColumns = [0, 1, 2, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 18, 19, 20];
-const initialColumnWidths = [88, 72, 150, 130, 100, 100, 100, 132, 135, 48, 52, 96, 96, 70, 70, 130];
-const columnWidthStorageKey = 'invoice-creation-column-widths';
-const loadColumnWidths = () => {
+const screenHeaders = csvHeaders.map((header, index) => index === 5 ? '請求金額（税抜）' : index === 6 ? '消費税額' : index === 7 ? '請求金額（税込）' : index === 9 ? '請求書備考' : header);
+const baseColumns = [0, 1, 2, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 18, 19, 20];
+// 請求書備考（9列目）は「請求書備考を表示」を入れたときだけ、締日の次に差し込みます。
+const invoiceNoteColumn = 9;
+const initialColumnWidths: Record<number, number> = { 0: 88, 1: 72, 2: 150, 4: 130, 5: 100, 6: 100, 7: 100, 9: 150, 10: 132, 11: 135, 12: 48, 13: 52, 14: 96, 15: 96, 18: 70, 19: 70, 20: 130 };
+const columnWidthStorageKey = 'invoice-creation-column-widths-v2';
+const loadColumnWidths = (): Record<number, number> => {
   try {
     const stored = JSON.parse(localStorage.getItem(columnWidthStorageKey) ?? 'null');
-    return Array.isArray(stored) && stored.length === initialColumnWidths.length && stored.every((width) => typeof width === 'number' && width >= 44) ? stored : initialColumnWidths;
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return initialColumnWidths;
+    const widths = { ...initialColumnWidths };
+    for (const column of Object.keys(initialColumnWidths)) { const width = stored[column]; if (typeof width === 'number' && width >= 44) widths[Number(column)] = width; }
+    return widths;
   } catch { return initialColumnWidths; }
 };
 const yen = new Intl.NumberFormat('ja-JP');
@@ -54,7 +59,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const [periodRangeByPattern, setPeriodRangeByPattern] = useState<Record<string, { start: string; end: string }>>({});
   const [lineItem1Filter, setLineItem1Filter] = useState('all');
   const [lineItem2Filter, setLineItem2Filter] = useState('all');
-  const [columnWidths, setColumnWidths] = useState<number[]>(loadColumnWidths);
+  const [columnWidths, setColumnWidths] = useState<Record<number, number>>(loadColumnWidths);
   const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
 
   useEffect(() => {
@@ -144,16 +149,17 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   };
   const updateInvoiceNote = (value: string) => { setInvoiceNote(value); setRows((current) => { const written = new Set<string>(); return current.map((row) => { if (written.has(row.invoiceKey)) return row; written.add(row.invoiceKey); return { ...row, values: row.values.map((cell, index) => index === 9 ? value : cell) }; }); }); };
   const setInvoiceNoteEnabled = (enabled: boolean) => { setShowInvoiceNote(enabled); if (!enabled) updateInvoiceNote(''); };
-  const startColumnResize = (position: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+  const startColumnResize = (column: number, event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
-    const startX = event.clientX; const startWidth = columnWidths[position];
-    const resize = (moveEvent: PointerEvent) => setColumnWidths((current) => current.map((width, index) => index === position ? Math.max(44, startWidth + moveEvent.clientX - startX) : width));
+    const startX = event.clientX; const startWidth = columnWidths[column];
+    const resize = (moveEvent: PointerEvent) => setColumnWidths((current) => ({ ...current, [column]: Math.max(44, startWidth + moveEvent.clientX - startX) }));
     const stop = () => { window.removeEventListener('pointermove', resize); window.removeEventListener('pointerup', stop); document.body.classList.remove('invoice-column-resizing'); };
     document.body.classList.add('invoice-column-resizing'); window.addEventListener('pointermove', resize); window.addEventListener('pointerup', stop);
   };
-  const invoiceLevelColumns = new Set([0, 1, 2, 4, 5, 6, 7]);
+  const invoiceLevelColumns = new Set([0, 1, 2, 4, 5, 6, 7, invoiceNoteColumn]);
   const totalColumns = new Set([5, 6, 7, 12, 15]);
-  const tableWidth = columnWidths.reduce((sum, width) => sum + width, 0);
+  const visibleColumns = showInvoiceNote ? [...baseColumns.slice(0, 7), invoiceNoteColumn, ...baseColumns.slice(7)] : baseColumns;
+  const tableWidth = visibleColumns.reduce((sum, column) => sum + columnWidths[column], 0);
 
   return <section className="invoice-creation-page"><header className="invoice-creation-heading"><div><p className="section-kicker">INVOICE CSV</p><h3>請求書作成</h3><p>{propertyName}・{calendarYear}年{period.month}月分</p></div><div className="invoice-date-panel">
       <section><h4>入金期限</h4>{duePatterns.length ? <ul>{duePatterns.map((pattern) => <li key={pattern.billing_due_date_pattern_id}><span title={duePatternLabel(pattern)}>{duePatternMark(pattern)}</span><input value={dueDateByPattern[pattern.billing_due_date_pattern_id] ?? ''} placeholder="YYYY/MM/DD" aria-label={`入金期限 ${duePatternLabel(pattern)}`} onChange={(event) => changeDueDate(pattern.billing_due_date_pattern_id, event.target.value)} /></li>)}</ul> : <p>請求設定で登録してください</p>}</section>
@@ -161,6 +167,6 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
     </div>
     <div className="invoice-creation-actions"><div className="invoice-note-field"><label><input type="checkbox" checked={showInvoiceNote} onChange={(event) => setInvoiceNoteEnabled(event.target.checked)} />請求書備考を表示</label><input value={invoiceNote} disabled={!showInvoiceNote} onChange={(event) => updateInvoiceNote(event.target.value)} placeholder="全請求書共通の備考" /></div><button className="primary-button" disabled>CSVを出力</button></div></header>
     {error && <p className="invoice-creation-notice invoice-creation-error">{error}</p>}
-    <div className="invoice-creation-table-wrap invoice-csv-table-wrap"><table className="invoice-csv-table" style={{ width: tableWidth }}><colgroup>{visibleColumns.map((column, position) => <col key={column} style={{ width: columnWidths[position] }} />)}</colgroup><thead><tr className="invoice-total-row">{visibleColumns.map((column) => <th key={`total-${csvHeaders[column]}`}>{totalColumns.has(column) ? <><span>表示中合計</span><strong>{yen.format(totals[column as keyof typeof totals])}</strong></> : null}</th>)}</tr><tr>{visibleColumns.map((column, position) => <th key={csvHeaders[column]}>{column === 10 || column === 11 ? <label>{screenHeaders[column]}<select value={column === 10 ? lineItem1Filter : lineItem2Filter} onChange={(event) => column === 10 ? setLineItem1Filter(event.target.value) : setLineItem2Filter(event.target.value)}><option value="all">すべて</option>{(column === 10 ? lineItem1Options : lineItem2Options).map((option) => <option key={option} value={option}>{option}</option>)}</select></label> : screenHeaders[column]}<button type="button" className="invoice-column-resizer" aria-label={`${screenHeaders[column]}の列幅を変更`} onPointerDown={(event) => startColumnResize(position, event)} /></th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">レントロールを読み込み中…</td></tr> : !filteredRows.length ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">条件に一致する固定費の契約データがありません。</td></tr> : filteredRows.map((row) => { const firstVisible = firstVisibleRowIds.has(row.id); const summary = invoiceSummaryByKey.get(row.invoiceKey) ?? row; return <tr key={row.id} className={firstVisible ? 'invoice-start-row' : 'invoice-continuation-row'}>{visibleColumns.map((column) => <td key={`${row.id}-${column}`}>{column === 4 && firstVisible ? <select className="invoice-due-pattern" aria-label={`入金期日パターン ${row.invoiceKey}`} title={(() => { const selected = duePatterns.find((pattern) => pattern.billing_due_date_pattern_id === duePatternByInvoice[row.invoiceKey]); return selected ? `${duePatternLabel(selected)}：${dueDateByPattern[selected.billing_due_date_pattern_id] ?? ''}` : '未選択'; })()} value={duePatternByInvoice[row.invoiceKey] ?? ''} onChange={(event) => selectDuePattern(row.invoiceKey, event.target.value)}><option value="">未選択</option>{duePatterns.map((pattern) => <option key={pattern.billing_due_date_pattern_id} value={pattern.billing_due_date_pattern_id}>{duePatternMark(pattern)}</option>)}</select> : column === 10 ? <select className="invoice-due-pattern" aria-label={`請求期間パターン ${row.id}`} title={row.values[10]} value={periodPatternByRow[row.id] ?? ''} onChange={(event) => selectPeriodPattern(row.id, event.target.value)}><option value="">未設定</option>{periodPatterns.map((pattern) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{pattern.pattern_name}</option>)}</select> : invoiceLevelColumns.has(column) && !firstVisible ? null : <input aria-label={`${screenHeaders[column]} ${row.id}`} value={(invoiceLevelColumns.has(column) ? summary : row).values[column]} readOnly={column === 0} onChange={(event) => invoiceLevelColumns.has(column) ? updateInvoiceCell(row.invoiceKey, column, event.target.value) : updateCell(row.id, column, event.target.value)} />}</td>)}</tr>; })}</tbody></table></div>
+    <div className="invoice-creation-table-wrap invoice-csv-table-wrap"><table className="invoice-csv-table" style={{ width: tableWidth }}><colgroup>{visibleColumns.map((column) => <col key={column} style={{ width: columnWidths[column] }} />)}</colgroup><thead><tr className="invoice-total-row">{visibleColumns.map((column) => <th key={`total-${csvHeaders[column]}`}>{totalColumns.has(column) ? <><span>表示中合計</span><strong>{yen.format(totals[column as keyof typeof totals])}</strong></> : null}</th>)}</tr><tr>{visibleColumns.map((column) => <th key={csvHeaders[column]}>{column === 10 || column === 11 ? <label>{screenHeaders[column]}<select value={column === 10 ? lineItem1Filter : lineItem2Filter} onChange={(event) => column === 10 ? setLineItem1Filter(event.target.value) : setLineItem2Filter(event.target.value)}><option value="all">すべて</option>{(column === 10 ? lineItem1Options : lineItem2Options).map((option) => <option key={option} value={option}>{option}</option>)}</select></label> : screenHeaders[column]}<button type="button" className="invoice-column-resizer" aria-label={`${screenHeaders[column]}の列幅を変更`} onPointerDown={(event) => startColumnResize(column, event)} /></th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">レントロールを読み込み中…</td></tr> : !filteredRows.length ? <tr><td colSpan={visibleColumns.length} className="invoice-creation-empty">条件に一致する固定費の契約データがありません。</td></tr> : filteredRows.map((row) => { const firstVisible = firstVisibleRowIds.has(row.id); const summary = invoiceSummaryByKey.get(row.invoiceKey) ?? row; return <tr key={row.id} className={firstVisible ? 'invoice-start-row' : 'invoice-continuation-row'}>{visibleColumns.map((column) => <td key={`${row.id}-${column}`}>{column === 4 && firstVisible ? <select className="invoice-due-pattern" aria-label={`入金期日パターン ${row.invoiceKey}`} title={(() => { const selected = duePatterns.find((pattern) => pattern.billing_due_date_pattern_id === duePatternByInvoice[row.invoiceKey]); return selected ? `${duePatternLabel(selected)}：${dueDateByPattern[selected.billing_due_date_pattern_id] ?? ''}` : '未選択'; })()} value={duePatternByInvoice[row.invoiceKey] ?? ''} onChange={(event) => selectDuePattern(row.invoiceKey, event.target.value)}><option value="">未選択</option>{duePatterns.map((pattern) => <option key={pattern.billing_due_date_pattern_id} value={pattern.billing_due_date_pattern_id}>{duePatternMark(pattern)}</option>)}</select> : column === 10 ? <select className="invoice-due-pattern" aria-label={`請求期間パターン ${row.id}`} title={row.values[10]} value={periodPatternByRow[row.id] ?? ''} onChange={(event) => selectPeriodPattern(row.id, event.target.value)}><option value="">未設定</option>{periodPatterns.map((pattern) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{pattern.pattern_name}</option>)}</select> : invoiceLevelColumns.has(column) && !firstVisible ? null : <input aria-label={`${screenHeaders[column]} ${row.id}`} value={(invoiceLevelColumns.has(column) ? summary : row).values[column]} readOnly={column === 0} onChange={(event) => invoiceLevelColumns.has(column) ? updateInvoiceCell(row.invoiceKey, column, event.target.value) : updateCell(row.id, column, event.target.value)} />}</td>)}</tr>; })}</tbody></table></div>
   </section>;
 }
