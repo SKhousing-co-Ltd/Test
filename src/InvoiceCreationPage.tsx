@@ -4,7 +4,7 @@ import type { BillingPeriod } from './TenantBillingControls';
 import { dueDate, periodRange, periodText } from './utils/billingDates';
 import './InvoiceCreationPage.css';
 
-type RentRollSource = { unit_code: string; unit_name: string | null; floor_label: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number | null; monthly_common_charge_amount: number | null; monthly_parking_amount: number | null; other_monthly_amount: number | null; };
+type RentRollSource = { unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number | null; monthly_common_charge_amount: number | null; monthly_parking_amount: number | null; other_monthly_amount: number | null; };
 type BillingCode = { billing_code_id: string; tenant_id: string | null; issue_code: string; is_primary: boolean; invoice_display_name: string | null; invoice_subject: string | null };
 type DuePattern = { billing_due_date_pattern_id: string; pattern_number: number; month_offset: number; day_of_month: number; holiday_adjustment: 'previous' | 'next' };
 type ContractAllocation = { lease_contract_unit_id: string; billing_code_id: string };
@@ -44,6 +44,10 @@ const yen = new Intl.NumberFormat('ja-JP');
 const fixedItems: Array<{ name: string; field: keyof Pick<RentRollSource, 'monthly_rent_amount' | 'monthly_common_charge_amount' | 'monthly_parking_amount' | 'other_monthly_amount'> }> = [
   { name: '賃料', field: 'monthly_rent_amount' }, { name: '共益費', field: 'monthly_common_charge_amount' }, { name: '駐車料', field: 'monthly_parking_amount' }, { name: 'その他', field: 'other_monthly_amount' },
 ];
+// 駐輪場の区画はレントロール上「その他」に入るため、明細では駐輪場利用料として分けます。
+const lineItemName = (source: RentRollSource, item: (typeof fixedItems)[number]) => item.field === 'other_monthly_amount' && source.unit_type === 'bicycle_parking' ? '駐輪場利用料' : item.name;
+// 駐車場・駐輪場は区画ごとの契約なので、数量に台数、単位に「台」を出します。
+const countedItems = new Set(['駐車料', '駐輪場利用料']);
 const emptyValues = () => Array.from({ length: csvHeaders.length }, () => '');
 const numberValue = (value: string) => Number(value.split(',').join('') || 0);
 const patternMark = (number: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(number - 1) || String(number);
@@ -97,15 +101,16 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       const contractUnits = (unitResult.data ?? []) as unknown as ContractUnit[]; const contractByUnit = new Map(contractUnits.map((unit) => [unit.lease_contract_unit_id, unit.lease_contract_id])); const unitIdBySource = new Map(contractUnits.map((unit) => [`${unit.lease_contract_id}:${firstOf(unit.unit)?.unit_code ?? ''}`, unit.lease_contract_unit_id])); const unitLabelById = new Map(contractUnits.map((unit) => [unit.lease_contract_unit_id, firstOf(unit.unit)?.unit_name || firstOf(unit.unit)?.unit_code || '区画名なし'])); const codeByContract = new Map<string, BillingCode>(); for (const allocation of (allocationResult.data ?? []) as ContractAllocation[]) { const contractId = contractByUnit.get(allocation.lease_contract_unit_id); const code = codeById.get(allocation.billing_code_id); if (contractId && code) codeByContract.set(contractId, code); }
       const typeNameById = new Map(((typeResult.data ?? []) as ChargeType[]).map((type) => [type.billing_charge_type_id, type.charge_type_name])); const lineItemIdByChargeName = new Map<string, string>(); for (const item of (assetItemResult.data ?? []) as AssetLineItem[]) { const chargeName = typeNameById.get(item.billing_charge_type_id); if (chargeName && !lineItemIdByChargeName.has(chargeName)) lineItemIdByChargeName.set(chargeName, item.asset_billing_line_item_id); } const codeByTenantItem = new Map<string, BillingCode>(); for (const allocation of (lineAllocationResult.data ?? []) as unknown as LineItemAllocation[]) { const code = codeById.get(allocation.billing_code_id); const name = typeNameById.get(allocation.line_item?.billing_charge_type_id ?? ''); if (code && name && allocation.group?.tenant_id) codeByTenantItem.set(`${allocation.group.tenant_id}:${name}`, code); }
       const splitByCode = new Map(((splitResult.data ?? []) as unknown as InvoiceSplitSetting[]).map((setting) => [setting.billing_code_id, setting]));
-      const invoices = new Map<string, { code: string; tenantName: string; displayName: string | null; subject: string | null; unitNames: Set<string>; lines: Map<string, number> }>();
+      const invoices = new Map<string, { code: string; tenantName: string; displayName: string | null; subject: string | null; unitNames: Set<string>; lines: Map<string, number>; counts: Map<string, number> }>();
       for (const source of (rentRollResult.data ?? []) as RentRollSource[]) {
         if (!source.tenant_id || !source.tenant_name) continue;
         for (const item of fixedItems) {
           const amount = Number(source[item.field] ?? 0); if (!amount) continue;
-          const target = codeByTenantItem.get(`${source.tenant_id}:${item.name}`) ?? (source.lease_contract_id ? codeByContract.get(source.lease_contract_id) : undefined) ?? primaryCodeByTenant.get(source.tenant_id);
-          const split = target ? splitByCode.get(target.billing_code_id) : undefined; const lineItemId = lineItemIdByChargeName.get(item.name); const splitAssignment = split?.assignments?.find((assignment) => assignment.asset_billing_line_item_id === lineItemId); const sourceUnitId = source.lease_contract_id ? unitIdBySource.get(`${source.lease_contract_id}:${source.unit_code}`) : undefined; const splitKey = split?.split_mode === 'unit' ? `unit:${splitAssignment?.lease_contract_unit_id ?? sourceUnitId ?? 'unassigned'}` : split?.split_mode === 'line_item' ? `invoice:${splitAssignment?.invoice_number ?? 1}` : 'single';
-          const key = `${source.tenant_id}:${target?.billing_code_id ?? 'unassigned'}:${splitKey}`; const invoice = invoices.get(key) ?? { code: target?.issue_code ?? '未採番', tenantName: source.tenant_name, displayName: target?.invoice_display_name ?? null, subject: target?.invoice_subject ?? null, unitNames: new Set<string>(), lines: new Map<string, number>() };
-          const assignedUnitLabel = split?.split_mode === 'unit' && splitAssignment?.lease_contract_unit_id ? unitLabelById.get(splitAssignment.lease_contract_unit_id) : null; invoice.unitNames.add(assignedUnitLabel ?? ([source.floor_label, source.unit_name ?? source.unit_code].filter(Boolean).join(' ') || source.unit_code)); invoice.lines.set(item.name, (invoice.lines.get(item.name) ?? 0) + amount); invoices.set(key, invoice);
+          const itemName = lineItemName(source, item);
+          const target = codeByTenantItem.get(`${source.tenant_id}:${itemName}`) ?? (source.lease_contract_id ? codeByContract.get(source.lease_contract_id) : undefined) ?? primaryCodeByTenant.get(source.tenant_id);
+          const split = target ? splitByCode.get(target.billing_code_id) : undefined; const lineItemId = lineItemIdByChargeName.get(itemName); const splitAssignment = split?.assignments?.find((assignment) => assignment.asset_billing_line_item_id === lineItemId); const sourceUnitId = source.lease_contract_id ? unitIdBySource.get(`${source.lease_contract_id}:${source.unit_code}`) : undefined; const splitKey = split?.split_mode === 'unit' ? `unit:${splitAssignment?.lease_contract_unit_id ?? sourceUnitId ?? 'unassigned'}` : split?.split_mode === 'line_item' ? `invoice:${splitAssignment?.invoice_number ?? 1}` : 'single';
+          const key = `${source.tenant_id}:${target?.billing_code_id ?? 'unassigned'}:${splitKey}`; const invoice = invoices.get(key) ?? { code: target?.issue_code ?? '未採番', tenantName: source.tenant_name, displayName: target?.invoice_display_name ?? null, subject: target?.invoice_subject ?? null, unitNames: new Set<string>(), lines: new Map<string, number>(), counts: new Map<string, number>() };
+          const assignedUnitLabel = split?.split_mode === 'unit' && splitAssignment?.lease_contract_unit_id ? unitLabelById.get(splitAssignment.lease_contract_unit_id) : null; invoice.unitNames.add(assignedUnitLabel ?? ([source.floor_label, source.unit_name ?? source.unit_code].filter(Boolean).join(' ') || source.unit_code)); invoice.lines.set(itemName, (invoice.lines.get(itemName) ?? 0) + amount); if (countedItems.has(itemName)) invoice.counts.set(itemName, (invoice.counts.get(itemName) ?? 0) + 1); invoices.set(key, invoice);
         }
       }
       const next: InvoiceRow[] = [];
@@ -114,7 +119,8 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
         invoiceNumber += 1;
         const total = [...invoice.lines.values()].reduce((sum, value) => sum + value, 0); const tax = Math.floor(total * 0.1);
         [...invoice.lines.entries()].forEach(([name, amount], index) => { const values = emptyValues(); if (index === 0) { values[0] = String(invoiceNumber); values[1] = invoice.code; values[2] = invoice.displayName || invoice.tenantName; values[3] = invoice.subject || `${propertyName}${[...invoice.unitNames].join('・')} 御請求書`; values[4] = nextDueDates[nextDuePatterns[0]?.billing_due_date_pattern_id ?? ''] ?? ''; values[5] = yen.format(total); values[6] = yen.format(tax); values[7] = yen.format(total + tax); }
-          values[10] = '未設定'; values[11] = name; values[12] = ''; values[13] = ''; values[14] = ''; values[15] = yen.format(amount); values[18] = '課税'; values[19] = '10%（仮）'; next.push({ id: `${invoiceKey}:${index}:${name}`, invoiceKey, values }); });
+          const count = invoice.counts.get(name) ?? 0;
+          values[10] = '未設定'; values[11] = name; values[12] = count ? String(count) : ''; values[13] = count ? '台' : ''; values[14] = ''; values[15] = yen.format(amount); values[18] = '課税'; values[19] = '10%（仮）'; next.push({ id: `${invoiceKey}:${index}:${name}`, invoiceKey, values }); });
       }
       setRows(next);
       setDuePatternByInvoice(Object.fromEntries([...invoices.keys()].map((invoiceKey) => [invoiceKey, nextDuePatterns[0]?.billing_due_date_pattern_id ?? ''])));
