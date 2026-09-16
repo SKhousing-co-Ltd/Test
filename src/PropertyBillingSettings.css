@@ -51,6 +51,7 @@
 .allocation-targets { display: grid; gap: 8px; margin-bottom: 14px; }
 .allocation-targets label { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(130px, .8fr); gap: 10px; align-items: center; color: #52667e; font-size: 12px; }
 .allocation-targets select { border: 1px solid #d7e0eb; border-radius: 6px; padding: 7px; color: #354c69; background: #fff; }
+.allocation-layout > div:first-child > select { width: 100%; border: 1px solid #d7e0eb; border-radius: 6px; padding: 8px 9px; color: #354c69; background: #fff; }.invoice-split-code-list table { min-width: 700px; }.invoice-split-layout { border-top: 1px solid #e8edf3; }.invoice-split-layout .allocation-targets span { padding: 0; color: #52667e; background: transparent; font-size: 12px; font-weight: 700; }
 @media (max-width: 1120px) { .property-billing-item-form { grid-template-columns: repeat(3, minmax(150px, 1fr)); }.property-billing-item-form .primary-button { width: max-content; } }
 @media (max-width: 800px) { .property-billing-item-form, .property-period-patterns form { grid-template-columns: 1fr; }.property-billing-item-form .primary-button, .property-period-patterns .primary-button { width: 100%; } }
 @media (max-width: 800px) { .allocation-layout { grid-template-columns: 1fr; }.allocation-layout > div:first-child { border-right: 0; border-bottom: 1px solid #e8edf3; padding: 0 0 14px; }.allocation-targets label { grid-template-columns: 1fr; } }

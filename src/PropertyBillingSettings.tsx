@@ -3,6 +3,7 @@ import { supabase } from "./lib/supabase";
 import type { BillingProperty } from "./TenantBillingControls";
 import { PropertyBillingChargeTypeSettings } from "./PropertyBillingChargeTypeSettings";
 import { BillingCodeAllocationSettings } from "./BillingCodeAllocationSettings";
+import { InvoiceSplitSettings } from "./InvoiceSplitSettings";
 import "./PropertyBillingSettings.css";
 
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string };
@@ -53,7 +54,7 @@ export function PropertyBillingSettings({
   canEdit: boolean;
 }) {
   const [tab, setTab] = useState<
-    "types" | "items" | "duePatterns" | "patterns" | "allocations"
+    "types" | "items" | "duePatterns" | "patterns" | "allocations" | "invoiceSplits"
   >("types");
   const [types, setTypes] = useState<ChargeType[]>([]);
   const [enabled, setEnabled] = useState<string[]>([]);
@@ -337,6 +338,12 @@ export function PropertyBillingSettings({
         >
           複数テナントコード
         </button>
+        <button
+          className={tab === "invoiceSplits" ? "active" : ""}
+          onClick={() => setTab("invoiceSplits")}
+        >
+          請求書分割設定
+        </button>
       </div>
       {tab === "types" && (
         <PropertyBillingChargeTypeSettings
@@ -559,6 +566,9 @@ export function PropertyBillingSettings({
           lineItems={items}
           canEdit={canEdit}
         />
+      )}
+      {tab === "invoiceSplits" && (
+        <InvoiceSplitSettings propertyId={propertyId} lineItems={items} canEdit={canEdit} />
       )}
     </section>
   );
