@@ -15,13 +15,16 @@ export function periodEdge(year: number, month: number, monthOffset: number, day
   return new Date(targetYear, normalizedMonth, day);
 }
 
-// 明細項目１に入れる「YYYY/MM/DD～YYYY/MM/DD分」を組み立てます。確定できない場合は空にして画面で手入力させます。
-export function periodText(year: number, month: number, pattern: BillingPeriodPattern | undefined): string {
-  if (!pattern) return '';
+// 明細項目１の請求期間です。確定できない場合は空にして画面で手入力させます。
+export function periodRange(year: number, month: number, pattern: BillingPeriodPattern | undefined): { start: string; end: string } {
+  if (!pattern) return { start: '', end: '' };
   const start = periodEdge(year, month, pattern.start_month_offset, pattern.start_day_type);
   const end = periodEdge(year, month, pattern.end_month_offset, pattern.end_day_type);
-  return start && end ? `${formatDate(start)}～${formatDate(end)}分` : '';
+  return { start: start ? formatDate(start) : '', end: end ? formatDate(end) : '' };
 }
+
+// 明細項目１としてCSVへ出す「YYYY/M/D～YYYY/M/D分」を組み立てます。
+export const periodText = (start: string, end: string) => start && end ? `${start}～${end}分` : '';
 
 export function dueDate(year: number, month: number, pattern: DueDatePattern | undefined): string {
   if (!pattern) return '';
