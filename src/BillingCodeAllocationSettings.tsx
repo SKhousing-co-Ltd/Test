@@ -7,6 +7,7 @@ type Code = {
   issue_code: string;
   recipient_name: string;
   is_active: boolean;
+  tenant: { tenant_name: string } | { tenant_name: string }[] | null;
 };
 type Item = {
   asset_billing_line_item_id: string;
@@ -20,7 +21,7 @@ type ContractUnit = {
   contract: { tenant_id: string; contract_status: string } | { tenant_id: string; contract_status: string }[] | null;
 };
 type Unit = { unit_code: string; unit_name: string | null; allocations: ContractUnit[] | null };
-type SavedGroup = { billing_code_allocation_group_id: string; tenant_id: string | null; allocation_mode: 'contract' | 'line_item'; members: { code: { issue_code: string } | null }[] | null };
+type SavedGroup = { billing_code_allocation_group_id: string; tenant_id: string | null; allocation_mode: 'contract' | 'line_item'; tenant: { tenant_name: string } | { tenant_name: string }[] | null; members: { code: { issue_code: string } | null }[] | null };
 const firstOf = <T,>(value: T | T[] | null) => Array.isArray(value) ? value[0] ?? null : value;
 
 export function BillingCodeAllocationSettings({
@@ -53,7 +54,7 @@ export function BillingCodeAllocationSettings({
         supabase
           .from("billing_code")
           .select(
-            "billing_code_id, tenant_id, issue_code, recipient_name, is_active",
+            "billing_code_id, tenant_id, issue_code, recipient_name, is_active, tenant:tenant_master(tenant_name)",
           )
           .eq("property_id", propertyId)
           .eq("is_active", true)
@@ -65,7 +66,7 @@ export function BillingCodeAllocationSettings({
           )
           .eq("property_id", propertyId)
           .eq("is_active", true),
-        supabase.from('billing_code_allocation_group').select('billing_code_allocation_group_id, tenant_id, allocation_mode, members:billing_code_allocation_group_member(code:billing_code(issue_code))').eq('asset_id', propertyId),
+        supabase.from('billing_code_allocation_group').select('billing_code_allocation_group_id, tenant_id, allocation_mode, tenant:tenant_master(tenant_name), members:billing_code_allocation_group_member(code:billing_code(issue_code))').eq('asset_id', propertyId),
       ]);
       if (codeResult.error || unitResult.error)
         setNotice(
@@ -172,7 +173,7 @@ export function BillingCodeAllocationSettings({
       }
     }
     setNotice(editingGroupId ? "複数テナントコードの設定を更新しました。" : "複数テナントコードの設定を保存しました。");
-    setSavedGroups((current) => [...current.filter((item) => item.billing_code_allocation_group_id !== editingGroupId), { billing_code_allocation_group_id: group.billing_code_allocation_group_id, tenant_id: tenantId, allocation_mode: mode, members: tenantCodes.map((code) => ({ code: { issue_code: code.issue_code } })) }]); setEditingGroupId('');
+    setSavedGroups((current) => [...current.filter((item) => item.billing_code_allocation_group_id !== editingGroupId), { billing_code_allocation_group_id: group.billing_code_allocation_group_id, tenant_id: tenantId, allocation_mode: mode, tenant: tenantCodes[0]?.tenant ?? null, members: tenantCodes.map((code) => ({ code: { issue_code: code.issue_code } })) }]); setEditingGroupId('');
   };
   const deleteGroup = async (id: string) => { if (!supabase) return; const { error } = await supabase.from('billing_code_allocation_group').delete().eq('billing_code_allocation_group_id', id); if (error) { setNotice(`設定を削除できませんでした: ${error.message}`); return; } setSavedGroups((current) => current.filter((group) => group.billing_code_allocation_group_id !== id)); if (editingGroupId === id) setEditingGroupId(''); };
   return (
@@ -184,14 +185,14 @@ export function BillingCodeAllocationSettings({
         </p>
       </div>
       {notice && <p className="property-billing-settings-notice">{notice}</p>}
-      {savedGroups.length > 0 && <div className="property-billing-settings-table-wrap"><table><thead><tr><th>テナントコード</th><th>請求の分け方</th><th /></tr></thead><tbody>{savedGroups.map((group) => <tr key={group.billing_code_allocation_group_id}><td>{(group.members ?? []).map((member) => member.code?.issue_code).filter(Boolean).join(' / ')}</td><td>{group.allocation_mode === 'contract' ? '契約から分ける' : '明細項目ごとに分ける'}</td><td><button type="button" className="text-button" onClick={() => { setEditingGroupId(group.billing_code_allocation_group_id); setTenantId(group.tenant_id ?? ''); setMode(group.allocation_mode); }}>編集</button><button type="button" className="tenant-billing-delete" onClick={() => void deleteGroup(group.billing_code_allocation_group_id)}>削除</button></td></tr>)}</tbody></table></div>}
+      {savedGroups.length > 0 && <div className="property-billing-settings-table-wrap"><table><thead><tr><th>テナント名</th><th>テナントコード</th><th>請求の分け方</th><th /></tr></thead><tbody>{savedGroups.map((group) => <tr key={group.billing_code_allocation_group_id}><td><strong>{firstOf(group.tenant)?.tenant_name ?? '—'}</strong></td><td>{(group.members ?? []).map((member) => member.code?.issue_code).filter(Boolean).join(' / ')}</td><td>{group.allocation_mode === 'contract' ? '契約から分ける' : '明細項目ごとに分ける'}</td><td><button type="button" className="text-button" onClick={() => { setEditingGroupId(group.billing_code_allocation_group_id); setTenantId(group.tenant_id ?? ''); setMode(group.allocation_mode); }}>編集</button><button type="button" className="tenant-billing-delete" onClick={() => void deleteGroup(group.billing_code_allocation_group_id)}>削除</button></td></tr>)}</tbody></table></div>}
       <div className="allocation-layout">
         <div>
           <h5>1. テナントを選択</h5>
           {loading ? (
             <p>読み込み中…</p>
           ) : (
-            <><select value={tenantId} onChange={(event) => setTenantId(event.target.value)}><option value="">選択してください</option>{[...codeGroups.entries()].filter(([, group]) => group.length > 1).map(([id, group]) => <option key={id} value={id}>{group[0].recipient_name}（{group.map((code) => code.issue_code).join(' / ')}）</option>)}</select>{tenantCodes.map((code) => <p className="allocation-code" key={code.billing_code_id}><strong>{code.issue_code}</strong><span>{code.recipient_name}</span></p>)}</>
+            <><select value={tenantId} onChange={(event) => setTenantId(event.target.value)}><option value="">選択してください</option>{[...codeGroups.entries()].filter(([, group]) => group.length > 1).map(([id, group]) => { const configured = savedGroups.some((saved) => saved.tenant_id === id && saved.billing_code_allocation_group_id !== editingGroupId); return <option key={id} value={id} disabled={configured}>{firstOf(group[0].tenant)?.tenant_name ?? group[0].recipient_name}（{group.map((code) => code.issue_code).join(' / ')}）{configured ? '・設定済み' : ''}</option>; })}</select>{tenantCodes.map((code) => <p className="allocation-code" key={code.billing_code_id}><strong>{code.issue_code}</strong><span>{code.recipient_name}</span></p>)}</>
           )}
         </div>
         <div>
