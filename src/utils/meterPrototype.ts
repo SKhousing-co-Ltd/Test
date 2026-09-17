@@ -1,42 +1,31 @@
 // 検針データ集計の試作用データと計算です。肥後橋の「電気検針データ集計表」R8.8 を写しています。
 //
 // 構成
-//   大分類（カテゴリ） … 集計・電気・水道・ガス。ページの上段タブになります。
-//   小分類             … 電気を「基本料・電灯・空調」に分けるなど。カテゴリ内のタブになります。
-//   区画               … 借りているテナントを紐づけます。単価の上書きもここです。
-//   メーター           … 区画に付けます。テナントは区画を通じて決まります。
-//   増額分             … 分類の一部ではなく、カテゴリ全体の使用量にかかるものとして集計画面で計算します。
-// 集計処理は全ビル共通で、ビルごとの違いは上のデータだけで表します。
+//   分類     … 電気・水道・ガスの3つで固定。水道とガスは請求するかどうかを切り替えられます。
+//   小分類   … 基本料（固定で用意・請求フラグあり）と、ビルごとに増減できるカスタム小分類。
+//              小分類ごとに、請求明細のどの項目に載せるかを設定します。
+//   メーター … 小分類に属し、メーター番号・メーター識別（設置位置など）・割当テナントを持ちます。
+//   増額分   … 小分類ではなく分類全体の使用量にかかるものとして、集計画面で計算します。
+// 集計処理は全ビル共通で、ビルごとの違いはこのデータだけで表します。
 
 export type RoundingMode = 'floor' | 'ceil' | 'round';
-export type SumMode = 'aggregate' | 'perArea' | 'perMeter';
-export const sumModeLabel: Record<SumMode, string> = { aggregate: 'まとめて計算', perArea: '区画ごとに計算', perMeter: 'メーターごとに計算' };
+// まとめて計算：使用量を合計してから単価をかける
+// 識別ごと：メーター識別（区画など）ごとに金額を出して合算する／メーターごと：メーター単位で合算する
+export type SumMode = 'aggregate' | 'perLabel' | 'perMeter';
+export const sumModeLabel: Record<SumMode, string> = { aggregate: 'まとめて計算', perLabel: '識別ごとに計算', perMeter: 'メーターごとに計算' };
 export const roundingModeLabel: Record<RoundingMode, string> = { floor: '切り捨て', ceil: '切り上げ', round: '四捨五入' };
 
-export type MeterKind = { id: string; name: string; primaryLabel: string; secondaryLabel?: string };
-export type Category = { id: string; name: string; unit: string };
-export type SubItem = {
-  id: string;
-  categoryId: string;
-  name: string;
-  // meter: メーターの検針値から計算／fixed: テナントごとの固定額（基本料など）
-  source: 'meter' | 'fixed';
-  meterKindId?: string;
-  readingField?: 'primary' | 'secondary';
-  // tenant: テナントの契約単価（区画で上書き可）／common: 物件共通の単価
-  priceSource: 'tenant' | 'common';
-  commonUnitPrice?: number;
-};
-// カテゴリ全体の使用量にかかる加算です。集計画面で計算します。
-export type Surcharge = { id: string; name: string; categoryId: string; unitPrice: number };
-
-export type Area = { id: string; name: string; tenantId: string; unitPrice?: number };
-export type Meter = { id: string; code: string; areaId: string; meterKindId: string; primary: number; secondary: number };
+export type CategoryId = 'electric' | 'water' | 'gas';
+export type Category = { id: CategoryId; name: string; unit: string; billable: boolean; fixedBillable: boolean };
+export type SubItem = { id: string; categoryId: CategoryId; name: string; kind: 'basic' | 'custom'; lineItemId: string };
+export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean };
+export type LineItem = { id: string; name: string };
+export type Meter = { id: string; subItemId: string; code: string; label: string; tenantId: string; usage: number; unitPrice?: number };
 
 export type TenantConfig = {
   id: string;
   name: string;
-  unitPrice: number;
+  unitPrices: Record<CategoryId, number>;
   fixedCharges: Record<string, number>;
   usageRoundingUnit: number;
   usageRoundingMode: RoundingMode;
@@ -46,115 +35,97 @@ export type TenantConfig = {
   expected: number;
 };
 
-export type BuildingConfig = {
-  name: string;
-  period: string;
-  meterDate: string;
-  meterKinds: MeterKind[];
-  categories: Category[];
-  subItems: SubItem[];
-  surcharges: Surcharge[];
-};
+export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[] };
+
+// 請求設定の明細項目です。小分類がどの明細項目として請求されるかを紐づけます。
+export const lineItems: LineItem[] = [
+  { id: 'electricity', name: '電気代' },
+  { id: 'electricity_basic', name: '電気基本料' },
+  { id: 'aircon', name: '空調費' },
+  { id: 'water', name: '水道代' },
+  { id: 'gas', name: 'ガス代' },
+];
 
 export const initialBuilding: BuildingConfig = {
-  name: '三共肥後橋ビル',
-  period: '2026年9月分',
-  meterDate: '2026/9/2',
-  meterKinds: [
-    { id: 'light', name: '電灯メーター', primaryLabel: '使用量' },
-    { id: 'ac', name: '空調メーター', primaryLabel: '電気', secondaryLabel: 'ガス' },
-    { id: 'water', name: '水道メーター', primaryLabel: '使用量' },
-  ],
   categories: [
-    { id: 'electric', name: '電気', unit: 'kWh' },
-    { id: 'water', name: '水道', unit: '㎥' },
-    { id: 'gas', name: 'ガス', unit: '㎥' },
+    { id: 'electric', name: '電気', unit: 'kWh', billable: true, fixedBillable: true },
+    { id: 'water', name: '水道', unit: '㎥', billable: true, fixedBillable: false },
+    { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'basic', categoryId: 'electric', name: '基本料', source: 'fixed', priceSource: 'tenant' },
-    { id: 'light', categoryId: 'electric', name: '電灯', source: 'meter', meterKindId: 'light', readingField: 'primary', priceSource: 'tenant' },
-    { id: 'ac', categoryId: 'electric', name: '空調', source: 'meter', meterKindId: 'ac', readingField: 'primary', priceSource: 'tenant' },
-    { id: 'water', categoryId: 'water', name: '水道', source: 'meter', meterKindId: 'water', readingField: 'primary', priceSource: 'common', commonUnitPrice: 338.27 },
-    { id: 'gas', categoryId: 'gas', name: 'ガス', source: 'meter', meterKindId: 'ac', readingField: 'secondary', priceSource: 'common', commonUnitPrice: 160 },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: 'electricity_basic' },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: 'electricity' },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: 'aircon' },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: 'water' },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: 'water' },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: 'gas' },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: 'gas' },
   ],
-  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02 }],
+  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: 'electricity', billable: true }],
 };
 
-const modes = (mode: SumMode): Record<string, SumMode> => ({ light: mode, ac: mode, gas: mode, water: mode, surcharge: mode });
+const rates = (electric: number, water = 338.27, gas = 160): Record<CategoryId, number> => ({ electric, water, gas });
 const base = (rounding: RoundingMode, sum: SumMode = 'aggregate') => ({
-  usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {}, sumMode: modes(sum),
+  usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {},
+  sumMode: { light: sum, ac: sum, water_usage: sum, gas_usage: sum, surcharge: sum } as Record<string, SumMode>,
 });
 
 export const initialTenants: TenantConfig[] = [
-  { id: 'T1', name: "㈱Y'sデンタルサポート", unitPrice: 35, ...base('floor'), expected: 75418 },
-  { id: 'T2', name: '錦江シッピングジャパン㈱', unitPrice: 33, ...base('round'), expected: 45334 },
-  { id: 'T3', name: 'Genesis(合)', unitPrice: 35, ...base('floor'), expected: 22926 },
-  { id: 'T4', name: 'メゾンレクシア㈱', unitPrice: 31.65, ...base('round', 'perArea'), expected: 409907 },
-  { id: 'T5', name: '結TRUST㈱', unitPrice: 35, ...base('round'), expected: 23545 },
-  { id: 'T6', name: 'クリエートメディック㈱', unitPrice: 35, ...base('floor'), expected: 62200 },
-  { id: 'T7', name: 'ラコンテ', unitPrice: 33, ...base('round'), expected: 21874 },
-  { id: 'T8', name: '㈱ユニオスパートナーズ', unitPrice: 35, ...base('round'), expected: 34800 },
-  { id: 'T9', name: 'ロータスアソシエイツ㈱', unitPrice: 35, ...base('floor'), expected: 58436 },
-  { id: 'T10', name: '九州運輸センター協同組合', unitPrice: 35, ...base('floor'), expected: 53285 },
-  { id: 'T11', name: '㈱ミタカ', unitPrice: 35, ...base('round'), expected: 33064 },
-  { id: 'T12', name: 'アイシステム', unitPrice: 33, ...base('round'), expected: 32263 },
-  { id: 'T13', name: 'コンカレントシステムズ', unitPrice: 15.38, ...base('round'), fixedCharges: { basic: 50379 }, expected: 365838 },
-  { id: 'T14', name: 'セブンイレブン', unitPrice: 0, ...base('floor'), expected: 11501 },
+  { id: 'T1', name: "㈱Y'sデンタルサポート", unitPrices: rates(35), ...base('floor'), expected: 75418 },
+  { id: 'T2', name: '錦江シッピングジャパン㈱', unitPrices: rates(33), ...base('round'), expected: 45334 },
+  { id: 'T3', name: 'Genesis(合)', unitPrices: rates(35), ...base('floor'), expected: 22926 },
+  { id: 'T4', name: 'メゾンレクシア㈱', unitPrices: rates(31.65), ...base('round', 'perLabel'), expected: 409907 },
+  { id: 'T5', name: '結TRUST㈱', unitPrices: rates(35), ...base('round'), expected: 23545 },
+  { id: 'T6', name: 'クリエートメディック㈱', unitPrices: rates(35), ...base('floor'), expected: 62200 },
+  { id: 'T7', name: 'ラコンテ', unitPrices: rates(33), ...base('round'), expected: 21874 },
+  { id: 'T8', name: '㈱ユニオスパートナーズ', unitPrices: rates(35), ...base('round'), expected: 34800 },
+  { id: 'T9', name: 'ロータスアソシエイツ㈱', unitPrices: rates(35), ...base('floor'), expected: 58436 },
+  { id: 'T10', name: '九州運輸センター協同組合', unitPrices: rates(35), ...base('floor'), expected: 53285 },
+  { id: 'T11', name: '㈱ミタカ', unitPrices: rates(35), ...base('round'), expected: 33064 },
+  { id: 'T12', name: 'アイシステム', unitPrices: rates(33), ...base('round'), expected: 32263 },
+  { id: 'T13', name: 'コンカレントシステムズ', unitPrices: rates(15.38), ...base('round'), fixedCharges: { electric_basic: 50379 }, expected: 365838 },
+  { id: 'T14', name: 'セブンイレブン', unitPrices: rates(0), ...base('floor'), expected: 11501 },
 ];
 
-export const initialAreas: Area[] = [
-  { id: 'A0', name: '1F', tenantId: 'T14' },
-  { id: 'A1', name: '2F 南', tenantId: 'T1' },
-  { id: 'A2', name: '2F 北', tenantId: 'T2' },
-  { id: 'A3', name: '2F 中', tenantId: 'T3' },
-  { id: 'A4', name: '3F 南・北', tenantId: 'T4' },
-  { id: 'A5', name: '4F 南・北', tenantId: 'T4' },
-  { id: 'A6', name: '5F 南西', tenantId: 'T5' },
-  { id: 'A7', name: '5F 南東', tenantId: 'T6' },
-  { id: 'A8', name: '5F 中', tenantId: 'T7' },
-  { id: 'A9', name: '5F 北', tenantId: 'T8' },
-  { id: 'A10', name: '6F 南西', tenantId: 'T9' },
-  { id: 'A11', name: '6F 南東', tenantId: 'T10' },
-  { id: 'A12', name: '6F 中北', tenantId: 'T11' },
-  { id: 'A13', name: '6F 北', tenantId: 'T12' },
-  { id: 'A14', name: '7F 南・中', tenantId: 'T13' },
-  { id: 'A15', name: '7F 北', tenantId: 'T13', unitPrice: 33 },
-];
+const meter = (subItemId: string, code: string, label: string, tenantId: string, usage: number, unitPrice?: number): Meter =>
+  ({ id: `${subItemId}:${code}`, subItemId, code, label, tenantId, usage, ...(unitPrice ? { unitPrice } : {}) });
 
-const lightMeter = (id: string, code: string, areaId: string, primary: number): Meter => ({ id, code, areaId, meterKindId: 'light', primary, secondary: 0 });
-const acMeter = (no: string, areaId: string, primary: number, secondary: number): Meter => ({ id: no, code: no, areaId, meterKindId: 'ac', primary, secondary });
+const acReadings: Array<[string, string, string, number, number, number?]> = [
+  ['1：4-07', '2F 南', 'T1', 9.816, 20.392], ['1：4-08', '2F 南', 'T1', 9.931, 41.479], ['1：4-09', '2F 南', 'T1', 11.55, 62.76], ['1：4-10', '2F 南', 'T1', 20.047, 181.182],
+  ['1：4-02', '2F 北', 'T2', 8.859, 26.682], ['1：4-03', '2F 北', 'T2', 7.369, 10.039], ['1：4-04', '2F 北', 'T2', 16.746, 127.443],
+  ['1：4-05', '2F 中', 'T3', 8.317, 22.329], ['1：4-06', '2F 中', 'T3', 9.106, 36.699],
+  ['1：3-08', '3F 南・北', 'T4', 10.936, 24.426], ['1：3-09', '3F 南・北', 'T4', 9.851, 4.489], ['1：3-10', '3F 南・北', 'T4', 12.085, 49.372], ['1：3-11', '3F 南・北', 'T4', 10.427, 16.72],
+  ['1：3-12', '3F 南・北', 'T4', 16.866, 108.549], ['1：3-13', '3F 南・北', 'T4', 11.641, 11.118], ['1：3-14', '3F 南・北', 'T4', 13.5, 51.599], ['1：3-15', '3F 南・北', 'T4', 13.476, 46.551],
+  ['1：4-00', '3F 南・北', 'T4', 14.614, 75.322], ['1：4-01', '3F 南・北', 'T4', 13.545, 45.546],
+  ['1：2-14', '4F 南・北', 'T4', 14.058, 336.335], ['1：2-15', '4F 南・北', 'T4', 1.012, 23.633], ['1：3-00', '4F 南・北', 'T4', 6.543, 127.033], ['1：3-01', '4F 南・北', 'T4', 0.695, 13.799],
+  ['1：3-02', '4F 南・北', 'T4', 7.007, 144.478], ['1：3-03', '4F 南・北', 'T4', 3.556, 90.634], ['1：3-04', '4F 南・北', 'T4', 5.301, 149.234], ['1：3-05', '4F 南・北', 'T4', 7.564, 127.121],
+  ['1：3-06', '4F 南・北', 'T4', 2.851, 95.433], ['1：3-07', '4F 南・北', 'T4', 8.011, 218.711],
+  ['1：2-11', '5F 南西', 'T5', 17.01, 107.876],
+  ['1：2-09', '5F 南東', 'T6', 9.261, 11.468], ['1：2-10', '5F 南東', 'T6', 10.391, 49.481], ['1：2-12', '5F 南東', 'T6', 12.441, 83.829], ['1：2-13', '5F 南東', 'T6', 14.776, 119.191],
+  ['1：2-07', '5F 中', 'T7', 8.396, 18.284], ['1：2-08', '5F 中', 'T7', 10.263, 52.64],
+  ['1：2-04', '5F 北', 'T8', 10.209, 63.688], ['1：2-05', '5F 北', 'T8', 8.528, 23.484], ['1：2-06', '5F 北', 'T8', 9.954, 53.783],
+  ['1：2-01', '6F 南西', 'T9', 11.195, 102.052], ['1：2-02', '6F 南西', 'T9', 11.808, 105.699], ['1：2-03', '6F 南西', 'T9', 9.037, 64.446],
+  ['1：1-14', '6F 南東', 'T10', 8.134, 28.626], ['1：1-15', '6F 南東', 'T10', 10.164, 55.612], ['1：2-00', '6F 南東', 'T10', 12.192, 85.89],
+  ['1：1-13', '6F 中北', 'T11', 14.86, 145.1],
+  ['1：1-11', '6F 北', 'T12', 11.214, 87.967], ['1：1-12', '6F 北', 'T12', 8.255, 32.726],
+  ['1：1-03', '7F 南・中', 'T13', 14.799, 334.61], ['1：1-04', '7F 南・中', 'T13', 17.042, 397.201], ['1：1-05', '7F 南・中', 'T13', 0.371, 10.448], ['1：1-06', '7F 南・中', 'T13', 1.795, 33.708],
+  ['1：1-07', '7F 南・中', 'T13', 3.872, 84.222], ['1：1-08', '7F 南・中', 'T13', 2.113, 42.935], ['1：1-09', '7F 南・中', 'T13', 5.535, 95.157], ['1：1-10', '7F 南・中', 'T13', 9.356, 162.876],
+  ['1：1-00', '7F 北', 'T13', 0.586, 16.978, 33], ['1：1-01', '7F 北', 'T13', 0.497, 11.018, 33], ['1：1-02', '7F 北', 'T13', 0.796, 23.476, 33],
+];
 
 export const initialMeters: Meter[] = [
-  { id: 'W1', code: '60R-141-19-009', areaId: 'A0', meterKindId: 'water', primary: 34, secondary: 0 },
+  meter('light', '223-607-805', '2F 南', 'T1', 564.5), meter('light', '223-607-995', '2F 北', 'T2', 431.7), meter('light', '224-603-349', '2F 中', 'T3', 296.1),
+  meter('light', '223-607-843', '3F 南・北', 'T4', 290.7), meter('light', '224-602-118', '3F 南・北', 'T4', 402.9),
+  meter('light', '223-607-982', '4F 南・北', 'T4', 1253), meter('light', '224-602-989', '4F 南・北', 'T4', 1103.9),
+  meter('light', '244-583', '5F 南西', 'T5', 129), meter('light', '223-607-967', '5F 南東', 'T6', 269), meter('light', '223-607-820', '5F 南東', 'T6', 148.1),
+  meter('light', '223-607-852', '5F 中', 'T7', 238), meter('light', '223-607-809', '5F 北', 'T8', 255.8), meter('light', '259-403', '6F 南西', 'T9', 314),
+  meter('light', '222-604-409', '6F 南東', 'T10', 575.5), meter('light', '165-031', '6F 中北', 'T11', 214), meter('light', '223-607-828', '6F 北', 'T12', 296.2),
+  meter('light', '223-607-973', '7F 南・中', 'T13', 1474.8), meter('light', '223-607-819', '7F 南・中', 'T13', 3500), meter('light', '223-607-983', '7F 北', 'T13', 89.5, 33),
 
-  lightMeter('L1', '223-607-805', 'A1', 564.5), lightMeter('L2', '223-607-995', 'A2', 431.7), lightMeter('L3', '224-603-349', 'A3', 296.1),
-  lightMeter('L4', '223-607-843', 'A4', 290.7), lightMeter('L5', '224-602-118', 'A4', 402.9),
-  lightMeter('L6', '223-607-982', 'A5', 1253), lightMeter('L7', '224-602-989', 'A5', 1103.9),
-  lightMeter('L8', '244-583', 'A6', 129), lightMeter('L9', '223-607-967', 'A7', 269), lightMeter('L10', '223-607-820', 'A7', 148.1),
-  lightMeter('L11', '223-607-852', 'A8', 238), lightMeter('L12', '223-607-809', 'A9', 255.8), lightMeter('L13', '259-403', 'A10', 314),
-  lightMeter('L14', '222-604-409', 'A11', 575.5), lightMeter('L15', '165-031', 'A12', 214), lightMeter('L16', '223-607-828', 'A13', 296.2),
-  lightMeter('L17', '223-607-973', 'A14', 1474.8), lightMeter('L18', '223-607-819', 'A14', 3500), lightMeter('L19', '223-607-983', 'A15', 89.5),
+  ...acReadings.map(([code, label, tenantId, electric, , unitPrice]) => meter('ac', code, label, tenantId, electric, unitPrice)),
+  ...acReadings.map(([code, label, tenantId, , gas]) => meter('gas_usage', code, label, tenantId, gas)),
 
-  acMeter('1：4-07', 'A1', 9.816, 20.392), acMeter('1：4-08', 'A1', 9.931, 41.479), acMeter('1：4-09', 'A1', 11.55, 62.76), acMeter('1：4-10', 'A1', 20.047, 181.182),
-  acMeter('1：4-02', 'A2', 8.859, 26.682), acMeter('1：4-03', 'A2', 7.369, 10.039), acMeter('1：4-04', 'A2', 16.746, 127.443),
-  acMeter('1：4-05', 'A3', 8.317, 22.329), acMeter('1：4-06', 'A3', 9.106, 36.699),
-  acMeter('1：3-08', 'A4', 10.936, 24.426), acMeter('1：3-09', 'A4', 9.851, 4.489), acMeter('1：3-10', 'A4', 12.085, 49.372), acMeter('1：3-11', 'A4', 10.427, 16.72),
-  acMeter('1：3-12', 'A4', 16.866, 108.549), acMeter('1：3-13', 'A4', 11.641, 11.118), acMeter('1：3-14', 'A4', 13.5, 51.599), acMeter('1：3-15', 'A4', 13.476, 46.551),
-  acMeter('1：4-00', 'A4', 14.614, 75.322), acMeter('1：4-01', 'A4', 13.545, 45.546),
-  acMeter('1：2-14', 'A5', 14.058, 336.335), acMeter('1：2-15', 'A5', 1.012, 23.633), acMeter('1：3-00', 'A5', 6.543, 127.033), acMeter('1：3-01', 'A5', 0.695, 13.799),
-  acMeter('1：3-02', 'A5', 7.007, 144.478), acMeter('1：3-03', 'A5', 3.556, 90.634), acMeter('1：3-04', 'A5', 5.301, 149.234), acMeter('1：3-05', 'A5', 7.564, 127.121),
-  acMeter('1：3-06', 'A5', 2.851, 95.433), acMeter('1：3-07', 'A5', 8.011, 218.711),
-  acMeter('1：2-11', 'A6', 17.01, 107.876),
-  acMeter('1：2-09', 'A7', 9.261, 11.468), acMeter('1：2-10', 'A7', 10.391, 49.481), acMeter('1：2-12', 'A7', 12.441, 83.829), acMeter('1：2-13', 'A7', 14.776, 119.191),
-  acMeter('1：2-07', 'A8', 8.396, 18.284), acMeter('1：2-08', 'A8', 10.263, 52.64),
-  acMeter('1：2-04', 'A9', 10.209, 63.688), acMeter('1：2-05', 'A9', 8.528, 23.484), acMeter('1：2-06', 'A9', 9.954, 53.783),
-  acMeter('1：2-01', 'A10', 11.195, 102.052), acMeter('1：2-02', 'A10', 11.808, 105.699), acMeter('1：2-03', 'A10', 9.037, 64.446),
-  acMeter('1：1-14', 'A11', 8.134, 28.626), acMeter('1：1-15', 'A11', 10.164, 55.612), acMeter('1：2-00', 'A11', 12.192, 85.89),
-  acMeter('1：1-13', 'A12', 14.86, 145.1),
-  acMeter('1：1-11', 'A13', 11.214, 87.967), acMeter('1：1-12', 'A13', 8.255, 32.726),
-  acMeter('1：1-03', 'A14', 14.799, 334.61), acMeter('1：1-04', 'A14', 17.042, 397.201), acMeter('1：1-05', 'A14', 0.371, 10.448), acMeter('1：1-06', 'A14', 1.795, 33.708),
-  acMeter('1：1-07', 'A14', 3.872, 84.222), acMeter('1：1-08', 'A14', 2.113, 42.935), acMeter('1：1-09', 'A14', 5.535, 95.157), acMeter('1：1-10', 'A14', 9.356, 162.876),
-  acMeter('1：1-00', 'A15', 0.586, 16.978), acMeter('1：1-01', 'A15', 0.497, 11.018), acMeter('1：1-02', 'A15', 0.796, 23.476),
+  meter('water_usage', '60R-141-19-009', '1F', 'T14', 34),
 ];
 
 export const applyRounding = (value: number, unit: number, mode: RoundingMode) => {
@@ -164,86 +135,76 @@ export const applyRounding = (value: number, unit: number, mode: RoundingMode) =
   return Number((rounded * unit).toFixed(6));
 };
 
-export type ChargeInput = { meterId: string; meterCode: string; areaId: string; areaName: string; usage: number; unitPrice: number };
 export type ChargeGroup = { key: string; label: string; usage: number; unitPrice: number; amount: number };
-export type SubItemResult = { subItem: SubItem; inputs: ChargeInput[]; usage: number; amount: number; groups: ChargeGroup[] };
-export type SurchargeResult = { surcharge: Surcharge; usage: number; amount: number; groups: Array<{ label: string; usage: number; amount: number }> };
-export type AreaUsage = { areaId: string; areaName: string; usage: number };
-export type CategoryResult = { category: Category; subItems: SubItemResult[]; usage: number; usageByArea: AreaUsage[]; usageByMeter: ChargeInput[]; amount: number };
+export type SubItemResult = { subItem: SubItem; meters: Meter[]; usage: number; amount: number; groups: ChargeGroup[] };
+export type SurchargeResult = { surcharge: Surcharge; usage: number; amount: number; groups: ChargeGroup[] };
+export type CategoryResult = { category: Category; subItems: SubItemResult[]; usage: number; amount: number };
 
-export function collectInputs(subItem: SubItem, tenant: TenantConfig, areas: Area[], meters: Meter[]): ChargeInput[] {
-  if (subItem.source === 'fixed') return [];
-  return areas.filter((area) => area.tenantId === tenant.id).flatMap((area) => meters
-    .filter((meter) => meter.areaId === area.id && meter.meterKindId === subItem.meterKindId)
-    .map((meter) => ({
-      meterId: meter.id, meterCode: meter.code, areaId: area.id, areaName: area.name,
-      usage: subItem.readingField === 'secondary' ? meter.secondary : meter.primary,
-      unitPrice: subItem.priceSource === 'common' ? subItem.commonUnitPrice ?? 0 : area.unitPrice ?? tenant.unitPrice,
-    })));
-}
+export const metersFor = (subItemId: string, tenantId: string, meters: Meter[]) => meters.filter((row) => row.subItemId === subItemId && row.tenantId === tenantId);
 
-export function calculateSubItem(subItem: SubItem, tenant: TenantConfig, inputs: ChargeInput[]): SubItemResult {
-  if (subItem.source === 'fixed') {
-    const fixed = tenant.fixedCharges[subItem.id] ?? 0;
-    return { subItem, inputs: [], usage: 0, amount: fixed, groups: fixed ? [{ key: 'fixed', label: '固定額', usage: 0, unitPrice: 0, amount: fixed }] : [] };
-  }
+export function calculateSubItem(subItem: SubItem, category: Category, tenant: TenantConfig, meters: Meter[]): SubItemResult {
   const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
+
+  if (subItem.kind === 'basic') {
+    const fixed = category.fixedBillable ? tenant.fixedCharges[subItem.id] ?? 0 : 0;
+    return { subItem, meters: [], usage: 0, amount: fixed, groups: fixed ? [{ key: 'fixed', label: '固定額', usage: 0, unitPrice: 0, amount: fixed }] : [] };
+  }
+
+  const own = metersFor(subItem.id, tenant.id, meters);
   const mode = tenant.sumMode[subItem.id] ?? 'aggregate';
-  const usage = roundUsage(inputs.reduce((sum, input) => sum + input.usage, 0));
+  const priceOf = (row: Meter) => row.unitPrice ?? tenant.unitPrices[category.id];
+  const usage = roundUsage(own.reduce((sum, row) => sum + row.usage, 0));
 
-  // 単価が違うものは、どの方式でも必ず分けて計算します。
-  const keyOf = (input: ChargeInput) => mode === 'perMeter' ? input.meterId : mode === 'perArea' ? `${input.areaId}｜${input.unitPrice}` : String(input.unitPrice);
-  const labelOf = (input: ChargeInput, size: number) => mode === 'perMeter' ? input.meterCode : mode === 'perArea' ? input.areaName : size > 1 ? `単価${input.unitPrice}円` : 'まとめて計算';
+  // 単価が違うメーターは、どの方式でも必ず分けて計算します。
+  const keyOf = (row: Meter) => mode === 'perMeter' ? row.id : mode === 'perLabel' ? `${row.label}｜${priceOf(row)}` : String(priceOf(row));
+  const labelOf = (row: Meter, size: number) => mode === 'perMeter' ? row.code : mode === 'perLabel' ? row.label : size > 1 ? `単価${priceOf(row)}円` : 'まとめて計算';
 
-  const buckets = new Map<string, ChargeInput[]>();
-  for (const input of inputs) buckets.set(keyOf(input), [...(buckets.get(keyOf(input)) ?? []), input]);
+  const buckets = new Map<string, Meter[]>();
+  for (const row of own) buckets.set(keyOf(row), [...(buckets.get(keyOf(row)) ?? []), row]);
   const groups = [...buckets.entries()].map(([key, rows]) => {
     const groupUsage = roundUsage(rows.reduce((sum, row) => sum + row.usage, 0));
-    return { key, label: labelOf(rows[0], buckets.size), usage: groupUsage, unitPrice: rows[0].unitPrice, amount: roundAmount(groupUsage * rows[0].unitPrice) };
+    return { key, label: labelOf(rows[0], buckets.size), usage: groupUsage, unitPrice: priceOf(rows[0]), amount: roundAmount(groupUsage * priceOf(rows[0])) };
   });
-  return { subItem, inputs, usage, amount: groups.reduce((sum, group) => sum + group.amount, 0), groups };
+  return { subItem, meters: own, usage, amount: groups.reduce((sum, group) => sum + group.amount, 0), groups };
 }
 
 export type TenantResult = ReturnType<typeof calculateTenant>;
 
-export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, areas: Area[], meters: Meter[]) {
+export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, meters: Meter[]) {
   const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
 
-  const categories: CategoryResult[] = building.categories.map((category) => {
+  const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
-      .map((subItem) => calculateSubItem(subItem, tenant, collectInputs(subItem, tenant, areas, meters)));
-    // 増額分を区画ごとやメーターごとに計算する場合に備えて、内訳も持たせます。
-    const usageByMeter = subItems.flatMap((row) => row.inputs);
-    const areaTotals = new Map<string, AreaUsage>();
-    for (const row of subItems) {
-      const perArea = new Map<string, ChargeInput[]>();
-      for (const input of row.inputs) perArea.set(input.areaId, [...(perArea.get(input.areaId) ?? []), input]);
-      for (const [areaId, rows] of perArea) {
-        const current = areaTotals.get(areaId) ?? { areaId, areaName: rows[0].areaName, usage: 0 };
-        areaTotals.set(areaId, { ...current, usage: current.usage + roundUsage(rows.reduce((sum, input) => sum + input.usage, 0)) });
-      }
-    }
+      .map((subItem) => calculateSubItem(subItem, category, tenant, meters));
     return {
-      category, subItems, usageByMeter, usageByArea: [...areaTotals.values()],
+      category, subItems,
       usage: roundUsage(subItems.reduce((sum, row) => sum + row.usage, 0)),
       amount: subItems.reduce((sum, row) => sum + row.amount, 0),
     };
   });
 
-  // 増額分はカテゴリ全体の使用量にかかります。
-  const surcharges: SurchargeResult[] = building.surcharges.map((surcharge) => {
+  const surcharges: SurchargeResult[] = building.surcharges.filter((surcharge) => surcharge.billable).map((surcharge) => {
     const category = categories.find((row) => row.category.id === surcharge.categoryId);
     const usage = category?.usage ?? 0;
     const mode = tenant.sumMode[surcharge.id] ?? 'aggregate';
-    const parts = mode === 'perArea' ? (category?.usageByArea ?? []).map((row) => ({ label: row.areaName, usage: roundUsage(row.usage) }))
-      : mode === 'perMeter' ? (category?.usageByMeter ?? []).map((row) => ({ label: row.meterCode, usage: roundUsage(row.usage) }))
-      : [{ label: 'まとめて計算', usage }];
-    const groups = parts.map((part) => ({ ...part, amount: roundAmount(part.usage * surcharge.unitPrice) }));
+    const allMeters = (category?.subItems ?? []).flatMap((row) => row.meters);
+    const parts = mode === 'aggregate' ? [{ key: 'all', label: 'まとめて計算', usage }] : (() => {
+      const buckets = new Map<string, Meter[]>();
+      for (const row of allMeters) { const key = mode === 'perMeter' ? row.id : row.label; buckets.set(key, [...(buckets.get(key) ?? []), row]); }
+      return [...buckets.entries()].map(([key, rows]) => ({ key, label: mode === 'perMeter' ? rows[0].code : rows[0].label, usage: roundUsage(rows.reduce((sum, row) => sum + row.usage, 0)) }));
+    })();
+    const groups = parts.map((part) => ({ ...part, unitPrice: surcharge.unitPrice, amount: roundAmount(part.usage * surcharge.unitPrice) }));
     return { surcharge, usage, groups, amount: groups.reduce((sum, group) => sum + group.amount, 0) };
   });
 
   const total = categories.reduce((sum, row) => sum + row.amount, 0) + surcharges.reduce((sum, row) => sum + row.amount, 0);
-  return { tenant, categories, surcharges, total, difference: total - tenant.expected };
+
+  // 請求明細の項目ごとにまとめた金額です。請求書作成へ渡す単位になります。
+  const byLineItem = new Map<string, number>();
+  for (const category of categories) for (const subItem of category.subItems) if (subItem.amount) byLineItem.set(subItem.subItem.lineItemId, (byLineItem.get(subItem.subItem.lineItemId) ?? 0) + subItem.amount);
+  for (const surcharge of surcharges) if (surcharge.amount) byLineItem.set(surcharge.surcharge.lineItemId, (byLineItem.get(surcharge.surcharge.lineItemId) ?? 0) + surcharge.amount);
+
+  return { tenant, categories, surcharges, total, byLineItem, difference: total - tenant.expected };
 }

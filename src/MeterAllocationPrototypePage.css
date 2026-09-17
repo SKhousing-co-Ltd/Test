@@ -113,3 +113,8 @@
 .meter-category-head { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
 .meter-category-head label { display: grid; gap: 4px; color: #6d7d91; font-size: 11px; font-weight: 700; }
 .meter-category-config table { background: #fff; }
+
+.meter-category-head h5 { margin: 0; color: #2f4864; font-size: 13px; }
+.meter-category-config.meter-disabled { opacity: .55; }
+.meter-fixed-name { color: #45617f; font-weight: 700; }
+.meter-settings-panel .meter-check input { width: auto; height: auto; }
