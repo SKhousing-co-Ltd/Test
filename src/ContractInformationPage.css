@@ -1,0 +1,40 @@
+.contract-information-page { display: grid; gap: 16px; }
+.contract-information-heading h2 { margin: 4px 0 6px; color: #263851; font-size: 23px; }
+.contract-information-heading p:not(.section-kicker) { margin: 0; color: #748399; font-size: 12px; }
+
+.contract-information-toolbar { display: flex; align-items: end; gap: 12px; padding: 13px 15px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; }
+.contract-information-toolbar label { display: grid; gap: 5px; color: #65748a; font-size: 11px; font-weight: 700; }
+.contract-information-toolbar select, .contract-information-toolbar input { min-width: 180px; border: 1px solid #d7e0eb; border-radius: 6px; padding: 9px 10px; color: #3f5069; background: #fff; font: inherit; font-size: 12px; }
+
+.contract-information-notice { margin: 0; padding: 10px 13px; border: 1px solid #f0d2c5; border-radius: 8px; color: #914b36; background: #fff4ee; font-size: 12px; }
+.contract-information-notice.muted { border-color: #dfe6ee; color: #62738a; background: #f7f9fb; }
+
+.contract-information-panel { overflow: hidden; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.contract-information-panel-heading { display: flex; align-items: center; justify-content: space-between; padding: 15px 17px; border-bottom: 1px solid #e8edf3; }
+.contract-information-panel-heading h3 { margin: 0 0 4px; color: #33465f; font-size: 14px; }
+.contract-information-panel-heading p { margin: 0; color: #8290a3; font-size: 11px; }
+
+.contract-information-table-wrap { overflow: auto; }
+.contract-information-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; }
+.contract-information-table th, .contract-information-table td { padding: 11px 12px; border-bottom: 1px solid #edf1f5; color: #3d506a; text-align: left; white-space: nowrap; }
+.contract-information-table th { color: #62738a; background: #f8fafc; font-size: 11px; font-weight: 800; }
+.contract-information-table tbody tr { cursor: pointer; }
+.contract-information-table tbody tr:hover { background: #f7fbff; }
+.contract-information-table tbody tr.current { background: #eef6ff; }
+.contract-information-table td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.contract-information-table select { min-width: 220px; border: 1px solid #d7e0eb; border-radius: 6px; padding: 7px 9px; color: #3f5069; background: #fff; font: inherit; font-size: 12px; }
+.contract-information-table select:disabled { color: #98a4b4; background: #f1f4f7; }
+.contract-information-empty { padding: 36px !important; color: #8390a1 !important; text-align: center !important; cursor: default !important; }
+
+.contract-information-detail { display: grid; gap: 0; overflow: hidden; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.contract-information-section-heading { display: flex; align-items: center; justify-content: space-between; padding: 15px 17px; border-bottom: 1px solid #e8edf3; background: #fafbfd; }
+.contract-information-section-heading h3 { margin: 0 0 4px; color: #33465f; font-size: 14px; }
+.contract-information-section-heading p { margin: 0; color: #8290a3; font-size: 11px; }
+.contract-information-detail .contract-detail-grid { border-bottom: 1px solid #e8edf3; }
+.contract-information-detail .contract-information-notice { margin: 13px 17px 0; }
+.contract-information-detail .contract-information-table-wrap { margin: 0; }
+
+@media (max-width: 760px) {
+  .contract-information-toolbar { align-items: stretch; flex-direction: column; }
+  .contract-information-toolbar select, .contract-information-toolbar input { width: 100%; min-width: 0; box-sizing: border-box; }
+}
