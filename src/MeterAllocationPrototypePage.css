@@ -28,22 +28,6 @@
 .meter-warn { color: #b0603f; font-weight: 700; }
 .meter-table tfoot td { border-top: 2px solid #dbe5ef; color: #35516f; background: #f8fbfe; font-weight: 700; }
 
-.meter-detail-row td { padding: 0; background: #fbfdff; }
-.meter-detail { display: grid; gap: 12px; padding: 12px 16px 14px; border-left: 3px solid #b9d3ec; }
-.meter-detail section { overflow: hidden; border: 1px solid #e3eaf3; border-radius: 8px; background: #fff; }
-.meter-detail section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #eef2f7; background: #f7fafd; }
-.meter-detail section > header strong { color: #2f4864; font-size: 12px; }
-.meter-detail section > header span { color: #7d8b9e; font-size: 11px; }
-.meter-detail-columns { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(300px, 1.4fr); gap: 14px; padding: 11px 12px; }
-.meter-detail h5 { margin: 0 0 6px; color: #56708c; font-size: 11px; }
-.meter-detail table { width: 100%; border-collapse: collapse; }
-.meter-detail th { padding: 3px 5px; color: #8b99ab; font-size: 10px; font-weight: 700; text-align: left; }
-.meter-detail td { padding: 3px 5px; border: 0; color: #52667e; font-size: 11px; text-align: left; white-space: nowrap; }
-.meter-detail input { width: 96px; height: 25px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 11px; text-align: right; box-sizing: border-box; }
-.meter-unit { color: #93a1b2; }
-.meter-detail-sum { margin: 7px 0 0; color: #35516f; font-size: 11px; font-weight: 700; }
-.meter-detail-formula { margin: 0; padding: 8px 11px; border-radius: 6px; color: #56708c; background: #f1f6fb; font-size: 11px; line-height: 1.6; }
-
 .meter-settings { display: grid; gap: 14px; padding: 16px 20px 20px; border: 1px solid #dde7f2; border-radius: 10px; background: #fbfdff; }
 .meter-settings > header h3 { margin: 0 0 4px; color: #2f4864; font-size: 15px; }
 .meter-settings > header p { margin: 0; color: #7d8b9e; font-size: 12px; }
@@ -59,3 +43,27 @@
 .meter-settings-price { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; color: #6d7d91; }
 .meter-settings-pair { display: inline-flex; gap: 4px; }
 .meter-settings-meters span { display: block; color: #7d8b9e; }
+
+.meter-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-tabs button { border: 0; border-radius: 7px; padding: 9px 15px; color: #62748b; background: transparent; font-size: 12px; font-weight: 700; }
+.meter-tabs button:hover { background: #f2f7fc; }
+.meter-tabs button.active { color: #fff; background: #2f6fb0; }
+.meter-panel { display: grid; gap: 14px; padding: 16px 18px 18px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-panel-heading h3 { margin: 0 0 4px; color: #2f4864; font-size: 15px; }
+.meter-panel-heading p { margin: 0; color: #7d8b9e; font-size: 12px; }
+.meter-panel .meter-table-wrap { border: 1px solid #e6edf4; }
+.meter-input-table td { text-align: left; }
+.meter-panel select { height: 27px; max-width: 220px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #33506f; background: #fff; font: inherit; font-size: 12px; }
+.meter-panel input { width: 108px; height: 27px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: right; box-sizing: border-box; }
+.meter-subtotals h4 { margin: 0 0 8px; color: #35516f; font-size: 13px; }
+.meter-subtotals .meter-table { border: 1px solid #e6edf4; border-radius: 8px; }
+.meter-breakdown { text-align: left !important; white-space: normal !important; }
+.meter-breakdown span { display: block; color: #7d8b9e; font-size: 11px; }
+.meter-hint { margin: 9px 0 0; padding: 8px 11px; border-radius: 6px; color: #56708c; background: #f1f6fb; font-size: 11px; line-height: 1.6; }
+.meter-settings-block h4 { margin: 0 0 8px; color: #35516f; font-size: 13px; }
+.meter-settings-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.meter-settings-fields label { display: grid; gap: 4px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-settings-fields input { width: 140px; text-align: left; }
+.meter-settings-table td { text-align: left; }
+.meter-settings-table input[type='number'] { width: 84px; }
+.meter-settings-pair { display: inline-flex; gap: 4px; }
