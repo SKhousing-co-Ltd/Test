@@ -12,7 +12,7 @@ type ChangeRequest = {
   title: string; summary: string | null; source_payload: JsonObject; proposed_payload: JsonObject;
   source_appsuite_record_id: string | null; target_appsuite_record_id: string | null; lease_contract_id: string | null;
   row_version: number; updated_at: string; items?: ChangeRequestItem[]; comments?: ChangeRequestComment[];
-  source_record?: { app_id: string; data_id: string } | null;
+  source_record?: { app_id: string; data_id: string; ringi_number: string | null } | null;
 };
 type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
 type PropertyOption = { asset_id: string; asset_name: string };
@@ -180,7 +180,7 @@ function appsuiteRecordUrl(appId: string, dataId: string): string {
 function AppsuiteSourceContext({ request }: { request: ChangeRequest }) {
   if (request.source_type !== 'desknets') return null;
   const importantFields = ['稟議番号', '取下稟議番号', '物件名', '物件名称', 'テナント名', '申請内容', '取下理由']
-    .map((key) => [key, sourceValue(request.source_payload, key)] as const)
+    .map((key) => [key, key === '稟議番号' ? (request.source_record?.ringi_number || sourceValue(request.source_payload, key)) : sourceValue(request.source_payload, key)] as const)
     .filter(([, value]) => value);
   return <section className="change-card issue-context">
     <p className="section-kicker">APPSUITE APPROVAL</p>
@@ -667,7 +667,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (!supabase) return;
     setLoading(true); setError('');
     const { data, error: loadError } = await supabase.from('change_request')
-      .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, source_appsuite_record_id, target_appsuite_record_id, lease_contract_id, row_version, updated_at, source_record:appsuite_record!source_appsuite_record_id(app_id, data_id), items:change_request_item(change_request_item_id, entity_type, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
+      .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, source_appsuite_record_id, target_appsuite_record_id, lease_contract_id, row_version, updated_at, source_record:appsuite_record!source_appsuite_record_id(app_id, data_id, ringi_number), items:change_request_item(change_request_item_id, entity_type, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
       .order('updated_at', { ascending: false });
     setLoading(false);
     if (loadError) { setError(`対応依頼を読み込めませんでした: ${loadError.message}`); return; }
