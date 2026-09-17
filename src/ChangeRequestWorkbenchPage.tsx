@@ -66,6 +66,17 @@ const sourceValue = (payload: JsonObject, key: string) => {
   if (field && typeof field === 'object' && 'val' in field) return String((field as { val?: unknown }).val ?? '').trim();
   return field === null || field === undefined ? '' : String(field).trim();
 };
+function guessSourceTenantName(payload: JsonObject): string {
+  return sourceValue(payload, 'テナント名') || sourceValue(payload, 'tenant_name');
+}
+function useTextFilter<T>(items: T[], initial: string, textOf: (item: T) => string) {
+  const [query, setQuery] = useState(initial);
+  const filtered = useMemo(() => {
+    const term = query.trim().toLocaleLowerCase('ja-JP');
+    return term ? items.filter((item) => textOf(item).toLocaleLowerCase('ja-JP').includes(term)) : items;
+  }, [items, query]);
+  return { query, setQuery, filtered };
+}
 const requestTypeLabel: Record<string, string> = { contract_create: '新規契約', contract_update: '契約変更', approval_cancel: '稟議取消', contract_cancellation_review: '取消後の契約確認', parking_fee_setup: '駐車料設定', contract_term_type_confirmation: '契約形態確認', contract_renewal_due: '契約更新確認', fixed_term_contract_end: '定期賃貸借契約終了確認' };
 const compareContractUnitOptions = (left: ContractUnitOption, right: ContractUnitOption) => contractUnitLabel(left).localeCompare(contractUnitLabel(right), 'ja-JP', { numeric: true, sensitivity: 'base' });
 
@@ -451,6 +462,12 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
 }) {
   const sourceProperty = sourceValue(request.source_payload, '物件名') || sourceValue(request.source_payload, '物件名称');
   const sourceTenant = sourceValue(request.source_payload, 'テナント名');
+  const sortedContracts = useMemo(() => [...contracts].sort((a, b) => (a.tenant?.tenant_name ?? '').localeCompare(b.tenant?.tenant_name ?? '', 'ja-JP')), [contracts]);
+  const contractFilter = useTextFilter(sortedContracts, sourceTenant, (c) => `${c.tenant?.tenant_name ?? ''} ${c.contract_type ?? ''}`);
+  const tenantFilter = useTextFilter(tenants, sourceTenant, (t) => `${t.tenant_name} ${t.external_tenant_code ?? ''}`);
+  const propertyNameById = useMemo(() => new Map(properties.map((p) => [p.asset_id, p.asset_name])), [properties]);
+  const activeUnits = useMemo(() => units.filter((unit) => unit.is_active), [units]);
+  const unitFilter = useTextFilter(activeUnits, sourceProperty, (u) => `${propertyNameById.get(u.property_id) ?? ''} ${u.floor_label ?? ''} ${u.unit_code} ${u.unit_name ?? ''}`);
   const savedContract = (request.proposed_payload.contract ?? {}) as JsonObject;
   const savedUnits = Array.isArray(request.proposed_payload.units) ? request.proposed_payload.units as JsonObject[] : [];
   const [propertyId, setPropertyId] = useState(String(savedContract.property_id ?? properties.find((item) => item.asset_name === sourceProperty)?.asset_id ?? ''));
@@ -547,7 +564,14 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
     <ChecklistBox items={['原文の物件名・テナント名・契約期間を確認します。', 'システムに一致する物件・テナントがあるか検索します。', 'リーシング区画と各区画の賃料・面積を契約書と照合します。']} />
     <div className="change-item-editor">
       <label>物件<select value={propertyId} onChange={(e) => { setPropertyId(e.target.value); setSelectedUnitIds([]); }}><option value="">選択してください</option>{properties.map((item) => <option key={item.asset_id} value={item.asset_id}>{item.asset_name}</option>)}</select></label>
-      <label>既存テナント<select value={tenantId} onChange={(e) => { setTenantId(e.target.value); if (e.target.value) setNewTenantName(''); }}><option value="">新規テナントとして入力</option>{tenants.map((item) => <option key={item.tenant_id} value={item.tenant_id}>{item.tenant_name}</option>)}</select></label>
+      <label>既存テナント
+        <input value={tenantFilter.query} onChange={(e) => tenantFilter.setQuery(e.target.value)} placeholder="テナント名・コードで絞り込み" />
+        <select value={tenantId} onChange={(e) => { setTenantId(e.target.value); if (e.target.value) setNewTenantName(''); }}>
+          <option value="">新規テナントとして入力</option>
+          {tenantId && !tenantFilter.filtered.some((t) => t.tenant_id === tenantId) && (() => { const current = tenants.find((t) => t.tenant_id === tenantId); return current ? <option value={current.tenant_id}>{current.tenant_name}（選択中）</option> : null; })()}
+          {tenantFilter.filtered.map((item) => <option key={item.tenant_id} value={item.tenant_id}>{item.tenant_name}</option>)}
+        </select>
+      </label>
       {!tenantId && <label>新規テナント名<input value={newTenantName} onChange={(e) => setNewTenantName(e.target.value)} /></label>}
       <label>契約種別<input value={contractType} onChange={(e) => setContractType(e.target.value)} /></label>
       <label>開始日<input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label><label>終了日<input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
@@ -566,10 +590,23 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
   if (request.request_type === 'contract_update' || request.request_type === 'contract_cancellation_review') return <section className="change-card">
     <h4>契約変更を目視確認して入力</h4><p>申請原文は自動解釈しません。対象と変更値を1件ずつ登録します。</p>
     <ChecklistBox items={['原文の変更内容を確認します。', '対象契約と変更項目を1件ずつ、契約書原本と照合しながら入力します。', '本システムに対象項目がない場合は理由を記録します。']} />
-    <label>対象契約<select value={targetContractId} onChange={(e) => { setTargetContractId(e.target.value); setOperations([]); }}><option value="">選択してください</option>{contracts.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.tenant?.tenant_name ?? 'テナント未設定'}｜{contract.contract_start_date ?? '開始日未設定'}｜{contract.contract_type ?? '種別未設定'}</option>)}</select></label>
+    <label>対象契約
+      <input value={contractFilter.query} onChange={(e) => contractFilter.setQuery(e.target.value)} placeholder="テナント名で絞り込み" />
+      <select value={targetContractId} onChange={(e) => { setTargetContractId(e.target.value); setOperations([]); }}>
+        <option value="">選択してください（{contractFilter.filtered.length}件中）</option>
+        {targetContractId && !contractFilter.filtered.some((c) => c.lease_contract_id === targetContractId) && (() => { const current = contracts.find((c) => c.lease_contract_id === targetContractId); return current ? <option value={current.lease_contract_id}>{current.tenant?.tenant_name ?? 'テナント未設定'}｜{current.contract_start_date ?? '開始日未設定'}｜{current.contract_type ?? '種別未設定'}（選択中）</option> : null; })()}
+        {contractFilter.filtered.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.tenant?.tenant_name ?? 'テナント未設定'}｜{contract.contract_start_date ?? '開始日未設定'}｜{contract.contract_type ?? '種別未設定'}</option>)}
+      </select>
+    </label>
     <div className="change-item-editor">
       <label>操作<select value={operationKind} onChange={(e) => { const next = e.target.value as typeof operationKind; setOperationKind(next); setOperationTarget(''); setOperationField(next === 'contract' ? 'contract_type' : 'monthly_rent_amount'); }}><option value="contract">契約項目を変更</option><option value="unit">契約区画項目を変更</option><option value="link">区画を追加</option><option value="unlink">区画を解除</option></select></label>
-      {operationKind === 'contract' ? <label>対象契約<input value={targetContractId ? '選択中の契約' : ''} disabled /></label> : operationKind === 'link' ? <label>追加区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{units.filter((unit) => unit.is_active).map((unit) => <option key={unit.unit_id} value={unit.unit_id}>{unit.floor_label}｜{unit.unit_code}</option>)}</select></label> : <label>契約区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{contractUnits.filter((unit) => unit.contract?.lease_contract_id === targetContractId).map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label>}
+      {operationKind === 'contract' ? <label>対象契約<input value={targetContractId ? '選択中の契約' : ''} disabled /></label> : operationKind === 'link' ? <label>追加区画
+        <input value={unitFilter.query} onChange={(e) => unitFilter.setQuery(e.target.value)} placeholder="物件名・区画コードで絞り込み" />
+        <select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}>
+          <option value="">選択してください（{unitFilter.filtered.length}件中）</option>
+          {unitFilter.filtered.map((unit) => <option key={unit.unit_id} value={unit.unit_id}>{propertyNameById.get(unit.property_id) ?? '物件未設定'}｜{unit.floor_label ?? '階未設定'}｜{unit.unit_code}</option>)}
+        </select>
+      </label> : <label>契約区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{contractUnits.filter((unit) => unit.contract?.lease_contract_id === targetContractId).map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label>}
       {(operationKind === 'contract' || operationKind === 'unit') && <label>項目<select value={operationField} onChange={(e) => setOperationField(e.target.value)}>{operationKind === 'contract' ? [['contract_type', '契約種別'], ['contract_start_date', '契約開始日'], ['contract_end_date', '契約終了日'], ['renewal_terms', '更新条件'], ['payment_terms', '支払条件'], ['notes', '備考']].map(([value, label]) => <option value={value} key={value}>{label}</option>) : editableFields.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
       <label>{operationKind === 'unlink' ? '解除効力発生日' : operationKind === 'link' ? '利用開始日' : '反映予定値'}<input value={operationValue} onChange={(e) => setOperationValue(e.target.value)} /></label><button className="secondary-button" onClick={addOperation}>変更を追加</button>
     </div>
@@ -615,6 +652,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [contracts, setContracts] = useState<ContractOption[]>([]);
   const [itemUnitId, setItemUnitId] = useState('');
+  const [itemUnitSearch, setItemUnitSearch] = useState('');
   const [itemField, setItemField] = useState<(typeof editableFields)[number][0]>('leased_area_sqm');
   const [itemValue, setItemValue] = useState('');
   const previousVisibleIds = useRef<string[]>([]);
@@ -658,7 +696,11 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       .map((item) => item.entity_id!));
     return linkedUnitIds.size ? contractUnits.filter((unit) => linkedUnitIds.has(unit.lease_contract_unit_id)) : contractUnits;
   }, [contractUnits, selected]);
-  useEffect(() => { setComment(''); setItemUnitId(''); setItemValue(''); }, [selectedId]);
+  const filteredAvailableContractUnits = useMemo(() => {
+    const term = itemUnitSearch.trim().toLocaleLowerCase('ja-JP');
+    return term ? availableContractUnits.filter((unit) => contractUnitLabel(unit).toLocaleLowerCase('ja-JP').includes(term)) : availableContractUnits;
+  }, [availableContractUnits, itemUnitSearch]);
+  useEffect(() => { setComment(''); setItemUnitId(''); setItemValue(''); setItemUnitSearch(selected ? guessSourceTenantName(selected.source_payload) : ''); }, [selectedId]);
 
   const filtered = useMemo(() => requests.filter((request) => {
     const matchesStatus = filter === 'all' || request.status === filter;
@@ -794,7 +836,14 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
         {isContractDeadlineRequest && editable ? <ContractDeadlineRequestEditor key={`${selected.change_request_id}-${selected.row_version}-${selectedContract?.row_version ?? 'loading'}-${contractUnits.length}`} request={selected} contract={selectedContract} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} onHold={() => setStatus('on_hold')} /> : null}
         {isAppsuiteContractRequest && (editable || selected.status === 'resolved') && <AppsuiteContractEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} properties={properties} tenants={tenants} units={units} contracts={contracts} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} />}
         {!isAppsuiteContractRequest && !isParkingFeeRequest && !isContractDeadlineRequest && (reviewOnly ? <section className="change-card change-no-edit"><h4>契約条件の入力は不要です</h4><p>この依頼は、取込内容と元資料の一致を確認する作業です。確認した資料と結果を対応メモに残してください。</p></section> : <section className="change-card"><h4>反映する契約条件</h4><p>現在の値と反映予定の値を確認します。</p><div className="change-diff-table"><div className="change-diff-head"><span>項目</span><span>現在</span><span>反映予定</span></div>{domainItems.map((item) => <div key={item.change_request_item_id}><strong>{item.field_name || '未設定'}</strong><span>{prettyValue(item.current_value)}</span><span className="proposed-value">{prettyValue(item.proposed_value)}</span></div>)}</div></section>)}
-        {editable && !reviewOnly && !isAppsuiteContractRequest && !isParkingFeeRequest && !isContractDeadlineRequest && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画<select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}><option value="">選択してください</option>{availableContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
+        {editable && !reviewOnly && !isAppsuiteContractRequest && !isParkingFeeRequest && !isContractDeadlineRequest && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画
+  <input value={itemUnitSearch} onChange={(event) => setItemUnitSearch(event.target.value)} placeholder="テナント名・区画コードで絞り込み" />
+  <select value={itemUnitId} onChange={(event) => setItemUnitId(event.target.value)}>
+    <option value="">選択してください（{filteredAvailableContractUnits.length}件中）</option>
+    {itemUnitId && !filteredAvailableContractUnits.some((u) => u.lease_contract_unit_id === itemUnitId) && (() => { const current = availableContractUnits.find((u) => u.lease_contract_unit_id === itemUnitId); return current ? <option value={current.lease_contract_unit_id}>{contractUnitLabel(current)}（選択中）</option> : null; })()}
+    {filteredAvailableContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}
+  </select>
+</label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
         <section className="change-card"><h4>対応メモ</h4><p>確認した資料、採用する区画・請求コード、判断理由を残してください。</p><div className="change-comments">{selected.comments?.length ? selected.comments.map((entry) => <div key={entry.change_request_comment_id}><strong>開発メンバー</strong><time>{formatDate(entry.created_at)}</time><p>{entry.body}</p></div>) : <p className="muted">まだメモはありません。</p>}</div>{editable && <div className="comment-composer"><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="例：原本Excelの〇シートと契約書を確認。4F A〜Cを1契約として扱う。" /><button className="secondary-button" onClick={() => void addComment()} disabled={working || !comment.trim()}>メモを追加</button></div>}</section>
         {editable && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><ActionButton className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working} label="保留にする" hint="後で対応するため保留にします。データは変更されません。" /><ActionButton className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working} label="対象外にする" hint="この依頼を対応不要として終了します。データは変更されません。" /><ActionButton className="primary-button" onClick={() => void resolve()} disabled={working} label={working ? '処理中…' : '確認完了にする'} hint="確認内容を確定しますが、正本データはまだ変更されません。次に「内容を確定」で反映します。" /></footer> : selected.status === 'resolved' && selected.request_type !== 'approval_cancel' && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><p>最終確認後、正本へ反映します。</p><ActionButton className="primary-button" onClick={() => void apply()} disabled={working} label={working ? '処理中…' : '内容を確定'} hint="確認済みの内容を正本データへ反映します。この操作は取り消せません。" /></footer> : null}
       </> : <p className="change-empty">{filter === 'open' && !search.trim() && !loading ? 'すべての要確認案件を処理しました。' : '左側から対応依頼を選択してください。'}</p>}</main>
