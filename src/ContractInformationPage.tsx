@@ -70,8 +70,9 @@ const dayLabel = (day: string, offset: number) =>
 function duePatternLabel(pattern: DuePatternRow): string {
   const circled = '①②③④⑤⑥⑦⑧⑨⑩'.charAt(pattern.pattern_number - 1) || String(pattern.pattern_number);
   const month = pattern.month_offset ? '翌月' : '当月';
+  const day = pattern.day_of_month === 0 ? '末日' : `${pattern.day_of_month}日`;
   const holiday = pattern.holiday_adjustment === 'previous' ? '前日' : '翌日';
-  return `${circled}${month}${pattern.day_of_month}日（土日祝は${holiday}）`;
+  return `${circled}${month}${day}（土日祝は${holiday}）`;
 }
 
 function periodPatternLabel(pattern: PeriodPatternRow): string {
