@@ -82,7 +82,7 @@ type ParkingContract = {
   relationship_source: 'fee_history' | 'contract_header' | 'tenant_property_candidate';
 };
 
-type ContractDetailResponse = {
+export type ContractDetailResponse = {
   as_of_date: string;
   contract: ContractDetail;
   contract_units: ContractUnit[];
@@ -100,29 +100,29 @@ type ContractDetailModalProps = {
 
 const currency = new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 });
 const number = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });
-const statusLabels: Record<string, string> = {
+export const statusLabels: Record<string, string> = {
   draft: '下書き', active: '契約中', scheduled: '解約予定', terminated: '終了', expired: '満了',
 };
 
-function date(value: string | null): string {
+export function date(value: string | null): string {
   return value || '—';
 }
 
-function money(value: number | null | undefined): string {
+export function money(value: number | null | undefined): string {
   return value == null ? '—' : currency.format(Number(value));
 }
 
-function leaseTermLabel(value: ContractDetail['lease_term_type']): string {
+export function leaseTermLabel(value: ContractDetail['lease_term_type']): string {
   return value === 'ordinary' ? '普通賃貸借' : value === 'fixed_term' ? '定期賃貸借' : '未確認';
 }
 
-function contractPeriod(contract: ContractDetail): string {
+export function contractPeriod(contract: ContractDetail): string {
   if (contract.lease_term_type === 'ordinary') return `${date(contract.contract_start_date)} ～ 無期限`;
   if (contract.lease_term_type === 'fixed_term') return `${date(contract.contract_start_date)} ～ ${date(contract.contract_end_date)}`;
   return `${date(contract.contract_start_date)} ～ ${date(contract.contract_end_date)}（形態未確認）`;
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+export function Field({ label, value }: { label: string; value: string }) {
   return <div className="contract-detail-field"><span>{label}</span><strong>{value}</strong></div>;
 }
 
