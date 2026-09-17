@@ -3,19 +3,21 @@ import {
   calculateSubItem, calculateTenant, initialBuilding, initialMeters, initialTenants, lineItems, metersFor,
   roundingModeLabel, sumModeLabel,
   type BuildingConfig, type Category, type CategoryId, type Meter, type RoundingMode, type SubItem, type SumMode, type TenantConfig,
-} from './utils/meterPrototype';
-import './MeterAllocationPrototypePage.css';
+} from './utils/meterReading';
+import type { BillingPeriod } from './TenantBillingControls';
+import './MeterReadingPage.css';
 
-// 検針データ集計の試作画面です。
+// 検針データの画面です。
 // 分類（電気・水道・ガス）の中に小分類のタブを持ち、小分類ごとに
-// 「使用量の入力」と「メーターの割り当て」を切り替えます。保存はされません。
+// 「使用量の入力」と「メーターの割り当て」を切り替えます。
+// 現時点ではサンプルデータで動く試作で、保存はされません。
 
 const yen = new Intl.NumberFormat('ja-JP');
 const amount = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
 const sumModes: SumMode[] = ['aggregate', 'perLabel', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 
-export function MeterAllocationPrototypePage() {
+export function MeterReadingPage({ propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [building, setBuilding] = useState<BuildingConfig>(initialBuilding);
   const [tenants, setTenants] = useState<TenantConfig[]>(initialTenants);
   const [meters, setMeters] = useState<Meter[]>(initialMeters);
@@ -52,10 +54,11 @@ export function MeterAllocationPrototypePage() {
 
   return <section className="meter-page">
     <header className="meter-page-heading">
-      <div><p className="section-kicker">METER</p><h2>検針データ集計</h2><p>メーターの検針値からテナントごとの請求額を計算します。</p></div>
+      <div><p className="section-kicker">METER</p><h2>検針データ</h2><p>{propertyName || '物件未選択'}・{period.fiscalYear + (period.month <= 3 ? 1 : 0)}年{period.month}月分</p></div>
       <dl className="meter-page-meta">
         <div><dt>請求する分類</dt><dd>{visibleCategories.map((row) => row.name).join('・')}</dd></div>
         <div><dt>メーター</dt><dd>{meters.length} 台</dd></div>
+        <div><dt>状態</dt><dd>サンプルデータ（保存されません）</dd></div>
       </dl>
     </header>
 

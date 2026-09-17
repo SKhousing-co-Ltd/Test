@@ -4,6 +4,7 @@ import { BillingCodePage } from './BillingCodePage';
 import { BillingStatementPage } from './BillingStatementPage';
 import { PropertyBillingSettings } from './PropertyBillingSettings';
 import { InvoiceCreationPage } from './InvoiceCreationPage';
+import { MeterReadingPage } from './MeterReadingPage';
 import { supabase } from './lib/supabase';
 import { fiscalYearOf, TenantBillingControls, type BillingPeriod, type BillingProperty } from './TenantBillingControls';
 import './TenantBillingPage.css';
@@ -44,6 +45,8 @@ export function TenantBillingPage({ canEdit, canManageSettings }: { canEdit: boo
         ? <BillingStatementPage kind={activeMenu === 1 ? 'payment' : 'invoice'} propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} />
       : activeMenu === 3
         ? <InvoiceCreationPage propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} />
+      : activeMenu === 4
+        ? <MeterReadingPage propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} />
       : activeMenu === 5
         ? <PropertyBillingSettings propertyId={propertyId} properties={properties} canEdit={canEdit} />
         : <section className="tenant-billing-workspace"><p className="section-kicker">{billingMenus[activeMenu]}</p><h3>{billingMenus[activeMenu]}</h3><p>この領域に{billingMenus[activeMenu]}の機能を追加していきます。</p></section>}
