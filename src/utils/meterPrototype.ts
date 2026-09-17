@@ -1,41 +1,43 @@
 // 検針データ集計の試作用データと計算です。肥後橋の「電気検針データ集計表」R8.8 を写しています。
 //
-// 構成の考え方
-//   請求項目マスタ … ビルごとに「何を請求するか」を定義します。ページのタブはこの項目で決まります。
-//   区画マスタ     … 区画を登録し、借りているテナントを紐づけます。単価の上書きもここです。
-//   メーター       … どの区画に付いているかだけを持ちます。テナントは区画経由で決まります。
-//   テナント設定   … 契約単価・基本料・端数処理・金額の出し方を持ちます。
+// 構成
+//   大分類（カテゴリ） … 集計・電気・水道・ガス。ページの上段タブになります。
+//   小分類             … 電気を「基本料・電灯・空調」に分けるなど。カテゴリ内のタブになります。
+//   区画               … 借りているテナントを紐づけます。単価の上書きもここです。
+//   メーター           … 区画に付けます。テナントは区画を通じて決まります。
+//   増額分             … 分類の一部ではなく、カテゴリ全体の使用量にかかるものとして集計画面で計算します。
 // 集計処理は全ビル共通で、ビルごとの違いは上のデータだけで表します。
 
 export type RoundingMode = 'floor' | 'ceil' | 'round';
-// まとめて計算：使用量を合計してから単価をかける
-// 区画ごと：区画ごとに金額を出して合算する／メーターごと：メーターごとに金額を出して合算する
 export type SumMode = 'aggregate' | 'perArea' | 'perMeter';
 export const sumModeLabel: Record<SumMode, string> = { aggregate: 'まとめて計算', perArea: '区画ごとに計算', perMeter: 'メーターごとに計算' };
 export const roundingModeLabel: Record<RoundingMode, string> = { floor: '切り捨て', ceil: '切り上げ', round: '四捨五入' };
 
-export type MeterKind = { id: string; name: string };
-export type ChargeItem = {
+export type MeterKind = { id: string; name: string; primaryLabel: string; secondaryLabel?: string };
+export type Category = { id: string; name: string; unit: string };
+export type SubItem = {
   id: string;
+  categoryId: string;
   name: string;
-  unit: string;
-  // meter: メーターの検針値を使う／derived: 他の項目の使用量を使う（電気増額分など）
-  source: 'meter' | 'derived';
+  // meter: メーターの検針値から計算／fixed: テナントごとの固定額（基本料など）
+  source: 'meter' | 'fixed';
   meterKindId?: string;
-  readingField?: 'electric' | 'gas';
-  derivedFrom?: string[];
+  readingField?: 'primary' | 'secondary';
   // tenant: テナントの契約単価（区画で上書き可）／common: 物件共通の単価
   priceSource: 'tenant' | 'common';
   commonUnitPrice?: number;
 };
+// カテゴリ全体の使用量にかかる加算です。集計画面で計算します。
+export type Surcharge = { id: string; name: string; categoryId: string; unitPrice: number };
 
 export type Area = { id: string; name: string; tenantId: string; unitPrice?: number };
-export type Meter = { id: string; code: string; areaId: string; meterKindId: string; electric: number; gas: number };
+export type Meter = { id: string; code: string; areaId: string; meterKindId: string; primary: number; secondary: number };
+
 export type TenantConfig = {
   id: string;
   name: string;
   unitPrice: number;
-  basicCharge: number;
+  fixedCharges: Record<string, number>;
   usageRoundingUnit: number;
   usageRoundingMode: RoundingMode;
   amountRoundingUnit: number;
@@ -49,25 +51,38 @@ export type BuildingConfig = {
   period: string;
   meterDate: string;
   meterKinds: MeterKind[];
-  items: ChargeItem[];
+  categories: Category[];
+  subItems: SubItem[];
+  surcharges: Surcharge[];
 };
 
 export const initialBuilding: BuildingConfig = {
   name: '三共肥後橋ビル',
   period: '2026年9月分',
   meterDate: '2026/9/2',
-  meterKinds: [{ id: 'light', name: '電灯メーター' }, { id: 'ac', name: '空調（電気・ガス）' }],
-  items: [
-    { id: 'light', name: '電灯', unit: 'kWh', source: 'meter', meterKindId: 'light', readingField: 'electric', priceSource: 'tenant' },
-    { id: 'ac', name: '空調', unit: 'kWh', source: 'meter', meterKindId: 'ac', readingField: 'electric', priceSource: 'tenant' },
-    { id: 'gas', name: 'ガス', unit: '㎥', source: 'meter', meterKindId: 'ac', readingField: 'gas', priceSource: 'common', commonUnitPrice: 160 },
-    { id: 'surcharge', name: '電気増額分', unit: 'kWh', source: 'derived', derivedFrom: ['light', 'ac'], priceSource: 'common', commonUnitPrice: 8.02 },
+  meterKinds: [
+    { id: 'light', name: '電灯メーター', primaryLabel: '使用量' },
+    { id: 'ac', name: '空調メーター', primaryLabel: '電気', secondaryLabel: 'ガス' },
+    { id: 'water', name: '水道メーター', primaryLabel: '使用量' },
   ],
+  categories: [
+    { id: 'electric', name: '電気', unit: 'kWh' },
+    { id: 'water', name: '水道', unit: '㎥' },
+    { id: 'gas', name: 'ガス', unit: '㎥' },
+  ],
+  subItems: [
+    { id: 'basic', categoryId: 'electric', name: '基本料', source: 'fixed', priceSource: 'tenant' },
+    { id: 'light', categoryId: 'electric', name: '電灯', source: 'meter', meterKindId: 'light', readingField: 'primary', priceSource: 'tenant' },
+    { id: 'ac', categoryId: 'electric', name: '空調', source: 'meter', meterKindId: 'ac', readingField: 'primary', priceSource: 'tenant' },
+    { id: 'water', categoryId: 'water', name: '水道', source: 'meter', meterKindId: 'water', readingField: 'primary', priceSource: 'common', commonUnitPrice: 338.27 },
+    { id: 'gas', categoryId: 'gas', name: 'ガス', source: 'meter', meterKindId: 'ac', readingField: 'secondary', priceSource: 'common', commonUnitPrice: 160 },
+  ],
+  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02 }],
 };
 
-const modes = (mode: SumMode): Record<string, SumMode> => ({ light: mode, ac: mode, gas: mode, surcharge: mode });
+const modes = (mode: SumMode): Record<string, SumMode> => ({ light: mode, ac: mode, gas: mode, water: mode, surcharge: mode });
 const base = (rounding: RoundingMode, sum: SumMode = 'aggregate') => ({
-  usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, basicCharge: 0, sumMode: modes(sum),
+  usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {}, sumMode: modes(sum),
 });
 
 export const initialTenants: TenantConfig[] = [
@@ -83,10 +98,12 @@ export const initialTenants: TenantConfig[] = [
   { id: 'T10', name: '九州運輸センター協同組合', unitPrice: 35, ...base('floor'), expected: 53285 },
   { id: 'T11', name: '㈱ミタカ', unitPrice: 35, ...base('round'), expected: 33064 },
   { id: 'T12', name: 'アイシステム', unitPrice: 33, ...base('round'), expected: 32263 },
-  { id: 'T13', name: 'コンカレントシステムズ', unitPrice: 15.38, ...base('round'), basicCharge: 50379, expected: 365838 },
+  { id: 'T13', name: 'コンカレントシステムズ', unitPrice: 15.38, ...base('round'), fixedCharges: { basic: 50379 }, expected: 365838 },
+  { id: 'T14', name: 'セブンイレブン', unitPrice: 0, ...base('floor'), expected: 11501 },
 ];
 
 export const initialAreas: Area[] = [
+  { id: 'A0', name: '1F', tenantId: 'T14' },
   { id: 'A1', name: '2F 南', tenantId: 'T1' },
   { id: 'A2', name: '2F 北', tenantId: 'T2' },
   { id: 'A3', name: '2F 中', tenantId: 'T3' },
@@ -104,10 +121,12 @@ export const initialAreas: Area[] = [
   { id: 'A15', name: '7F 北', tenantId: 'T13', unitPrice: 33 },
 ];
 
-const lightMeter = (id: string, code: string, areaId: string, electric: number): Meter => ({ id, code, areaId, meterKindId: 'light', electric, gas: 0 });
-const acMeter = (no: string, areaId: string, electric: number, gas: number): Meter => ({ id: no, code: no, areaId, meterKindId: 'ac', electric, gas });
+const lightMeter = (id: string, code: string, areaId: string, primary: number): Meter => ({ id, code, areaId, meterKindId: 'light', primary, secondary: 0 });
+const acMeter = (no: string, areaId: string, primary: number, secondary: number): Meter => ({ id: no, code: no, areaId, meterKindId: 'ac', primary, secondary });
 
 export const initialMeters: Meter[] = [
+  { id: 'W1', code: '60R-141-19-009', areaId: 'A0', meterKindId: 'water', primary: 34, secondary: 0 },
+
   lightMeter('L1', '223-607-805', 'A1', 564.5), lightMeter('L2', '223-607-995', 'A2', 431.7), lightMeter('L3', '224-603-349', 'A3', 296.1),
   lightMeter('L4', '223-607-843', 'A4', 290.7), lightMeter('L5', '224-602-118', 'A4', 402.9),
   lightMeter('L6', '223-607-982', 'A5', 1253), lightMeter('L7', '224-602-989', 'A5', 1103.9),
@@ -147,30 +166,30 @@ export const applyRounding = (value: number, unit: number, mode: RoundingMode) =
 
 export type ChargeInput = { meterId: string; meterCode: string; areaId: string; areaName: string; usage: number; unitPrice: number };
 export type ChargeGroup = { key: string; label: string; usage: number; unitPrice: number; amount: number };
-export type ChargeResult = { item: ChargeItem; inputs: ChargeInput[]; usage: number; amount: number; groups: ChargeGroup[] };
+export type SubItemResult = { subItem: SubItem; inputs: ChargeInput[]; usage: number; amount: number; groups: ChargeGroup[] };
+export type SurchargeResult = { surcharge: Surcharge; usage: number; amount: number; groups: Array<{ label: string; usage: number; amount: number }> };
+export type AreaUsage = { areaId: string; areaName: string; usage: number };
+export type CategoryResult = { category: Category; subItems: SubItemResult[]; usage: number; usageByArea: AreaUsage[]; usageByMeter: ChargeInput[]; amount: number };
 
-const unitPriceFor = (item: ChargeItem, tenant: TenantConfig, area: Area | undefined) =>
-  item.priceSource === 'common' ? item.commonUnitPrice ?? 0 : area?.unitPrice ?? tenant.unitPrice;
-
-export function collectInputs(item: ChargeItem, tenant: TenantConfig, areas: Area[], meters: Meter[], items: ChargeItem[]): ChargeInput[] {
-  const tenantAreas = areas.filter((area) => area.tenantId === tenant.id);
-  if (item.source === 'derived') {
-    const sources = items.filter((row) => (item.derivedFrom ?? []).includes(row.id));
-    return sources.flatMap((source) => collectInputs(source, tenant, areas, meters, items)).map((input) => ({ ...input, unitPrice: item.commonUnitPrice ?? 0 }));
-  }
-  return tenantAreas.flatMap((area) => meters
-    .filter((meter) => meter.areaId === area.id && meter.meterKindId === item.meterKindId)
+export function collectInputs(subItem: SubItem, tenant: TenantConfig, areas: Area[], meters: Meter[]): ChargeInput[] {
+  if (subItem.source === 'fixed') return [];
+  return areas.filter((area) => area.tenantId === tenant.id).flatMap((area) => meters
+    .filter((meter) => meter.areaId === area.id && meter.meterKindId === subItem.meterKindId)
     .map((meter) => ({
       meterId: meter.id, meterCode: meter.code, areaId: area.id, areaName: area.name,
-      usage: item.readingField === 'gas' ? meter.gas : meter.electric,
-      unitPrice: unitPriceFor(item, tenant, area),
+      usage: subItem.readingField === 'secondary' ? meter.secondary : meter.primary,
+      unitPrice: subItem.priceSource === 'common' ? subItem.commonUnitPrice ?? 0 : area.unitPrice ?? tenant.unitPrice,
     })));
 }
 
-export function calculateItem(item: ChargeItem, tenant: TenantConfig, inputs: ChargeInput[]): ChargeResult {
+export function calculateSubItem(subItem: SubItem, tenant: TenantConfig, inputs: ChargeInput[]): SubItemResult {
+  if (subItem.source === 'fixed') {
+    const fixed = tenant.fixedCharges[subItem.id] ?? 0;
+    return { subItem, inputs: [], usage: 0, amount: fixed, groups: fixed ? [{ key: 'fixed', label: '固定額', usage: 0, unitPrice: 0, amount: fixed }] : [] };
+  }
   const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
-  const mode = tenant.sumMode[item.id] ?? 'aggregate';
+  const mode = tenant.sumMode[subItem.id] ?? 'aggregate';
   const usage = roundUsage(inputs.reduce((sum, input) => sum + input.usage, 0));
 
   // 単価が違うものは、どの方式でも必ず分けて計算します。
@@ -183,13 +202,48 @@ export function calculateItem(item: ChargeItem, tenant: TenantConfig, inputs: Ch
     const groupUsage = roundUsage(rows.reduce((sum, row) => sum + row.usage, 0));
     return { key, label: labelOf(rows[0], buckets.size), usage: groupUsage, unitPrice: rows[0].unitPrice, amount: roundAmount(groupUsage * rows[0].unitPrice) };
   });
-  return { item, inputs, usage, amount: groups.reduce((sum, group) => sum + group.amount, 0), groups };
+  return { subItem, inputs, usage, amount: groups.reduce((sum, group) => sum + group.amount, 0), groups };
 }
 
 export type TenantResult = ReturnType<typeof calculateTenant>;
 
 export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, areas: Area[], meters: Meter[]) {
-  const charges = building.items.map((item) => calculateItem(item, tenant, collectInputs(item, tenant, areas, meters, building.items)));
-  const total = charges.reduce((sum, charge) => sum + charge.amount, 0) + tenant.basicCharge;
-  return { tenant, charges, total, difference: total - tenant.expected };
+  const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
+  const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
+
+  const categories: CategoryResult[] = building.categories.map((category) => {
+    const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
+      .map((subItem) => calculateSubItem(subItem, tenant, collectInputs(subItem, tenant, areas, meters)));
+    // 増額分を区画ごとやメーターごとに計算する場合に備えて、内訳も持たせます。
+    const usageByMeter = subItems.flatMap((row) => row.inputs);
+    const areaTotals = new Map<string, AreaUsage>();
+    for (const row of subItems) {
+      const perArea = new Map<string, ChargeInput[]>();
+      for (const input of row.inputs) perArea.set(input.areaId, [...(perArea.get(input.areaId) ?? []), input]);
+      for (const [areaId, rows] of perArea) {
+        const current = areaTotals.get(areaId) ?? { areaId, areaName: rows[0].areaName, usage: 0 };
+        areaTotals.set(areaId, { ...current, usage: current.usage + roundUsage(rows.reduce((sum, input) => sum + input.usage, 0)) });
+      }
+    }
+    return {
+      category, subItems, usageByMeter, usageByArea: [...areaTotals.values()],
+      usage: roundUsage(subItems.reduce((sum, row) => sum + row.usage, 0)),
+      amount: subItems.reduce((sum, row) => sum + row.amount, 0),
+    };
+  });
+
+  // 増額分はカテゴリ全体の使用量にかかります。
+  const surcharges: SurchargeResult[] = building.surcharges.map((surcharge) => {
+    const category = categories.find((row) => row.category.id === surcharge.categoryId);
+    const usage = category?.usage ?? 0;
+    const mode = tenant.sumMode[surcharge.id] ?? 'aggregate';
+    const parts = mode === 'perArea' ? (category?.usageByArea ?? []).map((row) => ({ label: row.areaName, usage: roundUsage(row.usage) }))
+      : mode === 'perMeter' ? (category?.usageByMeter ?? []).map((row) => ({ label: row.meterCode, usage: roundUsage(row.usage) }))
+      : [{ label: 'まとめて計算', usage }];
+    const groups = parts.map((part) => ({ ...part, amount: roundAmount(part.usage * surcharge.unitPrice) }));
+    return { surcharge, usage, groups, amount: groups.reduce((sum, group) => sum + group.amount, 0) };
+  });
+
+  const total = categories.reduce((sum, row) => sum + row.amount, 0) + surcharges.reduce((sum, row) => sum + row.amount, 0);
+  return { tenant, categories, surcharges, total, difference: total - tenant.expected };
 }

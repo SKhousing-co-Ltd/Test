@@ -99,3 +99,17 @@
 .meter-order { white-space: nowrap; }
 .meter-order button { border: 1px solid #dde5ee; border-radius: 4px; padding: 1px 5px; color: #7d8b9e; background: #fff; font-size: 9px; }
 .meter-delete { border: 0; color: #b05656; background: transparent; font-size: 11px; }
+
+.meter-panel-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.meter-switch { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #dde7f2; border-radius: 8px; background: #f7fafd; }
+.meter-switch button { border: 0; border-radius: 6px; padding: 6px 12px; color: #62748b; background: transparent; font-size: 11px; font-weight: 700; }
+.meter-switch button.active { color: #fff; background: #4b8ed4; }
+.meter-subtabs { display: flex; flex-wrap: wrap; gap: 3px; padding-bottom: 2px; border-bottom: 1px solid #e6edf4; }
+.meter-subtabs button { border: 0; border-bottom: 2px solid transparent; padding: 7px 13px; color: #74849a; background: transparent; font-size: 12px; font-weight: 700; }
+.meter-subtabs button.active { border-bottom-color: #2f6fb0; color: #2f6fb0; }
+.meter-note { display: block; margin-top: 2px; color: #a3b0c0; font-size: 10px; font-weight: 400; }
+.meter-assign { display: grid; gap: 9px; }
+.meter-category-config { display: grid; gap: 8px; padding: 12px; border: 1px solid #e6edf4; border-radius: 9px; background: #fbfdff; }
+.meter-category-head { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.meter-category-head label { display: grid; gap: 4px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-category-config table { background: #fff; }
