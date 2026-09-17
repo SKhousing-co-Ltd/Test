@@ -12,6 +12,7 @@ type ChangeRequest = {
   title: string; summary: string | null; source_payload: JsonObject; proposed_payload: JsonObject;
   source_appsuite_record_id: string | null; target_appsuite_record_id: string | null; lease_contract_id: string | null;
   row_version: number; updated_at: string; items?: ChangeRequestItem[]; comments?: ChangeRequestComment[];
+  source_record?: { app_id: string; data_id: string } | null;
 };
 type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
 type PropertyOption = { asset_id: string; asset_name: string };
@@ -172,6 +173,10 @@ function IssueContext({ request }: { request: ChangeRequest }) {
   </section>;
 }
 
+function appsuiteRecordUrl(appId: string, dataId: string): string {
+  return `https://sk-housing.dn-cloud.com/cgi-bin/dneo/appsuite.cgi?cmd=cdbbrowse&app_id=${appId}#view_id=2&id=${dataId}`;
+}
+
 function AppsuiteSourceContext({ request }: { request: ChangeRequest }) {
   if (request.source_type !== 'desknets') return null;
   const importantFields = ['稟議番号', '取下稟議番号', '物件名', '物件名称', 'テナント名', '申請内容', '取下理由']
@@ -182,7 +187,7 @@ function AppsuiteSourceContext({ request }: { request: ChangeRequest }) {
     <h4>{requestTypeLabel[request.request_type] ?? 'AppSuite申請'}の原文</h4>
     <div className="change-diff-table">
       <div className="change-diff-head"><span>項目</span><span>申請内容</span><span>取扱い</span></div>
-      {importantFields.map(([key, value]) => <div key={key}><strong>{key}</strong><span>{value}</span><span>{key === '申請内容' || key === '取下理由' ? '原文を目視確認' : '照合情報'}</span></div>)}
+      {importantFields.map(([key, value]) => <div key={key}><strong>{key}</strong><span>{key === '稟議番号' && request.source_record ? <a href={appsuiteRecordUrl(request.source_record.app_id, request.source_record.data_id)} target="_blank" rel="noreferrer">{value}</a> : value}</span><span>{key === '稟議番号' && request.source_record ? 'クリックしてデスクネッツで開く' : key === '申請内容' || key === '取下理由' ? '原文を目視確認' : '照合情報'}</span></div>)}
     </div>
     <details className="change-dev-details"><summary>AppSuiteペイロード全体を確認</summary><pre className="change-json-editor">{JSON.stringify(request.source_payload, null, 2)}</pre></details>
   </section>;
@@ -662,7 +667,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (!supabase) return;
     setLoading(true); setError('');
     const { data, error: loadError } = await supabase.from('change_request')
-      .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, source_appsuite_record_id, target_appsuite_record_id, lease_contract_id, row_version, updated_at, items:change_request_item(change_request_item_id, entity_type, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
+      .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, source_appsuite_record_id, target_appsuite_record_id, lease_contract_id, row_version, updated_at, source_record:appsuite_record!source_appsuite_record_id(app_id, data_id), items:change_request_item(change_request_item_id, entity_type, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
       .order('updated_at', { ascending: false });
     setLoading(false);
     if (loadError) { setError(`対応依頼を読み込めませんでした: ${loadError.message}`); return; }
