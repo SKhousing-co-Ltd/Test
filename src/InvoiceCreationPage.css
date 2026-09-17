@@ -28,7 +28,8 @@
 /* 列ごとの文字ぞろえです。 */
 .invoice-csv-table td.invoice-cell-right input { text-align: right; }
 .invoice-csv-table td.invoice-cell-center input, .invoice-csv-table td.invoice-cell-center select { text-align: center; }
-.invoice-total-row th:first-child { text-align: left; }
+.invoice-total-row th:first-child { z-index: 4; overflow: visible; text-align: left; }
+.invoice-total-row th:first-child span { position: absolute; top: 50%; left: 5px; transform: translateY(-50%); white-space: nowrap; }
 .invoice-total-row th.invoice-cell-right { text-align: right; }
 .invoice-total-row span { color: #54708c; font-size: 10px; }
 .invoice-total-row strong { margin-top: 0; }
