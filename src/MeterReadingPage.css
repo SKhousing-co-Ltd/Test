@@ -222,3 +222,11 @@
 .meter-surcharge-row td { background: #fdf7e8; }
 .meter-cat-water .meter-surcharge-row td { background: #eef5fd; }
 .meter-cat-gas .meter-surcharge-row td { background: #fdf0ee; }
+
+/* 小分類の表：電気・水道・ガスで列位置をそろえます。 */
+.meter-subitem-table { table-layout: fixed; width: auto; }
+.meter-settings-panel .meter-subitem-table select { width: 100%; max-width: none; }
+.meter-settings-panel .meter-subitem-table input { width: 100%; }
+.meter-settings-panel .meter-subitem-table input.meter-narrow { width: 100%; }
+.meter-subitem-table .meter-settings-pair { display: flex; gap: 4px; }
+.meter-subitem-table .meter-settings-pair select { flex: 1 1 0; min-width: 0; }
