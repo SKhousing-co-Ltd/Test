@@ -17,7 +17,17 @@ export const roundingModeLabel: Record<RoundingMode, string> = { floor: '切り�
 
 export type CategoryId = 'electric' | 'water' | 'gas';
 export type Category = { id: CategoryId; name: string; unit: string; billable: boolean; fixedBillable: boolean };
-export type SubItem = { id: string; categoryId: CategoryId; name: string; kind: 'basic' | 'custom'; lineItemId: string };
+export type SubItem = {
+  id: string;
+  categoryId: CategoryId;
+  name: string;
+  kind: 'basic' | 'custom';
+  lineItemId: string;
+  // ビルの既定単価です。テナントに契約単価が入っていない場合に使います。
+  defaultUnitPrice: number | null;
+  // 既定の請求期間です。請求設定の請求期間パターンから選びます。
+  periodPatternId: string;
+};
 export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean };
 // 請求設定で登録した明細項目のうち、請求種別に公共料金（電気・水道・ガス）が設定されているものです。
 export type LineItem = { id: string; name: string; utilityKind: string | null; chargeTypeName: string };
@@ -26,7 +36,8 @@ export type Meter = { id: string; subItemId: string; code: string; label: string
 export type TenantConfig = {
   id: string;
   name: string;
-  unitPrices: Record<CategoryId, number>;
+  // 契約単価です。未設定（null）の場合は小分類のビル既定単価を使います。
+  unitPrices: Record<CategoryId, number | null>;
   fixedCharges: Record<string, number>;
   usageRoundingUnit: number;
   usageRoundingMode: RoundingMode;
@@ -45,18 +56,19 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '' },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '' },
-    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '' },
-    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '' },
-    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '' },
-    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '' },
-    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '' },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '' },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '' },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', defaultUnitPrice: 338.27, periodPatternId: '' },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', defaultUnitPrice: 160, periodPatternId: '' },
   ],
   surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
 };
 
-const rates = (electric: number, water = 338.27, gas = 160): Record<CategoryId, number> => ({ electric, water, gas });
+// 水道とガスは全テナント共通なので、契約単価は持たせず小分類の既定単価を使います。
+const rates = (electric: number | null): Record<CategoryId, number | null> => ({ electric, water: null, gas: null });
 const base = (rounding: RoundingMode, sum: SumMode = 'aggregate') => ({
   usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {},
   sumMode: { light: sum, ac: sum, water_usage: sum, gas_usage: sum, surcharge: sum } as Record<string, SumMode>,
@@ -76,7 +88,7 @@ export const initialTenants: TenantConfig[] = [
   { id: 'T11', name: '㈱ミタカ', unitPrices: rates(35), ...base('round'), expected: 33064 },
   { id: 'T12', name: 'アイシステム', unitPrices: rates(33), ...base('round'), expected: 32263 },
   { id: 'T13', name: 'コンカレントシステムズ', unitPrices: rates(15.38), ...base('round'), fixedCharges: { electric_basic: 50379 }, expected: 365838 },
-  { id: 'T14', name: 'セブンイレブン', unitPrices: rates(0), ...base('floor'), expected: 11501 },
+  { id: 'T14', name: 'セブンイレブン', unitPrices: rates(null), ...base('floor'), expected: 11501 },
 ];
 
 const meter = (subItemId: string, code: string, label: string, tenantId: string, usage: number, unitPrice?: number): Meter =>
@@ -145,7 +157,8 @@ export function calculateSubItem(subItem: SubItem, category: Category, tenant: T
 
   const own = metersFor(subItem.id, tenant.id, meters);
   const mode = tenant.sumMode[subItem.id] ?? 'aggregate';
-  const priceOf = (row: Meter) => row.unitPrice ?? tenant.unitPrices[category.id];
+  // 単価はメーターの上書き、テナントの契約単価、小分類のビル既定単価の順で決めます。
+  const priceOf = (row: Meter) => row.unitPrice ?? tenant.unitPrices[category.id] ?? subItem.defaultUnitPrice ?? 0;
   const usage = roundUsage(own.reduce((sum, row) => sum + row.usage, 0));
 
   // 単価が違うメーターは、どの方式でも必ず分けて計算します。

@@ -169,3 +169,9 @@
 /* ヘッダーの検針日 */
 .meter-date { display: inline-flex; align-items: center; gap: 8px; color: #45617f; font-size: 12px; font-weight: 700; }
 .meter-date input { height: 30px; padding: 3px 8px; border: 1px solid #d4dfeb; border-radius: 5px; color: #244d76; background: #fff; font: inherit; font-size: 12px; box-sizing: border-box; }
+
+/* ヘッダーの検針日と、請求期間パターンの一覧 */
+.meter-date-fields { display: flex; flex-wrap: wrap; gap: 16px; }
+.meter-periods { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 14px; border: 1px solid #e0e9f3; border-radius: 9px; background: #f7fafd; }
+.meter-periods span { display: inline-flex; align-items: baseline; gap: 7px; color: #45617f; font-size: 12px; }
+.meter-periods b { color: #2f4864; font-size: 12px; }
