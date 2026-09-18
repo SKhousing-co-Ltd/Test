@@ -168,3 +168,14 @@
 
 .meter-date-previous { display: inline-flex; align-items: center; gap: 8px; color: #7d8b9e; font-size: 12px; }
 .meter-date-previous b { color: #45617f; font-size: 12px; }
+
+/* テナント契約：税区分とデータ分割設定 */
+.meter-settings-panel select.meter-tax-mode { max-width: 74px; }
+.meter-tax-rate { display: inline-flex; align-items: center; gap: 5px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-settings-panel .meter-tax-rate input { width: 56px; text-align: center; }
+.meter-split-cell { min-width: 190px; }
+.meter-split-invoices { display: grid; gap: 3px; margin-top: 5px; }
+.meter-split-invoices label { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: #7d8b9e; font-size: 10px; }
+.meter-split-row td { background: #fafcfe; color: #6d7d91; }
+.meter-split-row .meter-col-name { padding-left: 24px; }
+.meter-split-row .meter-col-name small { display: block; margin-top: 2px; color: #93a1b2; font-size: 10px; }

@@ -44,10 +44,24 @@ export type TenantConfig = {
   amountRoundingUnit: number;
   amountRoundingMode: RoundingMode;
   sumMode: Record<string, SumMode>;
+  // 単価が税抜か税込か、税込のとき税抜へ戻す際の丸め方です。
+  taxModes: Record<CategoryId, TaxMode>;
+  taxRoundingMode: RoundingMode;
+  taxRoundingDigits: number;
+  dataSplit: DataSplit;
+  // 区画（メーター識別）ごとに、どの請求書へ載せるかです。
+  invoiceByLabel: Record<string, number>;
   expected: number;
 };
 
-export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[] };
+// 単価が税込のとき、データ上は税抜へ戻します。戻すときの小数点以下の扱いを選べます。
+export type TaxMode = 'exclusive' | 'inclusive';
+export const taxModeLabel: Record<TaxMode, string> = { exclusive: '税抜', inclusive: '税込' };
+// 同じテナントが複数区画を契約しているときの、検針データの分け方です。
+export type DataSplit = 'single' | 'perLabel' | 'perInvoice';
+export const dataSplitLabel: Record<DataSplit, string> = { single: '全区画をまとめる', perLabel: '区画を分けて同一請求書', perInvoice: '区画を分けて請求書も分ける' };
+
+export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[]; taxRate: number };
 
 export const initialBuilding: BuildingConfig = {
   categories: [
@@ -64,12 +78,15 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
     { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', defaultUnitPrice: 160, periodPatternId: '' },
   ],
+  taxRate: 0.1,
   surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
 };
 
 // 水道とガスは全テナント共通なので、契約単価は持たせず小分類の既定単価を使います。
 const rates = (electric: number | null): Record<CategoryId, number | null> => ({ electric, water: null, gas: null });
 const base = (rounding: RoundingMode, sum: SumMode = 'aggregate') => ({
+  taxModes: { electric: 'exclusive', water: 'exclusive', gas: 'exclusive' } as Record<CategoryId, TaxMode>,
+  taxRoundingMode: 'floor' as RoundingMode, taxRoundingDigits: 2, dataSplit: 'single' as DataSplit, invoiceByLabel: {} as Record<string, number>,
   usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {},
   sumMode: { light: sum, ac: sum, water_usage: sum, gas_usage: sum, surcharge: sum } as Record<string, SumMode>,
 });
@@ -146,7 +163,13 @@ export type CategoryResult = { category: Category; subItems: SubItemResult[]; us
 
 export const metersFor = (subItemId: string, tenantId: string, meters: Meter[]) => meters.filter((row) => row.subItemId === subItemId && row.tenantId === tenantId);
 
-export function calculateSubItem(subItem: SubItem, category: Category, tenant: TenantConfig, meters: Meter[]): SubItemResult {
+export function toExclusive(price: number, categoryId: CategoryId, tenant: TenantConfig, taxRate: number) {
+  if (tenant.taxModes[categoryId] !== 'inclusive' || !price) return price;
+  const unit = Number(Math.pow(10, -tenant.taxRoundingDigits).toFixed(tenant.taxRoundingDigits));
+  return applyRounding(price / (1 + taxRate), unit, tenant.taxRoundingMode);
+}
+
+export function calculateSubItem(subItem: SubItem, category: Category, tenant: TenantConfig, meters: Meter[], taxRate = 0): SubItemResult {
   const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
 
@@ -158,7 +181,8 @@ export function calculateSubItem(subItem: SubItem, category: Category, tenant: T
   const own = metersFor(subItem.id, tenant.id, meters);
   const mode = tenant.sumMode[subItem.id] ?? 'aggregate';
   // 単価はメーターの上書き、テナントの契約単価、小分類のビル既定単価の順で決めます。
-  const priceOf = (row: Meter) => row.unitPrice ?? tenant.unitPrices[category.id] ?? subItem.defaultUnitPrice ?? 0;
+  // 税込の単価は、指定された丸め方で税抜へ戻してから使います。
+  const priceOf = (row: Meter) => toExclusive(row.unitPrice ?? tenant.unitPrices[category.id] ?? subItem.defaultUnitPrice ?? 0, category.id, tenant, taxRate);
   const usage = roundUsage(own.reduce((sum, row) => sum + row.usage, 0));
 
   // 単価が違うメーターは、どの方式でも必ず分けて計算します。
@@ -182,7 +206,7 @@ export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, 
 
   const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
-      .map((subItem) => calculateSubItem(subItem, category, tenant, meters));
+      .map((subItem) => calculateSubItem(subItem, category, tenant, meters, building.taxRate));
     return {
       category, subItems,
       usage: roundUsage(subItems.reduce((sum, row) => sum + row.usage, 0)),
@@ -212,4 +236,19 @@ export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, 
   for (const surcharge of surcharges) if (surcharge.amount && surcharge.surcharge.lineItemId) byLineItem.set(surcharge.surcharge.lineItemId, (byLineItem.get(surcharge.surcharge.lineItemId) ?? 0) + surcharge.amount);
 
   return { tenant, categories, surcharges, total, byLineItem, difference: total - tenant.expected };
+}
+
+// データ分割設定が「区画を分ける」のときに使う、メーター識別ごとの金額です。
+export function calculateTenantByLabel(tenant: TenantConfig, building: BuildingConfig, meters: Meter[]) {
+  const perLabelTenant: TenantConfig = { ...tenant, sumMode: Object.fromEntries(Object.keys(tenant.sumMode).map((key) => [key, 'perLabel' as SumMode])) };
+  const totals = new Map<string, number>();
+  for (const category of building.categories.filter((row) => row.billable)) {
+    for (const subItem of building.subItems.filter((row) => row.categoryId === category.id)) {
+      const result = calculateSubItem(subItem, category, perLabelTenant, meters, building.taxRate);
+      for (const group of result.groups) totals.set(group.label, (totals.get(group.label) ?? 0) + group.amount);
+    }
+  }
+  const full = calculateTenant(perLabelTenant, building, meters);
+  for (const surcharge of full.surcharges) for (const group of surcharge.groups) totals.set(group.label, (totals.get(group.label) ?? 0) + group.amount);
+  return [...totals.entries()].filter(([label]) => label !== '固定額').map(([label, amount]) => ({ label, amount }));
 }
