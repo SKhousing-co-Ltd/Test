@@ -25,10 +25,17 @@ export type SubItem = {
   lineItemId: string;
   // ビルの既定単価です。テナントに契約単価が入っていない場合に使います。
   defaultUnitPrice: number | null;
+  // 単価が税抜か税込か。税込のときは、下の桁と丸め方で税抜へ戻します。
+  taxMode: TaxMode;
+  taxRoundingDigits: number;
+  taxRoundingMode: RoundingMode;
+  // 使用量の小数点以下の扱いです。
+  usageRoundingDigits: number;
+  usageRoundingMode: RoundingMode;
   // 既定の請求期間です。請求設定の請求期間パターンから選びます。
   periodPatternId: string;
 };
-export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean };
+export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean; usageRoundingDigits: number; usageRoundingMode: RoundingMode };
 // 請求設定で登録した明細項目のうち、請求種別に公共料金（電気・水道・ガス）が設定されているものです。
 export type LineItem = { id: string; name: string; utilityKind: string | null; chargeTypeName: string };
 export type Meter = { id: string; subItemId: string; code: string; label: string; tenantId: string; usage: number; unitPrice?: number };
@@ -39,15 +46,9 @@ export type TenantConfig = {
   // 契約単価です。未設定（null）の場合は小分類のビル既定単価を使います。
   unitPrices: Record<CategoryId, number | null>;
   fixedCharges: Record<string, number>;
-  usageRoundingUnit: number;
-  usageRoundingMode: RoundingMode;
   amountRoundingUnit: number;
   amountRoundingMode: RoundingMode;
   sumMode: Record<string, SumMode>;
-  // 単価が税抜か税込か、税込のとき税抜へ戻す際の丸め方です。
-  taxModes: Record<CategoryId, TaxMode>;
-  taxRoundingMode: RoundingMode;
-  taxRoundingDigits: number;
   dataSplit: DataSplit;
   // 区画（メーター識別）ごとに、どの請求書へ載せるかです。
   invoiceByLabel: Record<string, number>;
@@ -70,24 +71,23 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '' },
-    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '' },
-    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
-    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', defaultUnitPrice: 338.27, periodPatternId: '' },
-    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '' },
-    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', defaultUnitPrice: 160, periodPatternId: '' },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
   ],
   taxRate: 0.1,
-  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
+  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true, usageRoundingDigits: 1, usageRoundingMode: 'round' }],
 };
 
 // 水道とガスは全テナント共通なので、契約単価は持たせず小分類の既定単価を使います。
 const rates = (electric: number | null): Record<CategoryId, number | null> => ({ electric, water: null, gas: null });
 const base = (rounding: RoundingMode, sum: SumMode = 'aggregate') => ({
-  taxModes: { electric: 'exclusive', water: 'exclusive', gas: 'exclusive' } as Record<CategoryId, TaxMode>,
-  taxRoundingMode: 'floor' as RoundingMode, taxRoundingDigits: 2, dataSplit: 'single' as DataSplit, invoiceByLabel: {} as Record<string, number>,
-  usageRoundingUnit: 0.1, usageRoundingMode: 'round' as RoundingMode, amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {},
+  dataSplit: 'single' as DataSplit, invoiceByLabel: {} as Record<string, number>,
+  amountRoundingUnit: 1, amountRoundingMode: rounding, fixedCharges: {},
   sumMode: { light: sum, ac: sum, water_usage: sum, gas_usage: sum, surcharge: sum } as Record<string, SumMode>,
 });
 
@@ -149,6 +149,10 @@ export const initialMeters: Meter[] = [
   meter('water_usage', '60R-141-19-009', '1F', 'T14', 34),
 ];
 
+// 小数点第n位で丸めます。
+export const roundDigits = (value: number, digits: number, mode: RoundingMode) =>
+  applyRounding(value, Number(Math.pow(10, -digits).toFixed(Math.max(digits, 0))), mode);
+
 export const applyRounding = (value: number, unit: number, mode: RoundingMode) => {
   if (!unit) return value;
   const scaled = Number((value / unit).toFixed(9));
@@ -163,14 +167,13 @@ export type CategoryResult = { category: Category; subItems: SubItemResult[]; us
 
 export const metersFor = (subItemId: string, tenantId: string, meters: Meter[]) => meters.filter((row) => row.subItemId === subItemId && row.tenantId === tenantId);
 
-export function toExclusive(price: number, categoryId: CategoryId, tenant: TenantConfig, taxRate: number) {
-  if (tenant.taxModes[categoryId] !== 'inclusive' || !price) return price;
-  const unit = Number(Math.pow(10, -tenant.taxRoundingDigits).toFixed(tenant.taxRoundingDigits));
-  return applyRounding(price / (1 + taxRate), unit, tenant.taxRoundingMode);
+export function toExclusive(price: number, subItem: SubItem, taxRate: number) {
+  if (subItem.taxMode !== 'inclusive' || !price) return price;
+  return roundDigits(price / (1 + taxRate), subItem.taxRoundingDigits, subItem.taxRoundingMode);
 }
 
 export function calculateSubItem(subItem: SubItem, category: Category, tenant: TenantConfig, meters: Meter[], taxRate = 0): SubItemResult {
-  const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
+  const roundUsage = (value: number) => roundDigits(value, subItem.usageRoundingDigits, subItem.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
 
   if (subItem.kind === 'basic') {
@@ -182,7 +185,7 @@ export function calculateSubItem(subItem: SubItem, category: Category, tenant: T
   const mode = tenant.sumMode[subItem.id] ?? 'aggregate';
   // 単価はメーターの上書き、テナントの契約単価、小分類のビル既定単価の順で決めます。
   // 税込の単価は、指定された丸め方で税抜へ戻してから使います。
-  const priceOf = (row: Meter) => toExclusive(row.unitPrice ?? tenant.unitPrices[category.id] ?? subItem.defaultUnitPrice ?? 0, category.id, tenant, taxRate);
+  const priceOf = (row: Meter) => toExclusive(row.unitPrice ?? tenant.unitPrices[category.id] ?? subItem.defaultUnitPrice ?? 0, subItem, taxRate);
   const usage = roundUsage(own.reduce((sum, row) => sum + row.usage, 0));
 
   // 単価が違うメーターは、どの方式でも必ず分けて計算します。
@@ -201,7 +204,6 @@ export function calculateSubItem(subItem: SubItem, category: Category, tenant: T
 export type TenantResult = ReturnType<typeof calculateTenant>;
 
 export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, meters: Meter[]) {
-  const roundUsage = (value: number) => applyRounding(value, tenant.usageRoundingUnit, tenant.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, tenant.amountRoundingUnit, tenant.amountRoundingMode);
 
   const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
@@ -209,20 +211,21 @@ export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, 
       .map((subItem) => calculateSubItem(subItem, category, tenant, meters, building.taxRate));
     return {
       category, subItems,
-      usage: roundUsage(subItems.reduce((sum, row) => sum + row.usage, 0)),
+      usage: subItems.reduce((sum, row) => sum + row.usage, 0),
       amount: subItems.reduce((sum, row) => sum + row.amount, 0),
     };
   });
 
   const surcharges: SurchargeResult[] = building.surcharges.filter((surcharge) => surcharge.billable).map((surcharge) => {
     const category = categories.find((row) => row.category.id === surcharge.categoryId);
-    const usage = category?.usage ?? 0;
+    const roundSurchargeUsage = (value: number) => roundDigits(value, surcharge.usageRoundingDigits, surcharge.usageRoundingMode);
+    const usage = roundSurchargeUsage(category?.usage ?? 0);
     const mode = tenant.sumMode[surcharge.id] ?? 'aggregate';
     const allMeters = (category?.subItems ?? []).flatMap((row) => row.meters);
     const parts = mode === 'aggregate' ? [{ key: 'all', label: 'まとめて計算', usage }] : (() => {
       const buckets = new Map<string, Meter[]>();
       for (const row of allMeters) { const key = mode === 'perMeter' ? row.id : row.label; buckets.set(key, [...(buckets.get(key) ?? []), row]); }
-      return [...buckets.entries()].map(([key, rows]) => ({ key, label: mode === 'perMeter' ? rows[0].code : rows[0].label, usage: roundUsage(rows.reduce((sum, row) => sum + row.usage, 0)) }));
+      return [...buckets.entries()].map(([key, rows]) => ({ key, label: mode === 'perMeter' ? rows[0].code : rows[0].label, usage: roundSurchargeUsage(rows.reduce((sum, row) => sum + row.usage, 0)) }));
     })();
     const groups = parts.map((part) => ({ ...part, unitPrice: surcharge.unitPrice, amount: roundAmount(part.usage * surcharge.unitPrice) }));
     return { surcharge, usage, groups, amount: groups.reduce((sum, group) => sum + group.amount, 0) };
