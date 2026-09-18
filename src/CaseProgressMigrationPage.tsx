@@ -78,9 +78,7 @@ export function CaseProgressMigrationPage() {
         return;
       }
       const [rowResult, runResult] = await Promise.all([
-        supabase.from('case_progress_migration_verification')
-          .select('case_progress_import_staging_id, legacy_case_id, manager_raw, building_raw, case_name_raw, category_raw, status_raw, approval_no_raw, budget_amount, decided_amount, identity_quality, source_active, validation_errors, source_row_number, source_synced_at, appsuite_match_count, appsuite_record_id, match_status, summary_group')
-          .order('source_row_number'),
+        supabase.rpc('list_case_progress_migration_verification'),
         supabase.from('case_progress_sync_runs')
           .select('case_progress_sync_run_id, started_at, completed_at, status, trigger_type, source_row_count, inserted_count, updated_count, unchanged_count, inactive_count, blank_id_count, error_count, error_message')
           .order('started_at', { ascending: false })

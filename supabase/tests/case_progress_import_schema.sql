@@ -46,6 +46,29 @@ begin
   if (select prosecdef from pg_proc where oid = 'public.apply_case_progress_sync(uuid,text,text,text,timestamptz,jsonb)'::regprocedure) then
     raise exception 'case progress sync RPC must be security invoker';
   end if;
+  if to_regprocedure('public.list_case_progress_migration_verification()') is null then
+    raise exception 'list_case_progress_migration_verification is missing';
+  end if;
+  if not (select prosecdef from pg_proc where oid = 'public.list_case_progress_migration_verification()'::regprocedure) then
+    raise exception 'list_case_progress_migration_verification must be security definer';
+  end if;
+  if not has_function_privilege(
+    'authenticated',
+    'public.list_case_progress_migration_verification()',
+    'execute'
+  ) then
+    raise exception 'authenticated must execute list_case_progress_migration_verification';
+  end if;
+  if has_function_privilege(
+    'anon',
+    'public.list_case_progress_migration_verification()',
+    'execute'
+  ) then
+    raise exception 'anon must not execute list_case_progress_migration_verification';
+  end if;
+  if has_table_privilege('authenticated', 'public.case_progress_migration_verification', 'select') then
+    raise exception 'authenticated must not select the verification view directly';
+  end if;
 
   insert into public.case_progress_sync_runs (
     source_system, spreadsheet_id, sheet_name, trigger_type
@@ -281,6 +304,9 @@ begin
   if (select count(*) from public.case_progress_sync_runs where spreadsheet_id = 'test-sheet') <> 3 then
     raise exception 'admin must read sync runs';
   end if;
+  if (select count(*) from public.list_case_progress_migration_verification() where spreadsheet_id = 'test-sheet') <> 3 then
+    raise exception 'admin must read verification rows via list_case_progress_migration_verification';
+  end if;
 end;
 $$;
 
@@ -293,9 +319,22 @@ begin
   if exists (select 1 from public.case_progress_sync_runs where spreadsheet_id = 'test-sheet') then
     raise exception 'non-admin must not read sync runs';
   end if;
-  if exists (select 1 from public.case_progress_migration_verification where spreadsheet_id = 'test-sheet') then
-    raise exception 'non-admin must not read the verification view';
-  end if;
+  begin
+    perform public.list_case_progress_migration_verification();
+    raise exception 'non-admin must not call list_case_progress_migration_verification';
+  exception
+    when others then
+      if sqlerrm not like '%Admin access required%' then
+        raise;
+      end if;
+  end;
+  begin
+    perform 1 from public.case_progress_migration_verification limit 1;
+    raise exception 'non-admin must not select the verification view directly';
+  exception
+    when insufficient_privilege then
+      null;
+  end;
 end;
 $$;
 reset role;
