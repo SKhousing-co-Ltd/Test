@@ -329,33 +329,52 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       </section>
 
       <section className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>テナント契約</h4><label className="meter-tax-rate">消費税率<input type="number" step="1" value={Math.round(building.taxRate * 100)} onChange={(event) => setBuilding({ ...building, taxRate: Number(event.target.value) / 100 })} />％</label></div>
+        <h4>テナント契約</h4>
         <div className="meter-table-wrap">
           <table className="meter-table meter-settings-table meter-contract-table">
             <thead>
               <tr>
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
-                {customSubItems.map((item) => <th key={item.id} colSpan={2}>{item.name}</th>)}
-                {building.subItems.filter((item) => item.kind === 'basic').map((item) => <th key={item.id} rowSpan={2}>{building.categories.find((value) => value.id === item.categoryId)?.name}の{item.name}</th>)}
-                {visibleCategories.map((item) => <th key={item.id} rowSpan={2}>{item.name}の計算方法</th>)}
+                {visibleCategories.map((item) => {
+                  const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
+                  return <th key={item.id} colSpan={3 + customs.length * 2} className="meter-contract-group">{item.name}</th>;
+                })}
                 <th rowSpan={2}>小数点</th>
                 <th rowSpan={2}>データ分割設定</th>
                 {tenants.some((item) => item.invoiceSplitByUnit) && <th rowSpan={2}>請求書</th>}
               </tr>
-              <tr>{customSubItems.flatMap((item) => [<th key={`${item.id}-b`}>請求</th>, <th key={`${item.id}-p`}>単価</th>])}</tr>
+              <tr>{visibleCategories.flatMap((item) => [
+                <th key={`${item.id}-billable`} className="meter-contract-group">請求</th>,
+                <th key={`${item.id}-basic`}>基本料</th>,
+                ...building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom').flatMap((value) => [
+                  <th key={`${value.id}-b`}>{value.name}</th>,
+                  <th key={`${value.id}-p`}>単価</th>,
+                ]),
+                <th key={`${item.id}-sum`}>計算方法</th>,
+              ])}</tr>
             </thead>
             <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={index > 0 ? 'meter-contract-sub' : ''}>
               <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-muted">分割 {index + 1}</span>}</td>
-              {customSubItems.flatMap((item) => [
-                <td key={`${item.id}-b`}><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /></td>,
-                <td key={`${item.id}-p`}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[item.id] ?? ''} placeholder="既定" disabled={!row.billable[item.id]} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [item.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>,
-              ])}
-              {building.subItems.filter((item) => item.kind === 'basic').map((item) => <td key={item.id}>
-                <input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} />
-              </td>)}
-              {visibleCategories.map((item) => <td key={item.id}>
-                <select value={row.sumMode[item.id] ?? 'aggregate'} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
-              </td>)}
+              {visibleCategories.flatMap((item) => {
+                const basic = building.subItems.find((value) => value.categoryId === item.id && value.kind === 'basic');
+                const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
+                const enabled = row.categoryBillable[item.id] !== false;
+                return [
+                  <td key={`${item.id}-billable`} className="meter-contract-group">
+                    <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
+                  </td>,
+                  <td key={`${item.id}-basic`}>{basic
+                    ? <input type="checkbox" checked={row.billable[basic.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [basic.id]: event.target.checked } })} />
+                    : <span className="meter-muted">—</span>}</td>,
+                  ...customs.flatMap((value) => [
+                    <td key={`${value.id}-b`}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>,
+                    <td key={`${value.id}-p`}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[value.id] ?? ''} placeholder="既定" disabled={!enabled || !row.billable[value.id]} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [value.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>,
+                  ]),
+                  <td key={`${item.id}-sum`}>
+                    <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
+                  </td>,
+                ];
+              })}
               <td><select value={row.amountRoundingMode} onChange={(event) => updateRow(tenant.id, index, { amountRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select></td>
               <td className="meter-split-cell">{index === 0 ? <span className="meter-settings-pair">
                 <label className="meter-check"><input type="checkbox" checked={tenant.splitEnabled} onChange={(event) => { updateTenant(tenant.id, { splitEnabled: event.target.checked }); if (!event.target.checked) setSplitCount(tenant, 1); else if (tenant.rows.length < 2) setSplitCount(tenant, 2); }} />分割する</label>

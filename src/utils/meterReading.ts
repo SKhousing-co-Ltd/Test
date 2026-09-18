@@ -60,6 +60,8 @@ export type ContractRow = {
   id: string;
   // 請求書分割設定で区画ごとに請求書を分けている場合、この行をどの請求書に載せるかです。
   invoiceNo: number;
+  // 分類そのものを請求するかどうかです。
+  categoryBillable: Record<CategoryId, boolean>;
   billable: Record<string, boolean>;
   unitPrices: Record<string, number | null>;
   fixedCharges: Record<string, number>;
@@ -93,6 +95,7 @@ const subItemIds = ['electric_basic', 'light', 'ac', 'water_basic', 'water_usage
 const contractRow = (id: string, electric: number | null, options: { invoiceNo?: number; basic?: number; rounding?: RoundingMode; billable?: Record<string, boolean> } = {}): ContractRow => ({
   id,
   invoiceNo: options.invoiceNo ?? 1,
+  categoryBillable: { electric: true, water: true, gas: true },
   // 水道とガスの単価は小分類のビル既定単価を使うため、契約側は未設定にしています。
   unitPrices: { light: electric, ac: electric, water_usage: null, gas_usage: null },
   billable: Object.fromEntries(subItemIds.map((subItemId) => [subItemId, options.billable?.[subItemId] ?? (subItemId === 'electric_basic' ? Boolean(options.basic) : !subItemId.endsWith('_basic'))])),
@@ -224,7 +227,9 @@ export function calculateRow(row: ContractRow, index: number, tenantId: string, 
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
-      .map((subItem) => calculateSubItem(subItem, category, row, tenantId, index, meters, building.taxRate));
+      .map((subItem) => row.categoryBillable[category.id] === false
+        ? { subItem, meters: [], usage: 0, amount: 0, groups: [] }
+        : calculateSubItem(subItem, category, row, tenantId, index, meters, building.taxRate));
     return { category, subItems, usage: subItems.reduce((sum, item) => sum + item.usage, 0), amount: subItems.reduce((sum, item) => sum + item.amount, 0) };
   });
 

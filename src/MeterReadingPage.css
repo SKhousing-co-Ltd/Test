@@ -185,3 +185,7 @@
 .meter-contract-sub td { background: #fafcfe; }
 .meter-contract-sub .meter-col-name { padding-left: 22px; }
 .meter-contract-table .meter-split-cell { min-width: 150px; }
+
+/* テナント契約：分類ごとの区切り */
+.meter-contract-table th.meter-contract-group, .meter-contract-table td.meter-contract-group { border-left: 1px solid #dde7f2; }
+.meter-contract-table thead tr:first-child th { background: #eef5fc; }
