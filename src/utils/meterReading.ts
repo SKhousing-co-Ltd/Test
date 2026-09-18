@@ -35,7 +35,7 @@ export type SubItem = {
   // 既定の請求期間です。請求設定の請求期間パターンから選びます。
   periodPatternId: string;
 };
-export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean; usageRoundingDigits: number; usageRoundingMode: RoundingMode };
+export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean };
 // 請求設定で登録した明細項目のうち、請求種別に公共料金（電気・水道・ガス）が設定されているものです。
 export type LineItem = { id: string; name: string; utilityKind: string | null; chargeTypeName: string };
 export type Meter = { id: string; subItemId: string; code: string; label: string; tenantId: string; rowIndex: number; usage: number; unitPrice?: number };
@@ -67,6 +67,7 @@ export type ContractRow = {
   fixedCharges: Record<string, number>;
   sumMode: Record<CategoryId, SumMode>;
   amountRoundingMode: RoundingMode;
+  note: string;
 };
 
 export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[]; taxRate: number };
@@ -87,7 +88,7 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
   ],
   taxRate: 0.1,
-  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true, usageRoundingDigits: 1, usageRoundingMode: 'round' }],
+  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
 };
 
 // 水道とガスは全テナント共通なので、契約単価は持たせず小分類の既定単価を使います。
@@ -102,6 +103,7 @@ const contractRow = (id: string, electric: number | null, options: { invoiceNo?:
   fixedCharges: options.basic ? { electric_basic: options.basic } : {},
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' },
   amountRoundingMode: options.rounding ?? 'floor',
+  note: '',
 });
 
 const tenant = (id: string, name: string, electric: number | null, expected: number, options: { rounding?: RoundingMode; basic?: number; rows?: number; invoiceSplit?: boolean } = {}): TenantConfig => ({
@@ -236,7 +238,7 @@ export function calculateRow(row: ContractRow, index: number, tenantId: string, 
   // 増額分は小分類ではなく、分類全体の使用量にかかります。
   const surcharges: SurchargeResult[] = building.surcharges.filter((surcharge) => surcharge.billable).map((surcharge) => {
     const category = categories.find((item) => item.category.id === surcharge.categoryId);
-    const usage = roundDigits(category?.usage ?? 0, surcharge.usageRoundingDigits, surcharge.usageRoundingMode);
+    const usage = category?.usage ?? 0;
     return { surcharge, usage, amount: roundAmount(usage * surcharge.unitPrice) };
   });
 

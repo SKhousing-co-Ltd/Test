@@ -309,16 +309,12 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             </tr>)}</tbody>
           </table>
           {building.surcharges.filter((item) => item.categoryId === row.id).length > 0 && <table className="meter-table meter-settings-table meter-surcharge-table">
-            <thead><tr><th>増額分</th><th>請求明細の項目</th><th>使用量の丸め</th><th>請求する</th></tr></thead>
+            <thead><tr><th>増額分</th><th>請求明細の項目</th><th>請求する</th></tr></thead>
             <tbody>{building.surcharges.filter((item) => item.categoryId === row.id).map((item) => {
               const patch = (value: Partial<typeof item>) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, ...value } : target) });
               return <tr key={item.id}>
                 <td><input value={item.name} onChange={(event) => patch({ name: event.target.value })} /></td>
                 <td><select value={item.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(item.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
-                <td><span className="meter-settings-pair">
-                  <select value={item.usageRoundingDigits} onChange={(event) => patch({ usageRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
-                  <select value={item.usageRoundingMode} onChange={(event) => patch({ usageRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
-                </span></td>
                 <td><label className="meter-check"><input type="checkbox" checked={item.billable} onChange={(event) => patch({ billable: event.target.checked })} />請求する</label></td>
               </tr>;
             })}</tbody>
@@ -335,15 +331,16 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
                 {visibleCategories.map((item) => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  return <th key={item.id} colSpan={3 + customs.length * 2} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  return <th key={item.id} colSpan={(item.fixedBillable ? 3 : 2) + customs.length * 2} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>小数点</th>
+                <th rowSpan={2}>備考</th>
                 <th rowSpan={2}>データ分割設定</th>
                 {tenants.some((item) => item.invoiceSplitByUnit) && <th rowSpan={2}>請求書</th>}
               </tr>
               <tr>{visibleCategories.flatMap((item) => [
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
-                <th key={`${item.id}-basic`} className={categoryClass(item.id)}>基本料</th>,
+                ...(item.fixedBillable ? [<th key={`${item.id}-basic`} className={categoryClass(item.id)}>基本料</th>] : []),
                 ...building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom').flatMap((value) => [
                   <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>,
                   <th key={`${value.id}-p`} className={categoryClass(item.id)}>単価</th>,
@@ -351,8 +348,8 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <th key={`${item.id}-sum`} className={categoryClass(item.id)}>計算方法</th>,
               ])}</tr>
             </thead>
-            <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={index > 0 ? 'meter-contract-sub' : ''}>
-              <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-muted">分割 {index + 1}</span>}</td>
+            <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={`${index === 0 ? 'meter-contract-first' : 'meter-contract-sub'}${tenant.splitEnabled ? ' meter-contract-split' : ''}`}>
+              <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-contract-continued">{tenant.name}</span>}{tenant.splitEnabled ? <small>分割 {index + 1} ／ {tenant.rows.length}</small> : null}</td>
               {visibleCategories.flatMap((item) => {
                 const basic = building.subItems.find((value) => value.categoryId === item.id && value.kind === 'basic');
                 const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
@@ -361,9 +358,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                   <td key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>
                     <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
                   </td>,
-                  <td key={`${item.id}-basic`} className={categoryClass(item.id)}>{basic
-                    ? <input type="checkbox" checked={row.billable[basic.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [basic.id]: event.target.checked } })} />
-                    : <span className="meter-muted">—</span>}</td>,
+                  ...(item.fixedBillable && basic ? [<td key={`${item.id}-basic`} className={categoryClass(item.id)}>
+                    <input type="checkbox" checked={row.billable[basic.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [basic.id]: event.target.checked } })} />
+                  </td>] : []),
                   ...customs.flatMap((value) => [
                     <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>,
                     <td key={`${value.id}-p`} className={categoryClass(item.id)}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[value.id] ?? ''} placeholder="既定" disabled={!enabled || !row.billable[value.id]} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [value.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>,
@@ -374,6 +371,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 ];
               })}
               <td><select value={row.amountRoundingMode} onChange={(event) => updateRow(tenant.id, index, { amountRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select></td>
+              <td><input className="meter-note-input" value={row.note} placeholder="—" onChange={(event) => updateRow(tenant.id, index, { note: event.target.value })} /></td>
               <td className="meter-split-cell">{index === 0 ? <span className="meter-settings-pair">
                 <label className="meter-check"><input type="checkbox" checked={tenant.splitEnabled} onChange={(event) => { updateTenant(tenant.id, { splitEnabled: event.target.checked }); if (!event.target.checked) setSplitCount(tenant, 1); else if (tenant.rows.length < 2) setSplitCount(tenant, 2); }} />分割する</label>
                 {tenant.splitEnabled && <input type="number" min="1" max="9" className="meter-narrow" value={tenant.rows.length} onChange={(event) => setSplitCount(tenant, Number(event.target.value))} />}

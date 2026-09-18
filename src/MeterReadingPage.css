@@ -209,3 +209,11 @@
 .meter-contract-table td.meter-cat-water { background: #fafcff; }
 .meter-contract-table td.meter-cat-gas { background: #fffbfa; }
 .meter-contract-table th.meter-contract-group, .meter-contract-table td.meter-contract-group { border-left: 2px solid #d9e3ee; }
+
+/* テナント契約：分割行のまとまりと備考 */
+.meter-contract-first td { border-top: 2px solid #dbe5ef; }
+.meter-contract-split .meter-col-name { border-left: 3px solid #7fa8d4; }
+.meter-contract-sub .meter-col-name { padding-left: 22px; }
+.meter-contract-continued { color: #93a1b2; }
+.meter-contract-table .meter-col-name small { display: block; margin-top: 2px; color: #7fa8d4; font-size: 10px; font-weight: 700; }
+.meter-settings-panel input.meter-note-input { width: 150px; text-align: left; }
