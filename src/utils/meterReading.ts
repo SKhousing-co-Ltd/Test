@@ -19,7 +19,8 @@ export type CategoryId = 'electric' | 'water' | 'gas';
 export type Category = { id: CategoryId; name: string; unit: string; billable: boolean; fixedBillable: boolean };
 export type SubItem = { id: string; categoryId: CategoryId; name: string; kind: 'basic' | 'custom'; lineItemId: string };
 export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean };
-export type LineItem = { id: string; name: string };
+// 請求設定で登録した明細項目のうち、請求種別に公共料金（電気・水道・ガス）が設定されているものです。
+export type LineItem = { id: string; name: string; utilityKind: string | null; chargeTypeName: string };
 export type Meter = { id: string; subItemId: string; code: string; label: string; tenantId: string; usage: number; unitPrice?: number };
 
 export type TenantConfig = {
@@ -37,15 +38,6 @@ export type TenantConfig = {
 
 export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[] };
 
-// 請求設定の明細項目です。小分類がどの明細項目として請求されるかを紐づけます。
-export const lineItems: LineItem[] = [
-  { id: 'electricity', name: '電気代' },
-  { id: 'electricity_basic', name: '電気基本料' },
-  { id: 'aircon', name: '空調費' },
-  { id: 'water', name: '水道代' },
-  { id: 'gas', name: 'ガス代' },
-];
-
 export const initialBuilding: BuildingConfig = {
   categories: [
     { id: 'electric', name: '電気', unit: 'kWh', billable: true, fixedBillable: true },
@@ -53,15 +45,15 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: 'electricity_basic' },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: 'electricity' },
-    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: 'aircon' },
-    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: 'water' },
-    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: 'water' },
-    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: 'gas' },
-    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: 'gas' },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '' },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '' },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '' },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '' },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '' },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '' },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '' },
   ],
-  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: 'electricity', billable: true }],
+  surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
 };
 
 const rates = (electric: number, water = 338.27, gas = 160): Record<CategoryId, number> => ({ electric, water, gas });
@@ -203,8 +195,8 @@ export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, 
 
   // 請求明細の項目ごとにまとめた金額です。請求書作成へ渡す単位になります。
   const byLineItem = new Map<string, number>();
-  for (const category of categories) for (const subItem of category.subItems) if (subItem.amount) byLineItem.set(subItem.subItem.lineItemId, (byLineItem.get(subItem.subItem.lineItemId) ?? 0) + subItem.amount);
-  for (const surcharge of surcharges) if (surcharge.amount) byLineItem.set(surcharge.surcharge.lineItemId, (byLineItem.get(surcharge.surcharge.lineItemId) ?? 0) + surcharge.amount);
+  for (const category of categories) for (const subItem of category.subItems) if (subItem.amount && subItem.subItem.lineItemId) byLineItem.set(subItem.subItem.lineItemId, (byLineItem.get(subItem.subItem.lineItemId) ?? 0) + subItem.amount);
+  for (const surcharge of surcharges) if (surcharge.amount && surcharge.surcharge.lineItemId) byLineItem.set(surcharge.surcharge.lineItemId, (byLineItem.get(surcharge.surcharge.lineItemId) ?? 0) + surcharge.amount);
 
   return { tenant, categories, surcharges, total, byLineItem, difference: total - tenant.expected };
 }

@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  calculateSubItem, calculateTenant, initialBuilding, initialMeters, initialTenants, lineItems, metersFor,
+  calculateSubItem, calculateTenant, initialBuilding, initialMeters, initialTenants, metersFor,
   roundingModeLabel, sumModeLabel,
-  type BuildingConfig, type Category, type CategoryId, type Meter, type RoundingMode, type SubItem, type SumMode, type TenantConfig,
+  type BuildingConfig, type Category, type CategoryId, type LineItem, type Meter, type RoundingMode, type SubItem, type SumMode, type TenantConfig,
 } from './utils/meterReading';
+import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
 import './MeterReadingPage.css';
 
@@ -17,19 +18,47 @@ const amount = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
 const sumModes: SumMode[] = ['aggregate', 'perLabel', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 
-export function MeterReadingPage({ propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
+const utilityLabels: Record<string, string> = { electricity: '電気', water: '水道', gas: 'ガス' };
+
+export function MeterReadingPage({ propertyId, propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [building, setBuilding] = useState<BuildingConfig>(initialBuilding);
   const [tenants, setTenants] = useState<TenantConfig[]>(initialTenants);
   const [meters, setMeters] = useState<Meter[]>(initialMeters);
   const [tab, setTab] = useState<string>('summary');
   const [subTab, setSubTab] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'input' | 'assign'>('input');
+  const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [notice, setNotice] = useState('');
+
+  // 請求明細の項目は請求設定から読み込み、請求種別に公共料金が設定されているものだけを対象にします。
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!supabase || !propertyId) { setLineItems([]); return; }
+      const { data, error } = await supabase
+        .from('asset_billing_line_item')
+        .select('asset_billing_line_item_id, line_item_name, display_name, charge:billing_charge_type!inner(charge_type_name, utility_kind)')
+        .eq('asset_id', propertyId).eq('is_active', true).not('charge.utility_kind', 'is', null)
+        .order('sort_order');
+      if (cancelled) return;
+      if (error) { setNotice(`請求明細の項目を読み込めませんでした: ${error.message}`); setLineItems([]); return; }
+      const rows = (data ?? []) as unknown as Array<{ asset_billing_line_item_id: string; line_item_name: string; display_name: string | null; charge: { charge_type_name: string; utility_kind: string | null } | Array<{ charge_type_name: string; utility_kind: string | null }> | null }>;
+      setNotice('');
+      setLineItems(rows.map((row) => {
+        const charge = Array.isArray(row.charge) ? row.charge[0] : row.charge;
+        return { id: row.asset_billing_line_item_id, name: row.display_name || row.line_item_name, utilityKind: charge?.utility_kind ?? null, chargeTypeName: charge?.charge_type_name ?? '' };
+      }));
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [propertyId]);
 
   const results = useMemo(() => tenants.map((tenant) => calculateTenant(tenant, building, meters)), [building, meters, tenants]);
   const grandTotal = results.reduce((sum, result) => sum + result.total, 0);
   const grandExpected = results.reduce((sum, result) => sum + result.tenant.expected, 0);
   const visibleCategories = building.categories.filter((category) => category.billable);
   const lineItemName = (id: string) => lineItems.find((row) => row.id === id)?.name ?? '未設定';
+  const lineItemOptions = <option value="">未設定</option>;
 
   const updateMeter = (id: string, patch: Partial<Meter>) => setMeters((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
   const updateTenant = (id: string, patch: Partial<TenantConfig>) => setTenants((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
@@ -62,6 +91,7 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
       </dl>
     </header>
 
+    {notice && <p className="tenant-billing-notice">{notice}</p>}
     <nav className="meter-tabs">
       <button type="button" className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>集計</button>
       {visibleCategories.map((row) => <button key={row.id} type="button" className={tab === row.id ? 'active' : ''} onClick={() => setTab(row.id)}>{row.name}</button>)}
@@ -95,10 +125,10 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
         <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとにまとめた金額です。この単位で請求書作成へ渡します。</p></div>
         <div className="meter-table-wrap">
           <table className="meter-table">
-            <thead><tr><th className="meter-col-name">テナント</th>{lineItems.map((row) => <th key={row.id}>{row.name}</th>)}</tr></thead>
+            <thead><tr><th className="meter-col-name">テナント</th>{lineItems.length ? lineItems.map((row) => <th key={row.id}>{row.name}</th>) : <th>明細項目が未登録です</th>}</tr></thead>
             <tbody>{results.map((result) => <tr key={result.tenant.id}>
               <td className="meter-col-name">{result.tenant.name}</td>
-              {lineItems.map((row) => <td key={row.id} className="numeric">{result.byLineItem.get(row.id) ? yen.format(result.byLineItem.get(row.id) ?? 0) : <span className="meter-muted">—</span>}</td>)}
+              {lineItems.length ? lineItems.map((row) => <td key={row.id} className="numeric">{result.byLineItem.get(row.id) ? yen.format(result.byLineItem.get(row.id) ?? 0) : <span className="meter-muted">—</span>}</td>) : <td className="meter-muted">請求設定で公共料金の明細項目を登録してください。</td>}
             </tr>)}</tbody>
           </table>
         </div>
@@ -205,7 +235,7 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
-              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
+              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}{line.utilityKind ? `（${utilityLabels[line.utilityKind] ?? line.utilityKind}）` : ''}</option>)}</select></td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}</tbody>
           </table>
@@ -222,7 +252,7 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
               <td><input value={row.name} onChange={(event) => patch({ name: event.target.value })} /></td>
               <td><select value={row.categoryId} onChange={(event) => patch({ categoryId: event.target.value as CategoryId })}>{building.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
               <td><input type="number" step="0.01" className="meter-narrow" value={row.unitPrice} onChange={(event) => patch({ unitPrice: Number(event.target.value) })} /></td>
-              <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}>{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
+              <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}>{lineItemOptions}{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}{line.utilityKind ? `（${utilityLabels[line.utilityKind] ?? line.utilityKind}）` : ''}</option>)}</select></td>
               <td><label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => patch({ billable: event.target.checked })} />請求する</label></td>
             </tr>;
           })}</tbody>
@@ -245,7 +275,7 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
-              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
+              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}{line.utilityKind ? `（${utilityLabels[line.utilityKind] ?? line.utilityKind}）` : ''}</option>)}</select></td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}</tbody>
           </table>
