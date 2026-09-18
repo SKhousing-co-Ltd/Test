@@ -39,7 +39,7 @@ type CategorySettingRow = { asset_id: string; category: CategoryId; usage_unit: 
 type SubItemRow = {
   asset_meter_sub_item_id: string; asset_id: string; category: CategoryId; sub_item_name: string; sub_item_kind: 'basic' | 'custom';
   asset_billing_line_item_id: string | null; price_mode: PriceMode; default_unit_price: number | null; tax_mode: TaxMode;
-  tax_rounding_digits: number; tax_rounding_mode: RoundingMode; usage_rounding_digits: number; usage_rounding_mode: RoundingMode;
+  tax_rounding_mode: RoundingMode; usage_rounding_digits: number; usage_rounding_mode: RoundingMode;
   billing_period_pattern_id: string | null; sort_order: number;
 };
 type SurchargeRow = { asset_meter_surcharge_id: string; asset_id: string; category: CategoryId; surcharge_name: string; asset_billing_line_item_id: string | null; is_billable: boolean };
@@ -77,7 +77,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 
   const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult] = await Promise.all([
     client.from('asset_meter_category_setting').select('asset_id, category, usage_unit, is_billable, is_basic_billable').eq('asset_id', assetId),
-    client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_digits, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, billing_period_pattern_id, sort_order').eq('asset_id', assetId).order('sort_order'),
+    client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, billing_period_pattern_id, sort_order').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable').eq('asset_id', assetId).order('surcharge_name'),
     client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note').eq('asset_id', assetId).order('row_no'),
     client.from('asset_meter').select('asset_meter_id, asset_id, asset_meter_sub_item_id, meter_code, meter_label, meter_reading_contract_id, unit_price_override, is_active').eq('asset_id', assetId).order('meter_code'),
@@ -119,13 +119,13 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   for (const id of categoryIds) {
     const own = subItemRows.filter((row) => row.category === id);
     if (!own.some((row) => row.sub_item_kind === 'basic')) {
-      subItems.push({ id: newId(), categoryId: id, name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingDigits: 2, taxRoundingMode: 'floor', usageRoundingDigits: 1, usageRoundingMode: 'round', periodPatternId: '' });
+      subItems.push({ id: newId(), categoryId: id, name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageRoundingMode: 'round', periodPatternId: '' });
     }
     for (const row of own) {
       subItems.push({
         id: row.asset_meter_sub_item_id, categoryId: row.category, name: row.sub_item_name, kind: row.sub_item_kind,
         lineItemId: row.asset_billing_line_item_id ?? '', priceMode: row.price_mode, defaultUnitPrice: row.default_unit_price,
-        taxMode: row.tax_mode, taxRoundingDigits: row.tax_rounding_digits, taxRoundingMode: row.tax_rounding_mode,
+        taxMode: row.tax_mode, taxRoundingMode: row.tax_rounding_mode,
         usageRoundingDigits: row.usage_rounding_digits, usageRoundingMode: row.usage_rounding_mode,
         periodPatternId: row.billing_period_pattern_id ?? '',
       });
@@ -248,7 +248,7 @@ export async function saveMeterReading(
       // 基本料は固定額で請求するため、単価は持ちません。
       price_mode: row.kind === 'basic' ? 'fixed' : row.priceMode,
       default_unit_price: row.kind === 'basic' ? null : row.defaultUnitPrice,
-      tax_mode: row.taxMode, tax_rounding_digits: row.taxRoundingDigits, tax_rounding_mode: row.taxRoundingMode,
+      tax_mode: row.taxMode, tax_rounding_mode: row.taxRoundingMode,
       usage_rounding_digits: row.usageRoundingDigits, usage_rounding_mode: row.usageRoundingMode,
       billing_period_pattern_id: row.periodPatternId || null, sort_order: order,
     };

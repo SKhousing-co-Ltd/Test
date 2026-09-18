@@ -67,6 +67,14 @@ begin
   exception when check_violation then null;
   end;
 
+  -- 税抜換算は小数点以下しか扱わないので、桁数の列は持ちません。
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'asset_meter_sub_item' and column_name = 'tax_rounding_digits'
+  ) then
+    raise exception 'tax_rounding_digits must be dropped';
+  end if;
+
   -- 同じ分類の中で小分類名は重複させません。
   begin
     insert into public.asset_meter_sub_item(asset_id, category, sub_item_name, sub_item_kind, sort_order)
