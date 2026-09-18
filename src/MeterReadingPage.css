@@ -235,9 +235,13 @@
 .meter-cat-gas .meter-surcharge-row td { background: #fdf0ee; }
 
 /* 小分類の表：電気・水道・ガスで列位置をそろえます。 */
-.meter-subitem-table { table-layout: fixed; width: auto; }
+/* 小分類の表は列ごとに必要な幅を決めているので、狭い画面では縮めずに横スクロールさせます。 */
+.meter-settings-panel .meter-table.meter-subitem-table { table-layout: fixed; width: max-content; min-width: 0; }
+.meter-category-config { overflow-x: auto; }
 .meter-settings-panel .meter-subitem-table select { width: 100%; max-width: none; }
 .meter-settings-panel .meter-subitem-table input { width: 100%; }
 .meter-settings-panel .meter-subitem-table input.meter-narrow { width: 100%; }
 .meter-subitem-table .meter-settings-pair { display: flex; gap: 4px; }
 .meter-subitem-table .meter-settings-pair select { flex: 1 1 0; min-width: 0; }
+/* 丸めは「小数第2位以下」のほうが長いので、桁の選択に広く取ります。 */
+.meter-subitem-table .meter-settings-pair select:first-child { flex-grow: 1.3; }
