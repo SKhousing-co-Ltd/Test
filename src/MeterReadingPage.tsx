@@ -18,7 +18,8 @@ const amount = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
 const sumModes: SumMode[] = ['aggregate', 'perLabel', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 
-const utilityLabels: Record<string, string> = { electricity: '電気', water: '水道', gas: 'ガス' };
+// 分類と公共料金の請求種別の対応です。電気の小分類には電気の明細項目だけを出します。
+const utilityKindOf: Record<CategoryId, string> = { electric: 'electricity', water: 'water', gas: 'gas' };
 
 export function MeterReadingPage({ propertyId, propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [building, setBuilding] = useState<BuildingConfig>(initialBuilding);
@@ -59,6 +60,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
   const visibleCategories = building.categories.filter((category) => category.billable);
   const lineItemName = (id: string) => lineItems.find((row) => row.id === id)?.name ?? '未設定';
   const lineItemOptions = <option value="">未設定</option>;
+  const lineItemsFor = (categoryId: CategoryId) => lineItems.filter((row) => row.utilityKind === utilityKindOf[categoryId]);
 
   const updateMeter = (id: string, patch: Partial<Meter>) => setMeters((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
   const updateTenant = (id: string, patch: Partial<TenantConfig>) => setTenants((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
@@ -235,7 +237,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
-              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}{line.utilityKind ? `（${utilityLabels[line.utilityKind] ?? line.utilityKind}）` : ''}</option>)}</select></td>
+              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}</tbody>
           </table>
@@ -252,7 +254,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
               <td><input value={row.name} onChange={(event) => patch({ name: event.target.value })} /></td>
               <td><select value={row.categoryId} onChange={(event) => patch({ categoryId: event.target.value as CategoryId })}>{building.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
               <td><input type="number" step="0.01" className="meter-narrow" value={row.unitPrice} onChange={(event) => patch({ unitPrice: Number(event.target.value) })} /></td>
-              <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}>{lineItemOptions}{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}{line.utilityKind ? `（${utilityLabels[line.utilityKind] ?? line.utilityKind}）` : ''}</option>)}</select></td>
+              <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td><label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => patch({ billable: event.target.checked })} />請求する</label></td>
             </tr>;
           })}</tbody>
@@ -275,7 +277,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
-              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}{line.utilityKind ? `（${utilityLabels[line.utilityKind] ?? line.utilityKind}）` : ''}</option>)}</select></td>
+              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}</tbody>
           </table>
