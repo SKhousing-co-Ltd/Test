@@ -153,3 +153,9 @@
   .meter-settings-panel { grid-template-columns: minmax(0, 1fr); }
   .meter-settings-columns, .meter-settings-columns-right { grid-column: 1; }
 }
+
+/* 設定の表：見出しと同じく中身も中央ぞろえにします。 */
+.meter-settings-panel .meter-settings-table th, .meter-settings-panel .meter-settings-table td { padding: 5px 8px; text-align: center; vertical-align: middle; }
+.meter-settings-panel .meter-settings-table td.meter-col-name { text-align: left !important; }
+.meter-settings-panel .meter-settings-table input, .meter-settings-panel .meter-settings-table select { text-align: center; text-align-last: center; }
+.meter-settings-panel .meter-settings-table .meter-settings-pair { justify-content: center; }
