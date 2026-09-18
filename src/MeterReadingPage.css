@@ -1,0 +1,232 @@
+.meter-page { display: grid; gap: 14px; }
+.meter-page-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 17px 20px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-page-heading h2 { margin: 3px 0 5px; color: #2c4563; font-size: 19px; }
+.meter-page-heading p:not(.section-kicker) { margin: 0; color: #74849a; font-size: 12px; }
+.meter-page-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; }
+.meter-page-meta div { display: grid; gap: 2px; }
+.meter-page-meta dt { color: #8b99ab; font-size: 10px; font-weight: 700; }
+.meter-page-meta dd { margin: 0; color: #35516f; font-size: 13px; }
+.meter-page-heading .text-button { border: 1px solid #cddcea; border-radius: 6px; padding: 8px 14px; color: #2f6fb0; background: #fff; font-size: 12px; font-weight: 700; }
+
+.meter-table-wrap { overflow: auto; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-table { width: 100%; min-width: 1100px; border-collapse: separate; border-spacing: 0; }
+.meter-table th, .meter-table td { padding: 8px 9px; border-bottom: 1px solid #edf1f5; color: #4c6179; font-size: 12px; text-align: center; white-space: nowrap; }
+.meter-table thead th { position: sticky; top: 0; z-index: 2; color: #6d7d91; background: #f5f9fd; font-size: 10px; font-weight: 700; }
+.meter-table thead tr:first-child th { border-bottom: 1px solid #e2eaf3; }
+.meter-table thead th[colspan] { border-left: 1px solid #e6edf5; }
+.meter-table td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.meter-col-name { min-width: 230px; text-align: left !important; }
+.meter-col-name strong { color: #2f4864; font-size: 13px; }
+.meter-col-name small { display: block; margin-top: 2px; color: #93a1b2; font-size: 10px; }
+.meter-toggle { display: inline-block; width: 14px; color: #8fa2b6; }
+.meter-row { cursor: pointer; }
+.meter-row:hover td { background: #f6faff; }
+.meter-row.open td { background: #eef5fd; }
+.meter-total { color: #1f4d7d; font-weight: 700; }
+.meter-muted { color: #93a1b2; }
+.meter-ok { color: #2a7452; }
+.meter-warn { color: #b0603f; font-weight: 700; }
+.meter-table tfoot td { border-top: 2px solid #dbe5ef; color: #35516f; background: #f8fbfe; font-weight: 700; }
+
+.meter-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-tabs button { border: 0; border-radius: 7px; padding: 9px 15px; color: #62748b; background: transparent; font-size: 12px; font-weight: 700; }
+.meter-tabs button:hover { background: #f2f7fc; }
+.meter-tabs button.active { color: #fff; background: #2f6fb0; }
+.meter-panel { display: grid; gap: 14px; padding: 16px 18px 18px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-panel-heading h3 { margin: 0 0 4px; color: #2f4864; font-size: 15px; }
+.meter-panel-heading p { margin: 0; color: #7d8b9e; font-size: 12px; }
+.meter-panel .meter-table-wrap { border: 1px solid #e6edf4; }
+.meter-input-table td { text-align: left; }
+.meter-panel select { height: 27px; max-width: 220px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #33506f; background: #fff; font: inherit; font-size: 12px; }
+.meter-panel input { width: 108px; height: 27px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: right; box-sizing: border-box; }
+.meter-subtotals h4 { margin: 0 0 8px; color: #35516f; font-size: 13px; }
+.meter-subtotals .meter-table { border: 1px solid #e6edf4; border-radius: 8px; }
+.meter-breakdown { text-align: left !important; white-space: normal !important; }
+.meter-breakdown span { display: block; color: #7d8b9e; font-size: 11px; }
+.meter-hint { margin: 9px 0 0; padding: 8px 11px; border-radius: 6px; color: #56708c; background: #f1f6fb; font-size: 11px; line-height: 1.6; }
+.meter-settings-block h4 { margin: 0 0 8px; color: #35516f; font-size: 13px; }
+.meter-settings-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.meter-settings-fields label { display: grid; gap: 4px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-settings-fields input { width: 140px; text-align: left; }
+.meter-settings-table td { text-align: left; }
+.meter-settings-table input[type='number'] { width: 84px; }
+.meter-settings-pair { display: inline-flex; gap: 4px; }
+
+.meter-tenant-list { display: grid; gap: 12px; }
+.meter-tenant { overflow: hidden; border: 1px solid #e3eaf3; border-radius: 9px; }
+.meter-tenant > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 10px 13px; border-bottom: 1px solid #eef2f7; background: #f7fafd; }
+.meter-tenant > header strong { color: #2f4864; font-size: 13px; }
+.meter-tenant > header small { display: block; margin-top: 2px; color: #8b99ab; font-size: 10px; }
+.meter-tenant-amount { display: flex; align-items: baseline; gap: 12px; }
+.meter-tenant-amount span { color: #6d7d91; font-size: 12px; }
+.meter-tenant-amount b { color: #1f4d7d; font-size: 17px; }
+.meter-tenant-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; padding: 12px 13px; }
+.meter-area h5 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 5px; padding-bottom: 4px; border-bottom: 1px solid #eef2f7; color: #45617f; font-size: 11px; }
+.meter-area h5 em { color: #b0603f; font-style: normal; font-size: 10px; }
+.meter-area table { width: 100%; border-collapse: collapse; }
+.meter-area td { padding: 2px 3px; border: 0; color: #52667e; font-size: 11px; text-align: left; white-space: nowrap; }
+.meter-area input { width: 92px; height: 25px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 11px; text-align: right; box-sizing: border-box; }
+.meter-readonly { display: inline-block; width: 92px; color: #7d8b9e; font-size: 11px; text-align: right; }
+.meter-unit { color: #a3b0c0; }
+.meter-area-sum { margin: 5px 0 0; color: #45617f; font-size: 11px; font-weight: 700; }
+.meter-tenant > footer { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 9px 13px; border-top: 1px solid #eef2f7; background: #fbfdff; }
+.meter-tenant > footer span { color: #6d7d91; font-size: 11px; }
+
+.meter-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-tabs button { border: 0; border-radius: 7px; padding: 9px 15px; color: #62748b; background: transparent; font-size: 12px; font-weight: 700; }
+.meter-tabs button:hover { background: #f2f7fc; }
+.meter-tabs button.active { color: #fff; background: #2f6fb0; }
+.meter-panel { display: grid; gap: 14px; padding: 16px 18px 18px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
+.meter-panel-heading h3 { margin: 0 0 4px; color: #2f4864; font-size: 15px; }
+.meter-panel-heading p { margin: 0; color: #7d8b9e; font-size: 12px; }
+.meter-panel .meter-table-wrap { border: 1px solid #e6edf4; }
+.meter-scroll { max-height: 340px; }
+.meter-panel select { height: 27px; max-width: 210px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #33506f; background: #fff; font: inherit; font-size: 12px; }
+.meter-settings-panel input { width: 150px; height: 27px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; box-sizing: border-box; }
+.meter-settings-panel input.meter-narrow { width: 82px; text-align: right; }
+.meter-settings-block { display: grid; gap: 9px; }
+.meter-settings-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.meter-settings-heading h4, .meter-settings-block > h4 { margin: 0; color: #35516f; font-size: 13px; }
+.meter-settings-heading p { flex: 1 1 auto; margin: 0; color: #8b99ab; font-size: 11px; }
+.meter-settings-heading .text-button { border: 1px solid #cddcea; border-radius: 6px; padding: 5px 11px; color: #2f6fb0; background: #fff; font-size: 11px; font-weight: 700; }
+.meter-settings-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.meter-settings-fields label { display: grid; gap: 4px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-settings-table td { text-align: left; vertical-align: middle; }
+.meter-settings-table td, .meter-settings-table th { white-space: nowrap; }
+.meter-settings-pair { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.meter-check { display: inline-flex; align-items: center; gap: 3px; color: #6d7d91; font-size: 11px; }
+.meter-check input { width: auto; height: auto; }
+.meter-order { white-space: nowrap; }
+.meter-order button { border: 1px solid #dde5ee; border-radius: 4px; padding: 1px 5px; color: #7d8b9e; background: #fff; font-size: 9px; }
+.meter-delete { border: 0; color: #b05656; background: transparent; font-size: 11px; }
+
+.meter-panel-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.meter-switch { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #dde7f2; border-radius: 8px; background: #f7fafd; }
+.meter-switch button { border: 0; border-radius: 6px; padding: 6px 12px; color: #62748b; background: transparent; font-size: 11px; font-weight: 700; }
+.meter-switch button.active { color: #fff; background: #4b8ed4; }
+.meter-subtabs { display: flex; flex-wrap: wrap; gap: 3px; padding-bottom: 2px; border-bottom: 1px solid #e6edf4; }
+.meter-subtabs button { border: 0; border-bottom: 2px solid transparent; padding: 7px 13px; color: #74849a; background: transparent; font-size: 12px; font-weight: 700; }
+.meter-subtabs button.active { border-bottom-color: #2f6fb0; color: #2f6fb0; }
+.meter-note { display: block; margin-top: 2px; color: #a3b0c0; font-size: 10px; font-weight: 400; }
+.meter-assign { display: grid; gap: 9px; }
+.meter-category-config { display: grid; gap: 8px; padding: 12px; border: 1px solid #e6edf4; border-radius: 9px; background: #fbfdff; }
+.meter-category-head { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; }
+.meter-category-head label { display: grid; gap: 4px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-category-config table { background: #fff; }
+
+.meter-category-head h5 { margin: 0; color: #2f4864; font-size: 13px; }
+.meter-category-config.meter-disabled { opacity: .55; }
+.meter-fixed-name { color: #45617f; font-weight: 700; }
+.meter-settings-panel .meter-check input { width: auto; height: auto; }
+
+/* 分類タブ：小分類タブと入力／割り当ての切り替えを1行にまとめます。 */
+.meter-panel-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #e6edf4; }
+.meter-panel-bar .meter-subtabs { flex: 1 1 auto; border-bottom: 0; }
+
+/* 設定：列が間延びしないよう、内容に合わせた幅にします。 */
+.meter-settings-panel .meter-table.meter-settings-table { width: auto; min-width: 0; }
+.meter-settings-panel .meter-settings-table th, .meter-settings-panel .meter-settings-table td { padding: 6px 14px 6px 0; }
+.meter-settings-panel .meter-settings-table th:last-child, .meter-settings-panel .meter-settings-table td:last-child { padding-right: 0; }
+.meter-settings-panel input { width: 128px; }
+.meter-category-config { padding: 10px 12px; }
+.meter-category-head { align-items: center; gap: 14px; }
+.meter-category-head label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.meter-category-head h5 { min-width: 46px; }
+.meter-category-head .text-button { margin-left: auto; }
+.meter-category-config .meter-settings-table { margin-top: 2px; }
+
+/* 設定：分類は縦に並べます。 */
+.meter-settings-panel .meter-settings-table th, .meter-settings-panel .meter-settings-table td { padding: 5px 10px 5px 0; }
+.meter-settings-panel input { width: 104px; }
+.meter-settings-panel input.meter-narrow { width: 64px; }
+.meter-settings-panel select { max-width: 132px; }
+.meter-category-head { gap: 10px; }
+.meter-category-head h5 { min-width: 0; }
+.meter-check { white-space: nowrap; }
+
+/* 設定の表：見出しと同じく中身も中央ぞろえにします。 */
+.meter-settings-panel .meter-settings-table th, .meter-settings-panel .meter-settings-table td { padding: 5px 8px; text-align: center; vertical-align: middle; }
+.meter-settings-panel .meter-settings-table td.meter-col-name { text-align: left !important; }
+.meter-settings-panel .meter-settings-table input, .meter-settings-panel .meter-settings-table select { text-align: center; text-align-last: center; }
+.meter-settings-panel .meter-settings-table .meter-settings-pair { justify-content: center; }
+
+/* 集計：月ごとに変わる単価はここで入力します。 */
+.meter-month-rates { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 12px; border: 1px solid #e0e9f3; border-radius: 8px; background: #f7fafd; }
+.meter-month-rates label { display: inline-flex; align-items: center; gap: 6px; color: #45617f; font-size: 12px; font-weight: 700; }
+.meter-month-rates input { width: 84px; height: 26px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: center; box-sizing: border-box; }
+.meter-month-rates span { color: #7d8b9e; font-weight: 400; }
+
+/* ヘッダーの検針日 */
+.meter-date { display: inline-flex; align-items: center; gap: 8px; color: #45617f; font-size: 12px; font-weight: 700; }
+.meter-date input { height: 30px; padding: 3px 8px; border: 1px solid #d4dfeb; border-radius: 5px; color: #244d76; background: #fff; font: inherit; font-size: 12px; box-sizing: border-box; }
+
+/* ヘッダーの検針日と、請求期間パターンの一覧 */
+.meter-date-fields { display: flex; flex-wrap: wrap; gap: 16px; }
+.meter-periods { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 14px; border: 1px solid #e0e9f3; border-radius: 9px; background: #f7fafd; }
+.meter-periods span { display: inline-flex; align-items: baseline; gap: 7px; color: #45617f; font-size: 12px; }
+.meter-periods b { color: #2f4864; font-size: 12px; }
+
+.meter-date-previous { display: inline-flex; align-items: center; gap: 8px; color: #7d8b9e; font-size: 12px; }
+.meter-date-previous b { color: #45617f; font-size: 12px; }
+
+/* テナント契約：税区分とデータ分割設定 */
+.meter-settings-panel select.meter-tax-mode { max-width: 74px; }
+.meter-tax-rate { display: inline-flex; align-items: center; gap: 5px; color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-settings-panel .meter-tax-rate input { width: 56px; text-align: center; }
+.meter-split-cell { min-width: 190px; }
+.meter-split-invoices { display: grid; gap: 3px; margin-top: 5px; }
+.meter-split-invoices label { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: #7d8b9e; font-size: 10px; }
+.meter-split-row td { background: #fafcfe; color: #6d7d91; }
+.meter-split-row .meter-col-name { padding-left: 24px; }
+.meter-split-row .meter-col-name small { display: block; margin-top: 2px; color: #93a1b2; font-size: 10px; }
+
+/* テナント契約：分割行と請求チェック */
+.meter-contract-table input[type='checkbox'] { width: auto; height: auto; }
+.meter-contract-sub td { background: #fafcfe; }
+.meter-contract-sub .meter-col-name { padding-left: 22px; }
+.meter-contract-table .meter-split-cell { min-width: 150px; }
+
+/* テナント契約：分類ごとの区切り */
+.meter-contract-table th.meter-contract-group, .meter-contract-table td.meter-contract-group { border-left: 1px solid #dde7f2; }
+.meter-contract-table thead tr:first-child th { background: #eef5fc; }
+
+/* 分類ごとの色分け（電気＝黄、水道＝青、ガス＝赤） */
+.meter-category-config.meter-cat-electric { border-color: #ecd9a4; background: #fffbf1; }
+.meter-category-config.meter-cat-water { border-color: #c3d9ef; background: #f6faff; }
+.meter-category-config.meter-cat-gas { border-color: #eec8c4; background: #fff7f6; }
+.meter-category-config.meter-cat-electric h5 { color: #8a6a1e; }
+.meter-category-config.meter-cat-water h5 { color: #2f6fb0; }
+.meter-category-config.meter-cat-gas h5 { color: #a9504a; }
+.meter-category-config table { background: #fff; }
+.meter-surcharge-table { margin-top: 8px; }
+.meter-contract-table thead tr:first-child th.meter-cat-electric { color: #8a6a1e; background: #fdf3dd; }
+.meter-contract-table thead tr:first-child th.meter-cat-water { color: #2f6fb0; background: #e7f1fc; }
+.meter-contract-table thead tr:first-child th.meter-cat-gas { color: #a9504a; background: #fceeec; }
+.meter-contract-table thead tr:last-child th.meter-cat-electric { background: #fefaf0; }
+.meter-contract-table thead tr:last-child th.meter-cat-water { background: #f4f9ff; }
+.meter-contract-table thead tr:last-child th.meter-cat-gas { background: #fff7f5; }
+.meter-contract-table td.meter-cat-electric { background: #fffdf7; }
+.meter-contract-table td.meter-cat-water { background: #fafcff; }
+.meter-contract-table td.meter-cat-gas { background: #fffbfa; }
+.meter-contract-table th.meter-contract-group, .meter-contract-table td.meter-contract-group { border-left: 2px solid #d9e3ee; }
+
+/* テナント契約：分割行のまとまりと備考 */
+.meter-contract-first td { border-top: 2px solid #dbe5ef; }
+.meter-contract-split .meter-col-name { border-left: 3px solid #7fa8d4; }
+.meter-contract-sub .meter-col-name { padding-left: 22px; }
+.meter-contract-continued { color: #93a1b2; }
+.meter-contract-table .meter-col-name small { display: block; margin-top: 2px; color: #7fa8d4; font-size: 10px; font-weight: 700; }
+.meter-settings-panel input.meter-note-input { width: 150px; text-align: left; }
+
+/* 小分類テーブル内の増額分行 */
+.meter-surcharge-row td { background: #fdf7e8; }
+.meter-cat-water .meter-surcharge-row td { background: #eef5fd; }
+.meter-cat-gas .meter-surcharge-row td { background: #fdf0ee; }
+
+/* 小分類の表：電気・水道・ガスで列位置をそろえます。 */
+.meter-subitem-table { table-layout: fixed; width: auto; }
+.meter-settings-panel .meter-subitem-table select { width: 100%; max-width: none; }
+.meter-settings-panel .meter-subitem-table input { width: 100%; }
+.meter-settings-panel .meter-subitem-table input.meter-narrow { width: 100%; }
+.meter-subitem-table .meter-settings-pair { display: flex; gap: 4px; }
+.meter-subitem-table .meter-settings-pair select { flex: 1 1 0; min-width: 0; }

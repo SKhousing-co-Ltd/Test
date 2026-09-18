@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sk-system-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--no-open"],
+      "port": 5173,
+      "url": "http://127.0.0.1:5173"
+    }
+  ]
+}
