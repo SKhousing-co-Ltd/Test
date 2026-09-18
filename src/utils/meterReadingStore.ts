@@ -16,6 +16,9 @@ export type MeterReadingSnapshot = {
   meterDate: string;
   previousMeterDate: string;
   status: 'draft' | 'confirmed';
+  // 対象月のレントロールに載らないテナント（入居前・退去後）へ割り当てられたメーターです。
+  // 画面には未割当として出ますが、保存でその割り当てを消さないよう、元の契約行を覚えておきます。
+  unresolvedContracts: Record<string, string>;
 };
 
 export const categoryIds: CategoryId[] = ['electric', 'water', 'gas'];
@@ -192,9 +195,11 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   const rowIndexByContract = new Map<string, { tenantId: string; rowIndex: number }>();
   for (const tenant of tenants) tenant.rows.forEach((row, index) => rowIndexByContract.set(row.id, { tenantId: tenant.id, rowIndex: index }));
 
+  const unresolvedContracts: Record<string, string> = {};
   const usageByMeter = new Map(entryRows.map((row) => [row.asset_meter_id, Number(row.usage_amount)]));
   const meters: Meter[] = meterRows.filter((row) => row.is_active).map((row) => {
     const assigned = row.meter_reading_contract_id ? rowIndexByContract.get(row.meter_reading_contract_id) : undefined;
+    if (row.meter_reading_contract_id && !assigned) unresolvedContracts[row.asset_meter_id] = row.meter_reading_contract_id;
     const unitPrice = numberOrNull(row.unit_price_override);
     return {
       id: row.asset_meter_id, subItemId: row.asset_meter_sub_item_id, code: row.meter_code, label: row.meter_label ?? '',
@@ -212,6 +217,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     meterDate: currentMonth?.meter_date ?? '',
     previousMeterDate: previousRow?.meter_date ?? '',
     status: currentMonth?.status ?? 'draft',
+    unresolvedContracts,
   };
 }
 
@@ -281,7 +287,9 @@ export async function saveMeterReading(
   // 6. メーター（小分類ごと削除はカスケードで消えるため、残っているものだけ整理します）
   const goneMeters = removedIds(base.meters.filter((row) => subItemIds.has(row.subItemId)).map((row) => row.id), next.meters.map((row) => row.id));
   if (goneMeters.length) check(await client.from('asset_meter').delete().in('asset_meter_id', goneMeters), 'メーター');
-  const contractIdOf = (meter: Meter) => next.tenants.find((tenant) => tenant.id === meter.tenantId)?.rows[meter.rowIndex]?.id ?? null;
+  // 対象月に居ないテナントのメーターは画面では未割当に見えるため、元の割り当てを残します。
+  const contractIdOf = (meter: Meter) => next.tenants.find((tenant) => tenant.id === meter.tenantId)?.rows[meter.rowIndex]?.id
+    ?? (meter.tenantId ? null : next.unresolvedContracts[meter.id] ?? null);
   if (next.meters.length) check(await client.from('asset_meter').upsert(next.meters.map((row) => ({
     asset_meter_id: row.id, asset_id: assetId, asset_meter_sub_item_id: row.subItemId, meter_code: row.code, meter_label: row.label || null,
     meter_reading_contract_id: contractIdOf(row), unit_price_override: row.unitPrice ?? null, is_active: true,
@@ -365,10 +373,12 @@ export async function confirmMeterReading(
     const inserted = await client.from('meter_reading_confirmed_amount').insert(rows);
     if (inserted.error) throw new Error(`確定した金額を保存できませんでした: ${inserted.error.message}`);
   }
+  // 検針日を保存していない月は月次データが無く、確定を記録できません。
   const updated = await client.from('meter_reading_month')
     .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
-    .eq('asset_id', assetId).eq('billing_month', billingMonth);
+    .eq('asset_id', assetId).eq('billing_month', billingMonth).select('asset_id');
   if (updated.error) throw new Error(`確定できませんでした: ${updated.error.message}`);
+  if (!updated.data?.length) throw new Error('この月の検針データがまだ保存されていません。先に保存してください。');
 }
 
 export async function releaseMeterReading(client: SupabaseClient, assetId: string, year: number, month: number) {

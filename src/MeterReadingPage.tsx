@@ -75,9 +75,11 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         setMeterDateState(snapshot.meterDate);
         setPreviousMeterDate(snapshot.previousMeterDate);
         setStatus(snapshot.status);
-        setConfirmedAmounts(snapshot.status === 'confirmed' ? await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month) : []);
         setDirty(false);
         setNotice('');
+        const confirmed = snapshot.status === 'confirmed' ? await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month) : [];
+        if (cancelled) return;
+        setConfirmedAmounts(confirmed);
       } catch (error) {
         if (!cancelled) setNotice(error instanceof Error ? error.message : '検針データを読み込めませんでした');
       } finally {
@@ -94,7 +96,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     setConfirming(true);
     try {
       const names = new Map(lineItems.map((row) => [row.id, row.name]));
-      await confirmMeterReading(supabase, propertyId, calendarYear, period.month, { building, tenants, meters, meterDate, previousMeterDate, status: 'confirmed' }, results, names);
+      await confirmMeterReading(supabase, propertyId, calendarYear, period.month, { ...baseline, building, tenants, meters, meterDate, previousMeterDate, status: 'confirmed' }, results, names);
       setStatus('confirmed');
       setConfirmedAmounts(await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month));
       setNotice('この月の金額を確定しました。');
@@ -124,7 +126,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     if (!supabase || !propertyId || !baseline) return;
     setSaving(true);
     try {
-      const snapshot: MeterReadingSnapshot = { building, tenants, meters, meterDate, previousMeterDate, status };
+      const snapshot: MeterReadingSnapshot = { ...baseline, building, tenants, meters, meterDate, previousMeterDate, status };
       await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline);
       setBaseline(snapshot);
       setDirty(false);
@@ -208,9 +210,20 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingDigits: 2, taxRoundingMode: 'floor', usageRoundingDigits: 1, usageRoundingMode: 'round' }] }));
     setTenants((current) => current.map((tenant) => ({ ...tenant, rows: tenant.rows.map((row) => ({ ...row, billable: { ...row.billable, [id]: true }, unitPrices: { ...row.unitPrices, [id]: null } })) })));
   };
-  const removeSubItem = (id: string) => { setBuilding((current) => ({ ...current, subItems: current.subItems.filter((row) => row.id !== id) })); setMeters((current) => current.filter((row) => row.subItemId !== id)); };
+  // 小分類を消すと、保存したときに配下のメーターと過去月の検針値もまとめて消えます。
+  const removeSubItem = (id: string) => {
+    const target = building.subItems.find((row) => row.id === id);
+    const own = meters.filter((row) => row.subItemId === id).length;
+    if (!window.confirm(`小分類「${target?.name ?? ''}」を削除します。保存すると、この小分類のメーター${own}件と、過去の月を含むすべての検針値も消えます。よろしいですか。`)) return;
+    setBuilding((current) => ({ ...current, subItems: current.subItems.filter((row) => row.id !== id) }));
+    setMeters((current) => current.filter((row) => row.subItemId !== id));
+  };
   const addMeter = (subItemId: string) => setMeters((current) => [...current, { id: newId(), subItemId, code: '', label: '', tenantId: tenants[0]?.id ?? '', rowIndex: 0, usage: 0 }]);
-  const removeMeter = (id: string) => setMeters((current) => current.filter((row) => row.id !== id));
+  const removeMeter = (id: string) => {
+    const target = meters.find((row) => row.id === id);
+    if (!window.confirm(`メーター「${target?.code || '番号なし'}」を削除します。保存すると、過去の月を含むこのメーターの検針値も消えます。よろしいですか。`)) return;
+    setMeters((current) => current.filter((row) => row.id !== id));
+  };
 
   const category = visibleCategories.find((row) => row.id === tab);
   const categorySubItems = category ? building.subItems.filter((row) => row.categoryId === category.id && (row.kind !== 'basic' || category.fixedBillable)) : [];

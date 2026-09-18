@@ -4,14 +4,9 @@
     {
       "name": "sk-system-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev",
-        "--",
-        "--no-open"
-      ],
+      "runtimeArgs": ["run", "dev", "--", "--no-open"],
       "port": 5173,
-      "autoPort": true
+      "url": "http://127.0.0.1:5173"
     }
   ]
 }
