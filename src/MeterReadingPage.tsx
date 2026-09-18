@@ -185,7 +185,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const visibleCategories = building.categories.filter((category) => category.billable);
   const customSubItems = building.subItems.filter((row) => row.kind === 'custom');
   const billableSurcharges = building.surcharges.filter((row) => row.billable);
-  const digitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{digits === 0 ? '整数' : `小数第${digits}位`}</option>);
+  // 設定値は「残す桁数」ですが、選ぶときはどの桁を処理するかで示します。
+  // 例：小数第1位まで残す＝小数第2位以下を処理する。
+  const digitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{`小数第${digits + 1}位以下`}</option>);
   const roundingOptions = roundingModes.map((row) => <option key={row} value={row}>{roundingModeLabel[row]}</option>);
   const lineItemsFor = (categoryId: CategoryId) => lineItems.filter((row) => row.utilityKind === utilityKindOf[categoryId]);
   // 分類ごとの色分けです。電気は黄、水道は青、ガスは赤にします。
