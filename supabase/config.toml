@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.receive-billone-invoices]
 verify_jwt = false
+
+[functions.sync-case-progress-staging]
+verify_jwt = false

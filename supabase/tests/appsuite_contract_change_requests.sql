@@ -101,6 +101,36 @@ begin
    where account_status = 'active' and role in ('admin', 'manager') limit 1;
   if v_manager_id is not null then
     perform set_config('request.jwt.claim.sub', v_manager_id::text, true);
+    if exists (
+      select 1
+        from public.list_contract_workflow_queue()
+       where app_id = '87'
+         and data_id = 'test-repair-route'
+    ) then
+      raise exception '修繕発注は契約業務フローへ表示してはいけません';
+    end if;
+    if not exists (
+      select 1
+        from public.list_contract_workflow_queue()
+       where app_id = 'TEST-CONTRACT-CREATE'
+         and data_id = 'new-1'
+    ) then
+      raise exception '契約アプリの決裁済み申請は契約業務フローへ表示する必要があります';
+    end if;
+    begin
+      perform public.complete_contract_workflow(
+        (select appsuite_record_id
+           from public.appsuite_record
+          where app_id = '87'
+            and data_id = 'test-repair-route')
+      );
+      raise exception '修繕発注を契約完了として記録してはいけません';
+    exception
+      when others then
+        if sqlerrm not like '%Workflow item is unavailable or already processed%' then
+          raise;
+        end if;
+    end;
     insert into public.asset_master(asset_code, asset_name) values (999991, 'AppSuite契約フローテスト物件')
     returning asset_id into v_property_id;
     insert into public.unit_master(property_id, unit_code, floor_label, unit_type, rentable_area_sqm)
