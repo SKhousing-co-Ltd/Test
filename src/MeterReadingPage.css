@@ -167,6 +167,12 @@
 .meter-save { padding: 7px 18px; border: 1px solid #2f6fb5; border-radius: 7px; background: #2f6fb5; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
 .meter-save:hover:not(:disabled) { background: #275e9c; }
 .meter-save:disabled { border-color: #d6dfea; background: #eef3f8; color: #93a1b2; cursor: default; }
+.meter-confirm, .meter-release { padding: 7px 16px; border: 1px solid #d6dfea; border-radius: 7px; background: #fff; color: #45617f; font-size: 12px; font-weight: 700; cursor: pointer; }
+.meter-confirm:hover:not(:disabled), .meter-release:hover:not(:disabled) { border-color: #2f6fb5; color: #2f6fb5; }
+.meter-confirm:disabled { background: #f7fafd; color: #a9b6c6; cursor: default; }
+.meter-confirmed-mark { display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; background: #e8f3ea; color: #2f7a46; font-size: 11px; font-weight: 700; }
+/* 確定済みの月は中身をまとめて編集不可にします。表示の並びは変えません。 */
+.meter-lock { display: contents; border: 0; margin: 0; padding: 0; }
 .meter-periods { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 14px; border: 1px solid #e0e9f3; border-radius: 9px; background: #f7fafd; }
 .meter-periods span { display: inline-flex; align-items: baseline; gap: 7px; color: #45617f; font-size: 12px; }
 .meter-periods b { color: #2f4864; font-size: 12px; }

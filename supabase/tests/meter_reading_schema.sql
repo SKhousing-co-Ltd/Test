@@ -17,7 +17,8 @@ begin
   foreach table_name in array array[
     'asset_meter_category_setting', 'asset_meter_sub_item', 'asset_meter_surcharge',
     'meter_reading_contract', 'meter_reading_contract_item', 'asset_meter',
-    'meter_reading_month', 'meter_reading_month_surcharge', 'meter_reading_entry'
+    'meter_reading_month', 'meter_reading_month_surcharge', 'meter_reading_entry',
+    'meter_reading_confirmed_amount'
   ] loop
     if to_regclass('public.' || table_name) is null then
       raise exception '% is missing', table_name;
@@ -25,8 +26,13 @@ begin
     if not (select relrowsecurity from pg_class where oid = ('public.' || table_name)::regclass) then
       raise exception '% must have RLS enabled', table_name;
     end if;
-    if not has_table_privilege('authenticated', 'public.' || table_name, 'select, insert, update, delete') then
+    -- 確定した金額だけは書き換えを許さないので、更新権限は別に見ます。
+    if not has_table_privilege('authenticated', 'public.' || table_name, 'select, insert, delete') then
       raise exception 'authenticated must manage %', table_name;
+    end if;
+    if table_name <> 'meter_reading_confirmed_amount'
+       and not has_table_privilege('authenticated', 'public.' || table_name, 'update') then
+      raise exception 'authenticated must update %', table_name;
     end if;
   end loop;
 
@@ -129,6 +135,35 @@ begin
   insert into public.meter_reading_month_surcharge(asset_id, billing_month, asset_meter_surcharge_id, unit_price)
   values (property_uuid, date '2026-08-01', surcharge_uuid, 8.02);
 
+  -- 確定した金額は、確定したときの単価と丸めごと残ります。
+  insert into public.meter_reading_confirmed_amount(
+    asset_id, billing_month, meter_reading_contract_id, tenant_id, tenant_name, row_no, invoice_number,
+    category, source_kind, source_id, source_name, usage_amount, usage_unit, unit_price, amount,
+    amount_rounding_mode, usage_rounding_digits, usage_rounding_mode, tax_mode, tax_rate
+  ) values (
+    property_uuid, date '2026-08-01', contract_uuid, tenant_uuid, '検針データテストテナント', 1, 1,
+    'electric', 'subItem', usage_item_uuid, '電灯', 564.5, 'kWh', 31.65, 17866,
+    'round', 1, 'round', 'exclusive', 0.1
+  );
+
+  -- 同じ月・同じ契約行・同じ小分類の金額は二重に残しません。
+  begin
+    insert into public.meter_reading_confirmed_amount(
+      asset_id, billing_month, meter_reading_contract_id, tenant_id, tenant_name,
+      category, source_kind, source_id, source_name, usage_unit, amount, amount_rounding_mode
+    ) values (
+      property_uuid, date '2026-08-01', contract_uuid, tenant_uuid, '検針データテストテナント',
+      'electric', 'subItem', usage_item_uuid, '電灯', 'kWh', 1, 'round'
+    );
+    raise exception 'duplicated confirmed amount must be rejected';
+  exception when unique_violation then null;
+  end;
+
+  -- 確定した金額は書き換えられません。
+  if has_table_privilege('authenticated', 'public.meter_reading_confirmed_amount', 'update') then
+    raise exception 'confirmed amounts must not be updatable';
+  end if;
+
   -- 小分類を消すと、そこに属するメーターと検針値も一緒に消えます。
   delete from public.asset_meter_sub_item where asset_meter_sub_item_id = usage_item_uuid;
   select count(*) into remaining from public.asset_meter where asset_meter_id = meter_uuid;
@@ -138,6 +173,12 @@ begin
   select count(*) into remaining from public.meter_reading_entry where asset_meter_id = meter_uuid;
   if remaining <> 0 then
     raise exception 'entries must be removed with their meter';
+  end if;
+
+  select count(*) into remaining from public.meter_reading_confirmed_amount
+   where asset_id = property_uuid and source_id = usage_item_uuid;
+  if remaining <> 1 then
+    raise exception 'confirmed amounts must survive a removed sub item';
   end if;
 
   -- 契約行を消しても、メーターの割り当てが外れるだけで小分類は残ります。

@@ -5,7 +5,7 @@
 // 覚えておき、保存時に「消えた行」を削除し、残っている行をupsertします。
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
-  BuildingConfig, Category, CategoryId, ContractRow, Meter, PriceMode, RoundingMode, SubItem, SumMode, Surcharge, TaxMode, TenantConfig,
+  BuildingConfig, Category, CategoryId, ContractRow, Meter, PriceMode, RoundingMode, SubItem, SumMode, Surcharge, TaxMode, TenantConfig, TenantResult,
 } from './meterReading';
 
 export type MeterReadingSnapshot = {
@@ -299,4 +299,83 @@ export async function saveMeterReading(
   if (next.meters.length) check(await client.from('meter_reading_entry').upsert(next.meters.map((row) => ({
     asset_id: assetId, billing_month: billingMonth, asset_meter_id: row.id, usage_amount: row.usage,
   })), { onConflict: 'asset_id,billing_month,asset_meter_id' }), '検針値');
+}
+
+// 月次確定です。確定した金額は、そのときの使用量・単価・丸めごと残します。
+// 単価や丸めの設定を後から変えても、確定済みの月の金額は動きません。
+export type ConfirmedAmount = {
+  tenantId: string; tenantName: string; rowNo: number; invoiceNo: number; category: CategoryId;
+  sourceKind: 'subItem' | 'surcharge'; sourceName: string; lineItemId: string | null; lineItemName: string | null;
+  usage: number; unitPrice: number | null; amount: number;
+};
+
+export async function loadConfirmedAmounts(client: SupabaseClient, assetId: string, year: number, month: number): Promise<ConfirmedAmount[]> {
+  const { data, error } = await client.from('meter_reading_confirmed_amount')
+    .select('tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_name, asset_billing_line_item_id, line_item_name, usage_amount, unit_price, amount')
+    .eq('asset_id', assetId).eq('billing_month', monthStart(year, month))
+    .order('tenant_name').order('row_no');
+  if (error) throw new Error(`確定した金額を読み込めませんでした: ${error.message}`);
+  return (data ?? []).map((row) => ({
+    tenantId: row.tenant_id, tenantName: row.tenant_name, rowNo: row.row_no, invoiceNo: row.invoice_number, category: row.category,
+    sourceKind: row.source_kind, sourceName: row.source_name, lineItemId: row.asset_billing_line_item_id, lineItemName: row.line_item_name,
+    usage: Number(row.usage_amount), unitPrice: numberOrNull(row.unit_price), amount: Number(row.amount),
+  }));
+}
+
+export async function confirmMeterReading(
+  client: SupabaseClient, assetId: string, year: number, month: number,
+  snapshot: MeterReadingSnapshot, results: TenantResult[], lineItemNames: Map<string, string>,
+) {
+  const billingMonth = monthStart(year, month);
+  const unitOf = (id: CategoryId) => snapshot.building.categories.find((row) => row.id === id)?.unit ?? '';
+  const rows = results.flatMap((result) => result.rows.flatMap((row) => {
+    const shared = {
+      asset_id: assetId, billing_month: billingMonth, meter_reading_contract_id: row.row.id,
+      tenant_id: result.tenant.id, tenant_name: result.tenant.name, row_no: row.index + 1,
+      invoice_number: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1,
+      amount_rounding_mode: row.row.amountRoundingMode,
+    };
+    const subItemRows = row.categories.flatMap((category) => category.subItems
+      .filter((item) => item.amount)
+      .map((item) => ({
+        ...shared, category: category.category.id, source_kind: 'subItem', source_id: item.subItem.id, source_name: item.subItem.name,
+        asset_billing_line_item_id: item.subItem.lineItemId || null,
+        line_item_name: item.subItem.lineItemId ? lineItemNames.get(item.subItem.lineItemId) ?? null : null,
+        usage_amount: item.usage, usage_unit: unitOf(category.category.id),
+        // 単価が違うメーターが混ざっている行は、単価を1つに決められないため残しません。
+        unit_price: item.groups.length === 1 && item.subItem.kind !== 'basic' ? item.groups[0].unitPrice : null,
+        amount: item.amount,
+        usage_rounding_digits: item.subItem.usageRoundingDigits, usage_rounding_mode: item.subItem.usageRoundingMode,
+        tax_mode: item.subItem.taxMode, tax_rate: snapshot.building.taxRate,
+      })));
+    const surchargeRows = row.surcharges.filter((item) => item.amount).map((item) => ({
+      ...shared, category: item.surcharge.categoryId, source_kind: 'surcharge', source_id: item.surcharge.id, source_name: item.surcharge.name,
+      asset_billing_line_item_id: item.surcharge.lineItemId || null,
+      line_item_name: item.surcharge.lineItemId ? lineItemNames.get(item.surcharge.lineItemId) ?? null : null,
+      usage_amount: item.usage, usage_unit: unitOf(item.surcharge.categoryId), unit_price: item.surcharge.unitPrice, amount: item.amount,
+      usage_rounding_digits: null, usage_rounding_mode: null, tax_mode: null, tax_rate: snapshot.building.taxRate,
+    }));
+    return [...subItemRows, ...surchargeRows];
+  }));
+
+  // 確定し直したときに古い金額が残らないよう、入れ直します。
+  const removed = await client.from('meter_reading_confirmed_amount').delete().eq('asset_id', assetId).eq('billing_month', billingMonth);
+  if (removed.error) throw new Error(`確定した金額を入れ直せませんでした: ${removed.error.message}`);
+  if (rows.length) {
+    const inserted = await client.from('meter_reading_confirmed_amount').insert(rows);
+    if (inserted.error) throw new Error(`確定した金額を保存できませんでした: ${inserted.error.message}`);
+  }
+  const updated = await client.from('meter_reading_month')
+    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
+    .eq('asset_id', assetId).eq('billing_month', billingMonth);
+  if (updated.error) throw new Error(`確定できませんでした: ${updated.error.message}`);
+}
+
+export async function releaseMeterReading(client: SupabaseClient, assetId: string, year: number, month: number) {
+  const billingMonth = monthStart(year, month);
+  const removed = await client.from('meter_reading_confirmed_amount').delete().eq('asset_id', assetId).eq('billing_month', billingMonth);
+  if (removed.error) throw new Error(`確定を解除できませんでした: ${removed.error.message}`);
+  const updated = await client.from('meter_reading_month').update({ status: 'draft', confirmed_at: null })
+    .eq('asset_id', assetId).eq('billing_month', billingMonth);
+  if (updated.error) throw new Error(`確定を解除できませんでした: ${updated.error.message}`);
 }

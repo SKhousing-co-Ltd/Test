@@ -5,7 +5,7 @@ import {
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type Meter,
   type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
 } from './utils/meterReading';
-import { loadMeterReading, newId, saveMeterReading, type MeterReadingSnapshot } from './utils/meterReadingStore';
+import { confirmMeterReading, loadConfirmedAmounts, loadMeterReading, newId, releaseMeterReading, saveMeterReading, type ConfirmedAmount, type MeterReadingSnapshot } from './utils/meterReadingStore';
 import { periodRange } from './utils/billingDates';
 import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
@@ -35,6 +35,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   // 読み込んだ時点の内容です。保存時に「消えた行」を見つけるために使います。
   const [baseline, setBaseline] = useState<MeterReadingSnapshot | null>(null);
   const [status, setStatus] = useState<'draft' | 'confirmed'>('draft');
+  // 確定済みの月は、そのとき保存した金額を表示します。
+  const [confirmedAmounts, setConfirmedAmounts] = useState<ConfirmedAmount[]>([]);
+  const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -72,6 +75,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         setMeterDateState(snapshot.meterDate);
         setPreviousMeterDate(snapshot.previousMeterDate);
         setStatus(snapshot.status);
+        setConfirmedAmounts(snapshot.status === 'confirmed' ? await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month) : []);
         setDirty(false);
         setNotice('');
       } catch (error) {
@@ -83,6 +87,38 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     void load();
     return () => { cancelled = true; };
   }, [propertyId, calendarYear, period.month]);
+
+  // 確定すると、そのときの使用量・単価・丸めごと金額を残し、画面は編集できなくなります。
+  const confirm = async () => {
+    if (!supabase || !propertyId || !baseline || dirty) return;
+    setConfirming(true);
+    try {
+      const names = new Map(lineItems.map((row) => [row.id, row.name]));
+      await confirmMeterReading(supabase, propertyId, calendarYear, period.month, { building, tenants, meters, meterDate, previousMeterDate, status: 'confirmed' }, results, names);
+      setStatus('confirmed');
+      setConfirmedAmounts(await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month));
+      setNotice('この月の金額を確定しました。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '確定できませんでした');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const release = async () => {
+    if (!supabase || !propertyId) return;
+    setConfirming(true);
+    try {
+      await releaseMeterReading(supabase, propertyId, calendarYear, period.month);
+      setStatus('draft');
+      setConfirmedAmounts([]);
+      setNotice('確定を解除しました。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '確定を解除できませんでした');
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   const save = async () => {
     if (!supabase || !propertyId || !baseline) return;
@@ -133,6 +169,17 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const grandExpected = results.reduce((sum, result) => sum + result.tenant.expected, 0);
   // 元表との突き合わせ列は、期待値を持つサンプルデータのときだけ出します。
   const showExpected = results.some((result) => result.tenant.expected);
+  // 確定済みの月は、計算し直した金額ではなく確定時に保存した金額を請求へ渡します。
+  const confirmedByTenant = new Map<string, Map<string, number>>();
+  for (const row of confirmedAmounts) {
+    if (!row.lineItemId) continue;
+    const own = confirmedByTenant.get(row.tenantId) ?? new Map<string, number>();
+    own.set(row.lineItemId, (own.get(row.lineItemId) ?? 0) + row.amount);
+    confirmedByTenant.set(row.tenantId, own);
+  }
+  const lineItemAmounts = (tenantId: string) => status === 'confirmed'
+    ? confirmedByTenant.get(tenantId) ?? new Map<string, number>()
+    : results.find((result) => result.tenant.id === tenantId)?.byLineItem ?? new Map<string, number>();
   const visibleCategories = building.categories.filter((category) => category.billable);
   const customSubItems = building.subItems.filter((row) => row.kind === 'custom');
   const billableSurcharges = building.surcharges.filter((row) => row.billable);
@@ -176,7 +223,15 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       <div className="meter-date-fields">
         <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
         <span className="meter-date-previous">前回検針日<b>{previousMeterDate ? previousMeterDate.replace(/-/g, '/') : '前月の検針データなし'}</b></span>
-        <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
+        {status === 'draft'
+          ? <>
+            <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
+            <button type="button" className="meter-confirm" disabled={dirty || confirming || loading || !baseline || !tenants.length} onClick={() => void confirm()}>{confirming ? '確定中…' : '確定'}</button>
+          </>
+          : <>
+            <span className="meter-confirmed-mark">確定済み</span>
+            <button type="button" className="meter-release" disabled={confirming || loading} onClick={() => void release()}>確定を解除</button>
+          </>}
       </div>
     </header>
 
@@ -188,12 +243,15 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     {loading && <p className="tenant-billing-notice">検針データを読み込んでいます…</p>}
     {!loading && baseline && !tenants.length && <p className="tenant-billing-notice">対象月に契約中のテナントがありません。</p>}
 
+    {status === 'confirmed' && <p className="tenant-billing-notice">この月は確定済みです。編集するには確定を解除してください。</p>}
+
     <nav className="meter-tabs">
       <button type="button" className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>集計</button>
       {visibleCategories.map((row) => <button key={row.id} type="button" className={tab === row.id ? 'active' : ''} onClick={() => setTab(row.id)}>{row.name}</button>)}
       <button type="button" className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>設定</button>
     </nav>
 
+    <fieldset className="meter-lock" disabled={status === 'confirmed'}>
     {tab === 'summary' && <div className="meter-panel">
       {billableSurcharges.length > 0 && <div className="meter-month-rates">
         {billableSurcharges.map((row) => <label key={row.id}>
@@ -238,14 +296,17 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       </div>
 
       <div className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとの金額です。この単位で請求書作成へ渡します。</p></div>
+        <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとの金額です。この単位で請求書作成へ渡します。{status === 'confirmed' ? 'この月は確定済みのため、確定したときの金額を表示しています。' : ''}</p></div>
         <div className="meter-table-wrap">
           <table className="meter-table">
             <thead><tr><th className="meter-col-name">テナント</th>{lineItems.length ? lineItems.map((row) => <th key={row.id}>{row.name}</th>) : <th>明細項目が未登録です</th>}</tr></thead>
-            <tbody>{results.map((result) => <tr key={result.tenant.id}>
-              <td className="meter-col-name">{result.tenant.name}</td>
-              {lineItems.length ? lineItems.map((row) => <td key={row.id} className="numeric">{result.byLineItem.get(row.id) ? yen.format(result.byLineItem.get(row.id) ?? 0) : <span className="meter-muted">—</span>}</td>) : <td className="meter-muted">請求設定で公共料金の明細項目を登録してください。</td>}
-            </tr>)}</tbody>
+            <tbody>{results.map((result) => {
+              const amounts = lineItemAmounts(result.tenant.id);
+              return <tr key={result.tenant.id}>
+                <td className="meter-col-name">{result.tenant.name}</td>
+                {lineItems.length ? lineItems.map((row) => <td key={row.id} className="numeric">{amounts.get(row.id) ? yen.format(amounts.get(row.id) ?? 0) : <span className="meter-muted">—</span>}</td>) : <td className="meter-muted">請求設定で公共料金の明細項目を登録してください。</td>}
+              </tr>;
+            })}</tbody>
           </table>
         </div>
       </div>
@@ -459,5 +520,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。</p>
       </section>
     </div>}
+    </fieldset>
   </section>;
 }
