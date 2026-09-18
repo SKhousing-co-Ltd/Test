@@ -217,3 +217,8 @@
 .meter-contract-continued { color: #93a1b2; }
 .meter-contract-table .meter-col-name small { display: block; margin-top: 2px; color: #7fa8d4; font-size: 10px; font-weight: 700; }
 .meter-settings-panel input.meter-note-input { width: 150px; text-align: left; }
+
+/* 小分類テーブル内の増額分行 */
+.meter-surcharge-row td { background: #fdf7e8; }
+.meter-cat-water .meter-surcharge-row td { background: #eef5fd; }
+.meter-cat-gas .meter-surcharge-row td { background: #fdf0ee; }

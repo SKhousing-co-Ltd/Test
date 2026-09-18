@@ -113,7 +113,9 @@ const tenant = (id: string, name: string, electric: number | null, expected: num
   rows: Array.from({ length: options.rows ?? 1 }, (_, index) => contractRow(`${id}-R${index + 1}`, electric, { invoiceNo: index + 1, basic: index === 0 ? options.basic : undefined, rounding: options.rounding })),
 });
 
+// 並び順はレントロール（入金明細・請求明細）と同じフロア順にしています。
 export const initialTenants: TenantConfig[] = [
+  tenant('T14', 'セブンイレブン', null, 11501),
   tenant('T1', "㈱Y'sデンタルサポート", 35, 75418),
   tenant('T2', '錦江シッピングジャパン㈱', 33, 45334, { rounding: 'round' }),
   tenant('T3', 'Genesis(合)', 35, 22926),
@@ -128,7 +130,6 @@ export const initialTenants: TenantConfig[] = [
   tenant('T11', '㈱ミタカ', 35, 33064, { rounding: 'round' }),
   tenant('T12', 'アイシステム', 33, 32263, { rounding: 'round' }),
   tenant('T13', 'コンカレントシステムズ', 15.38, 365838, { rounding: 'round', basic: 50379 }),
-  tenant('T14', 'セブンイレブン', null, 11501),
 ];
 
 const meter = (subItemId: string, code: string, label: string, tenantId: string, usage: number, unitPrice?: number): Meter =>

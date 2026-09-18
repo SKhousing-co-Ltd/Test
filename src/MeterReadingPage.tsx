@@ -286,11 +286,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <label>使用量の単位<input className="meter-narrow" value={row.unit} onChange={(event) => updateCategory(row.id, { unit: event.target.value })} /></label>
             <label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => updateCategory(row.id, { billable: event.target.checked })} />請求する</label>
             <label className="meter-check"><input type="checkbox" checked={row.fixedBillable} onChange={(event) => updateCategory(row.id, { fixedBillable: event.target.checked })} />基本料を請求する</label>
+            {building.surcharges.filter((item) => item.categoryId === row.id).map((item) => <label key={item.id} className="meter-check">
+              <input type="checkbox" checked={item.billable} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, billable: event.target.checked } : target) })} />{item.name}を請求する
+            </label>)}
             <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
           </div>
           <table className="meter-table meter-settings-table">
             <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th>税区分</th><th>既定単価</th><th>税抜換算の丸め</th><th>使用量の丸め</th><th>既定の請求期間</th><th /></tr></thead>
-            <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
+            <tbody>{building.subItems.filter((item) => item.categoryId === row.id && (item.kind !== 'basic' || row.fixedBillable)).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
               <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
@@ -306,24 +309,19 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               </span> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <select value={item.periodPatternId} onChange={(event) => updateSubItem(item.id, { periodPatternId: event.target.value })}><option value="">未設定</option>{periodPatterns.map((pattern, index) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{patternMark(index)} {pattern.pattern_name}</option>)}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
+            </tr>)}
+            {building.surcharges.filter((item) => item.categoryId === row.id && item.billable).map((item) => <tr key={item.id} className="meter-surcharge-row">
+              <td><span className="meter-fixed-name">{item.name}</span></td>
+              <td className="meter-muted">使用量にかかる加算</td>
+              <td><select value={item.lineItemId} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, lineItemId: event.target.value } : target) })}><option value="">未設定</option>{lineItemsFor(item.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
+              <td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td />
             </tr>)}</tbody>
           </table>
-          {building.surcharges.filter((item) => item.categoryId === row.id).length > 0 && <table className="meter-table meter-settings-table meter-surcharge-table">
-            <thead><tr><th>増額分</th><th>請求明細の項目</th><th>請求する</th></tr></thead>
-            <tbody>{building.surcharges.filter((item) => item.categoryId === row.id).map((item) => {
-              const patch = (value: Partial<typeof item>) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, ...value } : target) });
-              return <tr key={item.id}>
-                <td><input value={item.name} onChange={(event) => patch({ name: event.target.value })} /></td>
-                <td><select value={item.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(item.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
-                <td><label className="meter-check"><input type="checkbox" checked={item.billable} onChange={(event) => patch({ billable: event.target.checked })} />請求する</label></td>
-              </tr>;
-            })}</tbody>
-          </table>}
         </div>)}
       </section>
 
       <section className="meter-settings-block">
-        <h4>テナント契約</h4>
+        <h4>テナント一覧</h4>
         <div className="meter-table-wrap">
           <table className="meter-table meter-settings-table meter-contract-table">
             <thead>
