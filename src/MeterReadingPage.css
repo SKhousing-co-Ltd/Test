@@ -118,3 +118,19 @@
 .meter-category-config.meter-disabled { opacity: .55; }
 .meter-fixed-name { color: #45617f; font-weight: 700; }
 .meter-settings-panel .meter-check input { width: auto; height: auto; }
+
+/* 分類タブ：小分類タブと入力／割り当ての切り替えを1行にまとめます。 */
+.meter-panel-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #e6edf4; }
+.meter-panel-bar .meter-subtabs { flex: 1 1 auto; border-bottom: 0; }
+
+/* 設定：列が間延びしないよう、内容に合わせた幅にします。 */
+.meter-settings-panel .meter-table.meter-settings-table { width: auto; min-width: 0; }
+.meter-settings-panel .meter-settings-table th, .meter-settings-panel .meter-settings-table td { padding: 6px 14px 6px 0; }
+.meter-settings-panel .meter-settings-table th:last-child, .meter-settings-panel .meter-settings-table td:last-child { padding-right: 0; }
+.meter-settings-panel input { width: 128px; }
+.meter-category-config { padding: 10px 12px; }
+.meter-category-head { align-items: center; gap: 14px; }
+.meter-category-head label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.meter-category-head h5 { min-width: 46px; }
+.meter-category-head .text-button { margin-left: auto; }
+.meter-category-config .meter-settings-table { margin-top: 2px; }

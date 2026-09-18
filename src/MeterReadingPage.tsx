@@ -69,7 +69,6 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
     </nav>
 
     {tab === 'summary' && <div className="meter-panel">
-      <div className="meter-panel-heading"><h3>集計</h3><p>分類ごとの金額に、分類全体の使用量にかかる増額分を加えた最終の請求額です。</p></div>
       <div className="meter-table-wrap">
         <table className="meter-table">
           <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}</th>)}{building.surcharges.filter((row) => row.billable).map((row) => <th key={row.id}>{row.name}</th>)}<th>請求合計</th><th>元表</th><th>差</th></tr></thead>
@@ -107,18 +106,16 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
     </div>}
 
     {category && <div className="meter-panel">
-      <div className="meter-panel-heading meter-panel-bar">
-        <div><h3>{category.name}</h3><p>単位 {category.unit}／小分類 {categorySubItems.map((row) => row.name).join('・') || 'なし'}</p></div>
+      <div className="meter-panel-bar">
+        <nav className="meter-subtabs">
+          <button type="button" className={currentSubTab === 'summary' ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: 'summary' })}>集計</button>
+          {categorySubItems.map((row) => <button key={row.id} type="button" className={currentSubTab === row.id ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: row.id })}>{row.name}</button>)}
+        </nav>
         {subItem && subItem.kind === 'custom' && <div className="meter-switch">
           <button type="button" className={mode === 'input' ? 'active' : ''} onClick={() => setMode('input')}>使用量の入力</button>
           <button type="button" className={mode === 'assign' ? 'active' : ''} onClick={() => setMode('assign')}>メーターの割り当て</button>
         </div>}
       </div>
-
-      <nav className="meter-subtabs">
-        <button type="button" className={currentSubTab === 'summary' ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: 'summary' })}>集計</button>
-        {categorySubItems.map((row) => <button key={row.id} type="button" className={currentSubTab === row.id ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: row.id })}>{row.name}</button>)}
-      </nav>
 
       {currentSubTab === 'summary' && <div className="meter-table-wrap">
         <table className="meter-table">
@@ -193,27 +190,21 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
     </div>}
 
     {tab === 'settings' && <div className="meter-panel meter-settings-panel">
-      <div className="meter-panel-heading"><h3>設定</h3><p>ビルごとの違いはここのデータだけで表します。集計処理は全ビル共通です。</p></div>
-
       <section className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>分類と小分類</h4><p>電気・水道・ガスは固定です。請求しない分類はタブごと非表示になります。</p></div>
         {building.categories.map((row) => <div key={row.id} className={row.billable ? 'meter-category-config' : 'meter-category-config meter-disabled'}>
           <div className="meter-category-head">
             <h5>{row.name}</h5>
             <label>使用量の単位<input className="meter-narrow" value={row.unit} onChange={(event) => updateCategory(row.id, { unit: event.target.value })} /></label>
-            {row.id === 'electric'
-              ? <span className="meter-muted">電気は常に請求します</span>
-              : <label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => updateCategory(row.id, { billable: event.target.checked })} />請求する</label>}
+            <label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => updateCategory(row.id, { billable: event.target.checked })} />請求する</label>
             <label className="meter-check"><input type="checkbox" checked={row.fixedBillable} onChange={(event) => updateCategory(row.id, { fixedBillable: event.target.checked })} />基本料を請求する</label>
             <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
           </div>
           <table className="meter-table meter-settings-table">
-            <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th>メーター</th><th /></tr></thead>
+            <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th /></tr></thead>
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
               <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItems.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
-              <td className="meter-muted">{item.kind === 'basic' ? '—' : `${meters.filter((meter) => meter.subItemId === item.id).length} 台`}</td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}</tbody>
           </table>
@@ -221,7 +212,7 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
       </section>
 
       <section className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>増額分</h4><p>小分類ではなく、分類全体の使用量にかかります。集計画面で計算します。</p></div>
+        <h4>増額分</h4>
         <table className="meter-table meter-settings-table">
           <thead><tr><th>名称</th><th>対象の分類</th><th>単価</th><th>請求明細の項目</th><th>請求する</th></tr></thead>
           <tbody>{building.surcharges.map((row) => {
@@ -238,7 +229,7 @@ export function MeterReadingPage({ propertyName, period }: { propertyId: string;
       </section>
 
       <section className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>テナント契約</h4><p>分類ごとの契約単価・端数処理と、小分類ごとの金額の出し方です。</p></div>
+        <h4>テナント契約</h4>
         <div className="meter-table-wrap">
           <table className="meter-table meter-settings-table">
             <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}単価</th>)}<th>使用量の丸め</th><th>金額の丸め</th>{building.subItems.filter((row) => row.kind === 'custom').map((row) => <th key={row.id}>{row.name}</th>)}{building.surcharges.map((row) => <th key={row.id}>{row.name}</th>)}</tr></thead>
