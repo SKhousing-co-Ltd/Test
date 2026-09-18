@@ -34,9 +34,14 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
   const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [notice, setNotice] = useState('');
-  const [meterDate, setMeterDate] = useState('');
-  const [previousMeterDate, setPreviousMeterDate] = useState('');
+  // 検針日は月ごとに保持し、前回検針日は前月の検針データを参照します。
+  const [meterDates, setMeterDates] = useState<Record<string, string>>({ '2026-9': '2026-09-02', '2026-8': '2026-08-06' });
   const [periodPatterns, setPeriodPatterns] = useState<PeriodPattern[]>([]);
+  const monthKey = `${calendarYear}-${period.month}`;
+  const previousMonthDate = new Date(calendarYear, period.month - 2, 1);
+  const previousKey = `${previousMonthDate.getFullYear()}-${previousMonthDate.getMonth() + 1}`;
+  const meterDate = meterDates[monthKey] ?? '';
+  const previousMeterDate = meterDates[previousKey] ?? '';
 
   // 請求明細の項目は請求設定から読み込み、請求種別に公共料金が設定されているものだけを対象にします。
   useEffect(() => {
@@ -97,10 +102,10 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
 
   return <section className="meter-page">
     <header className="meter-page-heading">
-      <div><p className="section-kicker">METER</p><h2>検針データ</h2><p>{propertyName || '物件未選択'}・{calendarYear}年{period.month}月分</p></div>
+      <div><p className="section-kicker">METER</p><h2>検針データ</h2></div>
       <div className="meter-date-fields">
-        <label className="meter-date"><span>前回検針日</span><input type="date" value={previousMeterDate} onChange={(event) => setPreviousMeterDate(event.target.value)} /></label>
-        <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
+        <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDates({ ...meterDates, [monthKey]: event.target.value })} /></label>
+        <span className="meter-date-previous">前回検針日<b>{previousMeterDate ? previousMeterDate.replace(/-/g, '/') : '前月の検針データなし'}</b></span>
       </div>
     </header>
 
@@ -244,8 +249,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
     </div>}
 
     {tab === 'settings' && <div className="meter-panel meter-settings-panel">
-      <div className="meter-settings-columns">
-        <section className="meter-settings-block">
+      <section className="meter-settings-block">
         {building.categories.filter((row) => row.id === 'electric').map((row) => <div key={row.id} className={row.billable ? 'meter-category-config' : 'meter-category-config meter-disabled'}>
           <div className="meter-category-head">
             <h5>{row.name}</h5>
@@ -266,9 +270,9 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             </tr>)}</tbody>
           </table>
         </div>)}
-        </section>
+      </section>
 
-        <section className="meter-settings-block">
+      <section className="meter-settings-block">
         <h4>増額分</h4>
         <table className="meter-table meter-settings-table">
           <thead><tr><th>名称</th><th>請求明細の項目</th><th>請求する</th></tr></thead>
@@ -281,11 +285,9 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             </tr>;
           })}</tbody>
         </table>
-        </section>
-      </div>
+      </section>
 
-      <div className="meter-settings-columns-right">
-        <section className="meter-settings-block">
+      <section className="meter-settings-block">
         {building.categories.filter((row) => row.id !== 'electric').map((row) => <div key={row.id} className={row.billable ? 'meter-category-config' : 'meter-category-config meter-disabled'}>
           <div className="meter-category-head">
             <h5>{row.name}</h5>
@@ -306,8 +308,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             </tr>)}</tbody>
           </table>
         </div>)}
-        </section>
-      </div>
+      </section>
 
       <section className="meter-settings-block">
         <h4>テナント契約</h4>
