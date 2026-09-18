@@ -30,6 +30,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
   const [mode, setMode] = useState<'input' | 'assign'>('input');
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [notice, setNotice] = useState('');
+  const [meterDate, setMeterDate] = useState('');
 
   // 請求明細の項目は請求設定から読み込み、請求種別に公共料金が設定されているものだけを対象にします。
   useEffect(() => {
@@ -86,11 +87,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
   return <section className="meter-page">
     <header className="meter-page-heading">
       <div><p className="section-kicker">METER</p><h2>検針データ</h2><p>{propertyName || '物件未選択'}・{period.fiscalYear + (period.month <= 3 ? 1 : 0)}年{period.month}月分</p></div>
-      <dl className="meter-page-meta">
-        <div><dt>請求する分類</dt><dd>{visibleCategories.map((row) => row.name).join('・')}</dd></div>
-        <div><dt>メーター</dt><dd>{meters.length} 台</dd></div>
-        <div><dt>状態</dt><dd>サンプルデータ（保存されません）</dd></div>
-      </dl>
+      <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
     </header>
 
     {notice && <p className="tenant-billing-notice">{notice}</p>}

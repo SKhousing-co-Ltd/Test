@@ -165,3 +165,7 @@
 .meter-month-rates label { display: inline-flex; align-items: center; gap: 6px; color: #45617f; font-size: 12px; font-weight: 700; }
 .meter-month-rates input { width: 84px; height: 26px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: center; box-sizing: border-box; }
 .meter-month-rates span { color: #7d8b9e; font-weight: 400; }
+
+/* ヘッダーの検針日 */
+.meter-date { display: inline-flex; align-items: center; gap: 8px; color: #45617f; font-size: 12px; font-weight: 700; }
+.meter-date input { height: 30px; padding: 3px 8px; border: 1px solid #d4dfeb; border-radius: 5px; color: #244d76; background: #fff; font: inherit; font-size: 12px; box-sizing: border-box; }
