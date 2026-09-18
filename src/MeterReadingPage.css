@@ -189,3 +189,23 @@
 /* テナント契約：分類ごとの区切り */
 .meter-contract-table th.meter-contract-group, .meter-contract-table td.meter-contract-group { border-left: 1px solid #dde7f2; }
 .meter-contract-table thead tr:first-child th { background: #eef5fc; }
+
+/* 分類ごとの色分け（電気＝黄、水道＝青、ガス＝赤） */
+.meter-category-config.meter-cat-electric { border-color: #ecd9a4; background: #fffbf1; }
+.meter-category-config.meter-cat-water { border-color: #c3d9ef; background: #f6faff; }
+.meter-category-config.meter-cat-gas { border-color: #eec8c4; background: #fff7f6; }
+.meter-category-config.meter-cat-electric h5 { color: #8a6a1e; }
+.meter-category-config.meter-cat-water h5 { color: #2f6fb0; }
+.meter-category-config.meter-cat-gas h5 { color: #a9504a; }
+.meter-category-config table { background: #fff; }
+.meter-surcharge-table { margin-top: 8px; }
+.meter-contract-table thead tr:first-child th.meter-cat-electric { color: #8a6a1e; background: #fdf3dd; }
+.meter-contract-table thead tr:first-child th.meter-cat-water { color: #2f6fb0; background: #e7f1fc; }
+.meter-contract-table thead tr:first-child th.meter-cat-gas { color: #a9504a; background: #fceeec; }
+.meter-contract-table thead tr:last-child th.meter-cat-electric { background: #fefaf0; }
+.meter-contract-table thead tr:last-child th.meter-cat-water { background: #f4f9ff; }
+.meter-contract-table thead tr:last-child th.meter-cat-gas { background: #fff7f5; }
+.meter-contract-table td.meter-cat-electric { background: #fffdf7; }
+.meter-contract-table td.meter-cat-water { background: #fafcff; }
+.meter-contract-table td.meter-cat-gas { background: #fffbfa; }
+.meter-contract-table th.meter-contract-group, .meter-contract-table td.meter-contract-group { border-left: 2px solid #d9e3ee; }
