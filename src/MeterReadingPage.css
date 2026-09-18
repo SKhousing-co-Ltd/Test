@@ -134,3 +134,22 @@
 .meter-category-head h5 { min-width: 46px; }
 .meter-category-head .text-button { margin-left: auto; }
 .meter-category-config .meter-settings-table { margin-top: 2px; }
+
+/* 設定：左に電気と増額分、右に水道とガスを並べます。 */
+.meter-settings-panel { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+.meter-settings-panel > section { grid-column: 1 / -1; }
+.meter-settings-columns { grid-column: 1; }
+.meter-settings-columns-right { grid-column: 2; }
+.meter-settings-columns, .meter-settings-columns-right { display: grid; gap: 12px; min-width: 0; }
+.meter-settings-columns section, .meter-settings-columns-right section { min-width: 0; }
+.meter-settings-panel .meter-settings-table th, .meter-settings-panel .meter-settings-table td { padding: 5px 10px 5px 0; }
+.meter-settings-panel input { width: 104px; }
+.meter-settings-panel input.meter-narrow { width: 64px; }
+.meter-settings-panel select { max-width: 132px; }
+.meter-category-head { gap: 10px; }
+.meter-category-head h5 { min-width: 0; }
+.meter-check { white-space: nowrap; }
+@media (max-width: 1100px) {
+  .meter-settings-panel { grid-template-columns: minmax(0, 1fr); }
+  .meter-settings-columns, .meter-settings-columns-right { grid-column: 1; }
+}
