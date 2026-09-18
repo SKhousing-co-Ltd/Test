@@ -162,6 +162,11 @@
 
 /* ヘッダーの検針日と、請求期間パターンの一覧 */
 .meter-date-fields { display: flex; flex-wrap: wrap; gap: 16px; }
+.meter-date-fields { align-items: center; }
+/* 保存ボタン：未保存のときだけ押せます。 */
+.meter-save { padding: 7px 18px; border: 1px solid #2f6fb5; border-radius: 7px; background: #2f6fb5; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.meter-save:hover:not(:disabled) { background: #275e9c; }
+.meter-save:disabled { border-color: #d6dfea; background: #eef3f8; color: #93a1b2; cursor: default; }
 .meter-periods { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 14px; border: 1px solid #e0e9f3; border-radius: 9px; background: #f7fafd; }
 .meter-periods span { display: inline-flex; align-items: baseline; gap: 7px; color: #45617f; font-size: 12px; }
 .meter-periods b { color: #2f4864; font-size: 12px; }
