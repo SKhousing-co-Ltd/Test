@@ -329,7 +329,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
                 {visibleCategories.map((item) => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  return <th key={item.id} colSpan={(item.fixedBillable ? 3 : 2) + customs.length * 2} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  return <th key={item.id} colSpan={(item.fixedBillable ? 3 : 2) + (customs.length === 1 ? 1 : customs.length * 2)} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>小数点</th>
                 <th rowSpan={2}>備考</th>
@@ -339,10 +339,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               <tr>{visibleCategories.flatMap((item) => [
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
                 ...(item.fixedBillable ? [<th key={`${item.id}-basic`} className={categoryClass(item.id)}>基本料</th>] : []),
-                ...building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom').flatMap((value) => [
-                  <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>,
-                  <th key={`${value.id}-p`} className={categoryClass(item.id)}>単価</th>,
-                ]),
+...(() => {
+                  const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
+                  if (customs.length === 1) return [<th key={`${customs[0].id}-p`} className={categoryClass(item.id)}>単価</th>];
+                  return customs.flatMap((value) => [
+                    <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>,
+                    <th key={`${value.id}-p`} className={categoryClass(item.id)}>単価</th>,
+                  ]);
+                })(),
                 <th key={`${item.id}-sum`} className={categoryClass(item.id)}>計算方法</th>,
               ])}</tr>
             </thead>
@@ -359,10 +363,12 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                   ...(item.fixedBillable && basic ? [<td key={`${item.id}-basic`} className={categoryClass(item.id)}>
                     <input type="checkbox" checked={row.billable[basic.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [basic.id]: event.target.checked } })} />
                   </td>] : []),
-                  ...customs.flatMap((value) => [
-                    <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>,
-                    <td key={`${value.id}-p`} className={categoryClass(item.id)}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[value.id] ?? ''} placeholder="既定" disabled={!enabled || !row.billable[value.id]} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [value.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>,
-                  ]),
+                  ...customs.flatMap((value) => customs.length === 1
+                    ? [<td key={`${value.id}-p`} className={categoryClass(item.id)}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[value.id] ?? ''} placeholder="既定" disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [value.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>]
+                    : [
+                      <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>,
+                      <td key={`${value.id}-p`} className={categoryClass(item.id)}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[value.id] ?? ''} placeholder="既定" disabled={!enabled || !row.billable[value.id]} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [value.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>,
+                    ]),
                   <td key={`${item.id}-sum`} className={categoryClass(item.id)}>
                     <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
                   </td>,

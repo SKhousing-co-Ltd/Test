@@ -229,10 +229,12 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
 export function calculateRow(row: ContractRow, index: number, tenantId: string, building: BuildingConfig, meters: Meter[]): RowResult {
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
+    // 小分類が1つだけの分類は、小分類ごとの請求フラグを持たず、分類の請求有無だけで決めます。
+    const singleCustom = building.subItems.filter((item) => item.categoryId === category.id && item.kind === 'custom').length === 1;
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
       .map((subItem) => row.categoryBillable[category.id] === false
         ? { subItem, meters: [], usage: 0, amount: 0, groups: [] }
-        : calculateSubItem(subItem, category, row, tenantId, index, meters, building.taxRate));
+        : calculateSubItem(subItem, category, singleCustom && subItem.kind === 'custom' ? { ...row, billable: { ...row.billable, [subItem.id]: true } } : row, tenantId, index, meters, building.taxRate));
     return { category, subItems, usage: subItems.reduce((sum, item) => sum + item.usage, 0), amount: subItems.reduce((sum, item) => sum + item.amount, 0) };
   });
 
