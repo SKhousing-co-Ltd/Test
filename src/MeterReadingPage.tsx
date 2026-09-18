@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  calculateSubItem, calculateTenant, calculateTenantByLabel, dataSplitLabel, initialBuilding, initialMeters, initialTenants, metersFor,
+  calculateSubItem, calculateTenant, initialBuilding, initialMeters, initialTenants, metersFor,
   roundingModeLabel, sumModeLabel, taxModeLabel,
-  type BuildingConfig, type Category, type CategoryId, type DataSplit, type LineItem, type Meter, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
+  type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type Meter,
+  type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
 } from './utils/meterReading';
-import { supabase } from './lib/supabase';
 import { periodRange } from './utils/billingDates';
+import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
 import './MeterReadingPage.css';
 
@@ -16,29 +17,27 @@ import './MeterReadingPage.css';
 
 const yen = new Intl.NumberFormat('ja-JP');
 const amount = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
-const sumModes: SumMode[] = ['aggregate', 'perLabel', 'perMeter'];
+const sumModes: SumMode[] = ['aggregate', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 const taxModes: TaxMode[] = ['exclusive', 'inclusive'];
-const dataSplits: DataSplit[] = ['single', 'perLabel', 'perInvoice'];
-
-// 分類と公共料金の請求種別の対応です。電気の小分類には電気の明細項目だけを出します。
 const utilityKindOf: Record<CategoryId, string> = { electric: 'electricity', water: 'water', gas: 'gas' };
 const patternMark = (index: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(index) || String(index + 1);
 type PeriodPattern = { billing_period_pattern_id: string; pattern_name: string; start_month_offset: number; start_day_type: string; start_meter_day_offset: number; end_month_offset: number; end_day_type: string; end_meter_day_offset: number };
 
-export function MeterReadingPage({ propertyId, propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
+export function MeterReadingPage({ propertyId, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [building, setBuilding] = useState<BuildingConfig>(initialBuilding);
   const [tenants, setTenants] = useState<TenantConfig[]>(initialTenants);
   const [meters, setMeters] = useState<Meter[]>(initialMeters);
   const [tab, setTab] = useState<string>('summary');
   const [subTab, setSubTab] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'input' | 'assign'>('input');
-  const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [periodPatterns, setPeriodPatterns] = useState<PeriodPattern[]>([]);
   const [notice, setNotice] = useState('');
   // 検針日は月ごとに保持し、前回検針日は前月の検針データを参照します。
   const [meterDates, setMeterDates] = useState<Record<string, string>>({ '2026-9': '2026-09-02', '2026-8': '2026-08-06' });
-  const [periodPatterns, setPeriodPatterns] = useState<PeriodPattern[]>([]);
+
+  const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
   const monthKey = `${calendarYear}-${period.month}`;
   const previousMonthDate = new Date(calendarYear, period.month - 2, 1);
   const previousKey = `${previousMonthDate.getFullYear()}-${previousMonthDate.getMonth() + 1}`;
@@ -49,7 +48,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!supabase || !propertyId) { setLineItems([]); return; }
+      if (!supabase || !propertyId) { setLineItems([]); setPeriodPatterns([]); return; }
       const patternResult = await supabase
         .from('asset_billing_period_pattern')
         .select('billing_period_pattern_id, pattern_name, start_month_offset, start_day_type, start_meter_day_offset, end_month_offset, end_day_type, end_meter_day_offset')
@@ -77,28 +76,33 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
   const grandTotal = results.reduce((sum, result) => sum + result.total, 0);
   const grandExpected = results.reduce((sum, result) => sum + result.tenant.expected, 0);
   const visibleCategories = building.categories.filter((category) => category.billable);
-  const lineItemName = (id: string) => lineItems.find((row) => row.id === id)?.name ?? '未設定';
-  const lineItemOptions = <option value="">未設定</option>;
+  const customSubItems = building.subItems.filter((row) => row.kind === 'custom');
+  const billableSurcharges = building.surcharges.filter((row) => row.billable);
   const digitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{digits === 0 ? '整数' : `小数第${digits}位`}</option>);
   const roundingOptions = roundingModes.map((row) => <option key={row} value={row}>{roundingModeLabel[row]}</option>);
   const lineItemsFor = (categoryId: CategoryId) => lineItems.filter((row) => row.utilityKind === utilityKindOf[categoryId]);
+  const rowLabel = (tenant: TenantConfig, index: number) => tenant.rows.length > 1 ? `${tenant.name}（${index + 1}）` : tenant.name;
 
   const updateMeter = (id: string, patch: Partial<Meter>) => setMeters((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
-  const updateTenant = (id: string, patch: Partial<TenantConfig>) => setTenants((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
-  const updateUnitPrice = (id: string, categoryId: CategoryId, value: number | null) => setTenants((current) => current.map((row) => row.id === id ? { ...row, unitPrices: { ...row.unitPrices, [categoryId]: value } } : row));
-  const updateInvoiceNo = (id: string, label: string, value: number) => setTenants((current) => current.map((row) => row.id === id ? { ...row, invoiceByLabel: { ...row.invoiceByLabel, [label]: value } } : row));
-  const labelsOf = (tenantId: string) => [...new Set(meters.filter((row) => row.tenantId === tenantId).map((row) => row.label))].filter(Boolean);
-  const updateSumMode = (id: string, key: string, value: SumMode) => setTenants((current) => current.map((row) => row.id === id ? { ...row, sumMode: { ...row.sumMode, [key]: value } } : row));
-  const updateFixed = (id: string, subItemId: string, value: number) => setTenants((current) => current.map((row) => row.id === id ? { ...row, fixedCharges: { ...row.fixedCharges, [subItemId]: value } } : row));
   const updateCategory = (id: string, patch: Partial<Category>) => setBuilding((current) => ({ ...current, categories: current.categories.map((row) => row.id === id ? { ...row, ...patch } : row) }));
   const updateSubItem = (id: string, patch: Partial<SubItem>) => setBuilding((current) => ({ ...current, subItems: current.subItems.map((row) => row.id === id ? { ...row, ...patch } : row) }));
+  const updateRow = (tenantId: string, index: number, patch: Partial<ContractRow>) => setTenants((current) => current.map((tenant) => tenant.id === tenantId
+    ? { ...tenant, rows: tenant.rows.map((row, position) => position === index ? { ...row, ...patch } : row) } : tenant));
+  const updateTenant = (id: string, patch: Partial<TenantConfig>) => setTenants((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
+  const setSplitCount = (tenant: TenantConfig, count: number) => {
+    const next = Math.max(1, Math.min(9, count));
+    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: `${tenant.id}-R${index + 1}`, invoiceNo: index + 1, fixedCharges: {} });
+    updateTenant(tenant.id, { rows });
+    // 行を減らしたときは、行きどころのないメーターを1行目へ戻します。
+    setMeters((current) => current.map((row) => row.tenantId === tenant.id && row.rowIndex >= next ? { ...row, rowIndex: 0 } : row));
+  };
   const addSubItem = (categoryId: CategoryId) => {
     const id = `sub${Date.now()}`;
     setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingDigits: 2, taxRoundingMode: 'floor', usageRoundingDigits: 1, usageRoundingMode: 'round' }] }));
-    setTenants((current) => current.map((tenant) => ({ ...tenant, sumMode: { ...tenant.sumMode, [id]: 'aggregate' } })));
+    setTenants((current) => current.map((tenant) => ({ ...tenant, rows: tenant.rows.map((row) => ({ ...row, billable: { ...row.billable, [id]: true }, unitPrices: { ...row.unitPrices, [id]: null } })) })));
   };
   const removeSubItem = (id: string) => { setBuilding((current) => ({ ...current, subItems: current.subItems.filter((row) => row.id !== id) })); setMeters((current) => current.filter((row) => row.subItemId !== id)); };
-  const addMeter = (subItemId: string) => setMeters((current) => [...current, { id: `M${Date.now()}`, subItemId, code: '', label: '', tenantId: tenants[0]?.id ?? '', usage: 0 }]);
+  const addMeter = (subItemId: string) => setMeters((current) => [...current, { id: `M${Date.now()}`, subItemId, code: '', label: '', tenantId: tenants[0]?.id ?? '', rowIndex: 0, usage: 0 }]);
   const removeMeter = (id: string) => setMeters((current) => current.filter((row) => row.id !== id));
 
   const category = visibleCategories.find((row) => row.id === tab);
@@ -120,6 +124,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
       return <span key={pattern.billing_period_pattern_id}><b>{patternMark(index)} {pattern.pattern_name}</b>{range.start && range.end ? `${range.start}～${range.end}` : '検針日を入力してください'}</span>;
     })}</div>}
     {notice && <p className="tenant-billing-notice">{notice}</p>}
+
     <nav className="meter-tabs">
       <button type="button" className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>集計</button>
       {visibleCategories.map((row) => <button key={row.id} type="button" className={tab === row.id ? 'active' : ''} onClick={() => setTab(row.id)}>{row.name}</button>)}
@@ -127,8 +132,8 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
     </nav>
 
     {tab === 'summary' && <div className="meter-panel">
-      {building.surcharges.filter((row) => row.billable).length > 0 && <div className="meter-month-rates">
-        {building.surcharges.filter((row) => row.billable).map((row) => <label key={row.id}>
+      {billableSurcharges.length > 0 && <div className="meter-month-rates">
+        {billableSurcharges.map((row) => <label key={row.id}>
           {row.name}の単価
           <input type="number" step="0.01" value={row.unitPrice} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((item) => item.id === row.id ? { ...item, unitPrice: Number(event.target.value) } : item) })} />
           <span>円／{building.categories.find((item) => item.id === row.categoryId)?.unit ?? ''}</span>
@@ -136,26 +141,28 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
       </div>}
       <div className="meter-table-wrap">
         <table className="meter-table">
-          <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}</th>)}{building.surcharges.filter((row) => row.billable).map((row) => <th key={row.id}>{row.name}</th>)}<th>請求合計</th><th>元表</th><th>差</th></tr></thead>
-          <tbody>{results.flatMap((result) => [<tr key={result.tenant.id}>
-            <td className="meter-col-name"><strong>{result.tenant.name}</strong>{result.tenant.dataSplit !== 'single' ? <small>{dataSplitLabel[result.tenant.dataSplit]}</small> : null}</td>
-            {result.categories.map((row) => <td key={row.category.id} className="numeric">{yen.format(row.amount)}</td>)}
-            {result.surcharges.map((row) => <td key={row.surcharge.id} className="numeric">{yen.format(row.amount)}<small className="meter-note">{amount.format(row.usage)} × {row.surcharge.unitPrice}</small></td>)}
-            <td className="numeric meter-total">{yen.format(result.total)}</td>
-            <td className="numeric meter-muted">{yen.format(result.tenant.expected)}</td>
-            <td className={result.difference === 0 ? 'numeric meter-ok' : 'numeric meter-warn'}>{result.difference === 0 ? '一致' : yen.format(result.difference)}</td>
-          </tr>,
-          ...(result.tenant.dataSplit === 'single' ? [] : calculateTenantByLabel(result.tenant, building, meters).map((row) => <tr key={`${result.tenant.id}-${row.label}`} className="meter-split-row">
-            <td className="meter-col-name">{row.label}{result.tenant.dataSplit === 'perInvoice' ? <small>請求書 {result.tenant.invoiceByLabel[row.label] ?? 1}</small> : null}</td>
-            <td className="numeric meter-muted" colSpan={visibleCategories.length + building.surcharges.filter((item) => item.billable).length}>区画の内訳</td>
-            <td className="numeric">{yen.format(row.amount)}</td>
-            <td /><td />
-          </tr>)),
+          <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}</th>)}{billableSurcharges.map((row) => <th key={row.id}>{row.name}</th>)}<th>請求合計</th><th>元表</th><th>差</th></tr></thead>
+          <tbody>{results.flatMap((result) => [
+            <tr key={result.tenant.id}>
+              <td className="meter-col-name"><strong>{result.tenant.name}</strong>{result.tenant.splitEnabled ? <small>{result.tenant.rows.length} 分割</small> : null}</td>
+              {visibleCategories.map((row) => <td key={row.id} className="numeric">{yen.format(result.rows.reduce((sum, item) => sum + (item.categories.find((value) => value.category.id === row.id)?.amount ?? 0), 0))}</td>)}
+              {billableSurcharges.map((row) => <td key={row.id} className="numeric">{yen.format(result.rows.reduce((sum, item) => sum + (item.surcharges.find((value) => value.surcharge.id === row.id)?.amount ?? 0), 0))}</td>)}
+              <td className="numeric meter-total">{yen.format(result.total)}</td>
+              <td className="numeric meter-muted">{yen.format(result.tenant.expected)}</td>
+              <td className={result.difference === 0 ? 'numeric meter-ok' : 'numeric meter-warn'}>{result.difference === 0 ? '一致' : yen.format(result.difference)}</td>
+            </tr>,
+            ...(result.tenant.splitEnabled ? result.rows.map((row) => <tr key={`${result.tenant.id}-${row.index}`} className="meter-split-row">
+              <td className="meter-col-name">分割 {row.index + 1}{result.tenant.invoiceSplitByUnit ? <small>請求書 {row.row.invoiceNo}</small> : null}</td>
+              {visibleCategories.map((item) => <td key={item.id} className="numeric">{yen.format(row.categories.find((value) => value.category.id === item.id)?.amount ?? 0)}</td>)}
+              {billableSurcharges.map((item) => <td key={item.id} className="numeric">{yen.format(row.surcharges.find((value) => value.surcharge.id === item.id)?.amount ?? 0)}</td>)}
+              <td className="numeric">{yen.format(row.total)}</td>
+              <td /><td />
+            </tr>) : []),
           ])}</tbody>
           <tfoot><tr>
             <td className="meter-col-name">合計</td>
-            {visibleCategories.map((row) => <td key={row.id} className="numeric">{yen.format(results.reduce((sum, result) => sum + (result.categories.find((item) => item.category.id === row.id)?.amount ?? 0), 0))}</td>)}
-            {building.surcharges.filter((row) => row.billable).map((row) => <td key={row.id} className="numeric">{yen.format(results.reduce((sum, result) => sum + (result.surcharges.find((item) => item.surcharge.id === row.id)?.amount ?? 0), 0))}</td>)}
+            {visibleCategories.map((row) => <td key={row.id} className="numeric">{yen.format(results.reduce((sum, result) => sum + result.rows.reduce((value, item) => value + (item.categories.find((target) => target.category.id === row.id)?.amount ?? 0), 0), 0))}</td>)}
+            {billableSurcharges.map((row) => <td key={row.id} className="numeric">{yen.format(results.reduce((sum, result) => sum + result.rows.reduce((value, item) => value + (item.surcharges.find((target) => target.surcharge.id === row.id)?.amount ?? 0), 0), 0))}</td>)}
             <td className="numeric meter-total">{yen.format(grandTotal)}</td>
             <td className="numeric meter-muted">{yen.format(grandExpected)}</td>
             <td className={grandTotal === grandExpected ? 'numeric meter-ok' : 'numeric meter-warn'}>{grandTotal === grandExpected ? '一致' : yen.format(grandTotal - grandExpected)}</td>
@@ -164,7 +171,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
       </div>
 
       <div className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとにまとめた金額です。この単位で請求書作成へ渡します。</p></div>
+        <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとの金額です。この単位で請求書作成へ渡します。</p></div>
         <div className="meter-table-wrap">
           <table className="meter-table">
             <thead><tr><th className="meter-col-name">テナント</th>{lineItems.length ? lineItems.map((row) => <th key={row.id}>{row.name}</th>) : <th>明細項目が未登録です</th>}</tr></thead>
@@ -191,71 +198,79 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
 
       {currentSubTab === 'summary' && <div className="meter-table-wrap">
         <table className="meter-table">
-          <thead><tr><th className="meter-col-name">テナント</th>{categorySubItems.map((row) => <th key={row.id}>{row.name}<small className="meter-note">{lineItemName(row.lineItemId)}</small></th>)}<th>使用量計</th><th>{category.name}計</th></tr></thead>
-          <tbody>{results.map((result) => {
-            const categoryResult = result.categories.find((row) => row.category.id === category.id);
+          <thead><tr><th className="meter-col-name">テナント</th>{categorySubItems.map((row) => <th key={row.id}>{row.name}</th>)}<th>使用量計</th><th>{category.name}計</th></tr></thead>
+          <tbody>{results.flatMap((result) => result.rows.map((row) => {
+            const categoryResult = row.categories.find((item) => item.category.id === category.id);
             if (!categoryResult) return null;
-            return <tr key={result.tenant.id}>
-              <td className="meter-col-name"><strong>{result.tenant.name}</strong></td>
-              {categorySubItems.map((row) => {
-                const found = categoryResult.subItems.find((item) => item.subItem.id === row.id);
-                return <td key={row.id} className="numeric">{yen.format(found?.amount ?? 0)}{found && found.usage ? <small className="meter-note">{amount.format(found.usage)} {category.unit}</small> : null}</td>;
+            return <tr key={`${result.tenant.id}-${row.index}`}>
+              <td className="meter-col-name"><strong>{rowLabel(result.tenant, row.index)}</strong></td>
+              {categorySubItems.map((item) => {
+                const found = categoryResult.subItems.find((value) => value.subItem.id === item.id);
+                return <td key={item.id} className="numeric">{yen.format(found?.amount ?? 0)}{found && found.usage ? <small className="meter-note">{amount.format(found.usage)} {category.unit}</small> : null}</td>;
               })}
               <td className="numeric">{amount.format(categoryResult.usage)} {category.unit}</td>
               <td className="numeric meter-total">{yen.format(categoryResult.amount)}</td>
             </tr>;
-          })}</tbody>
+          }))}</tbody>
         </table>
       </div>}
 
       {subItem && subItem.kind === 'basic' && <div className="meter-table-wrap">
         <table className="meter-table">
           <thead><tr><th className="meter-col-name">テナント</th><th>{subItem.name}（円／月）</th></tr></thead>
-          <tbody>{tenants.map((tenant) => <tr key={tenant.id}>
-            <td className="meter-col-name">{tenant.name}</td>
-            <td><input type="number" value={tenant.fixedCharges[subItem.id] ?? 0} onChange={(event) => updateFixed(tenant.id, subItem.id, Number(event.target.value))} /></td>
-          </tr>)}</tbody>
+          <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id}>
+            <td className="meter-col-name">{rowLabel(tenant, index)}</td>
+            <td>{row.billable[subItem.id]
+              ? <input type="number" value={row.fixedCharges[subItem.id] ?? 0} onChange={(event) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [subItem.id]: Number(event.target.value) } })} />
+              : <span className="meter-muted">請求しない</span>}</td>
+          </tr>))}</tbody>
         </table>
       </div>}
 
-      {subItem && subItem.kind === 'custom' && mode === 'input' && <div className="meter-tenant-list">{tenants.map((tenant) => {
-        const own = metersFor(subItem.id, tenant.id, meters);
+      {subItem && subItem.kind === 'custom' && mode === 'input' && <div className="meter-tenant-list">{tenants.flatMap((tenant) => tenant.rows.map((row, index) => {
+        const own = metersFor(subItem.id, tenant.id, index, meters);
         if (!own.length) return null;
-        const result = calculateSubItem(subItem, category, tenant, meters);
-        const labels = [...new Set(own.map((row) => row.label))];
-        return <article key={tenant.id} className="meter-tenant">
+        const result = calculateSubItem(subItem, category, row, tenant.id, index, meters, building.taxRate);
+        const labels = [...new Set(own.map((item) => item.label))];
+        return <article key={`${tenant.id}-${index}`} className="meter-tenant">
           <header>
-            <div><strong>{tenant.name}</strong><small>単価 {tenant.unitPrices[category.id] ?? subItem.defaultUnitPrice ?? 0} 円／{sumModeLabel[tenant.sumMode[subItem.id] ?? 'aggregate']}／金額は{roundingModeLabel[tenant.amountRoundingMode]}</small></div>
+            <div><strong>{rowLabel(tenant, index)}</strong><small>単価 {row.unitPrices[subItem.id] ?? subItem.defaultUnitPrice ?? 0} 円（{taxModeLabel[subItem.taxMode]}）／{sumModeLabel[row.sumMode[category.id] ?? 'aggregate']}／金額は{roundingModeLabel[row.amountRoundingMode]}</small></div>
             <div className="meter-tenant-amount"><span>{amount.format(result.usage)} {category.unit}</span><b>{yen.format(result.amount)} 円</b></div>
           </header>
           <div className="meter-tenant-areas">{labels.map((label) => {
-            const rows = own.filter((row) => row.label === label);
+            const rows = own.filter((item) => item.label === label);
             return <div key={label} className="meter-area">
               <h5>{label || '識別なし'}{rows[0].unitPrice ? <em>単価 {rows[0].unitPrice} 円</em> : null}</h5>
-              <table><tbody>{rows.map((row) => <tr key={row.id}>
-                <td>{row.code}</td>
-                <td><input type="number" step="0.001" value={row.usage} onChange={(event) => updateMeter(row.id, { usage: Number(event.target.value) })} /></td>
+              <table><tbody>{rows.map((item) => <tr key={item.id}>
+                <td>{item.code}</td>
+                <td><input type="number" step="0.001" value={item.usage} onChange={(event) => updateMeter(item.id, { usage: Number(event.target.value) })} /></td>
                 <td className="meter-unit">{category.unit}</td>
               </tr>)}</tbody></table>
-              <p className="meter-area-sum">計 {amount.format(rows.reduce((sum, row) => sum + row.usage, 0))} {category.unit}</p>
+              <p className="meter-area-sum">計 {amount.format(rows.reduce((sum, item) => sum + item.usage, 0))} {category.unit}</p>
             </div>;
           })}</div>
           <footer>{result.groups.map((group) => <span key={group.key}>{group.label}：{amount.format(group.usage)} × {group.unitPrice} ＝ {yen.format(group.amount)} 円</span>)}</footer>
         </article>;
-      })}</div>}
+      }))}</div>}
 
       {subItem && subItem.kind === 'custom' && mode === 'assign' && <div className="meter-assign">
-        <div className="meter-settings-heading"><h4>{subItem.name}のメーター割り当て</h4><p>メーター番号と、設置位置などのメーター識別を入力し、テナントを紐づけます。</p><button type="button" className="text-button" onClick={() => addMeter(subItem.id)}>メーターを追加</button></div>
+        <div className="meter-settings-heading"><h4>{subItem.name}のメーター割り当て</h4><p>メーター番号と、設置位置などのメーター識別を入力し、テナントと分割行を紐づけます。</p><button type="button" className="text-button" onClick={() => addMeter(subItem.id)}>メーターを追加</button></div>
         <div className="meter-table-wrap meter-scroll">
           <table className="meter-table meter-settings-table">
-            <thead><tr><th>メーター番号</th><th>メーター識別</th><th>割当テナント</th><th>単価の上書き</th><th /></tr></thead>
-            <tbody>{meters.filter((row) => row.subItemId === subItem.id).map((row) => <tr key={row.id}>
-              <td><input value={row.code} placeholder="メーター番号" onChange={(event) => updateMeter(row.id, { code: event.target.value })} /></td>
-              <td><input value={row.label} placeholder="設置位置・区画など" onChange={(event) => updateMeter(row.id, { label: event.target.value })} /></td>
-              <td><select value={row.tenantId} onChange={(event) => updateMeter(row.id, { tenantId: event.target.value })}>{tenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}</select></td>
-              <td><input type="number" step="0.01" className="meter-narrow" value={row.unitPrice ?? ''} placeholder="契約単価" onChange={(event) => updateMeter(row.id, { unitPrice: event.target.value ? Number(event.target.value) : undefined })} /></td>
-              <td><button type="button" className="meter-delete" onClick={() => removeMeter(row.id)}>削除</button></td>
-            </tr>)}</tbody>
+            <thead><tr><th>メーター番号</th><th>メーター識別</th><th>割当テナント</th><th>分割</th><th>単価の上書き</th><th /></tr></thead>
+            <tbody>{meters.filter((row) => row.subItemId === subItem.id).map((row) => {
+              const target = tenants.find((item) => item.id === row.tenantId);
+              return <tr key={row.id}>
+                <td><input value={row.code} placeholder="メーター番号" onChange={(event) => updateMeter(row.id, { code: event.target.value })} /></td>
+                <td><input value={row.label} placeholder="設置位置・区画など" onChange={(event) => updateMeter(row.id, { label: event.target.value })} /></td>
+                <td><select value={row.tenantId} onChange={(event) => updateMeter(row.id, { tenantId: event.target.value, rowIndex: 0 })}>{tenants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
+                <td>{target && target.rows.length > 1
+                  ? <select value={row.rowIndex} onChange={(event) => updateMeter(row.id, { rowIndex: Number(event.target.value) })}>{target.rows.map((item, index) => <option key={item.id} value={index}>分割 {index + 1}</option>)}</select>
+                  : <span className="meter-muted">—</span>}</td>
+                <td><input type="number" step="0.01" className="meter-narrow" value={row.unitPrice ?? ''} placeholder="契約単価" onChange={(event) => updateMeter(row.id, { unitPrice: event.target.value ? Number(event.target.value) : undefined })} /></td>
+                <td><button type="button" className="meter-delete" onClick={() => removeMeter(row.id)}>削除</button></td>
+              </tr>;
+            })}</tbody>
           </table>
         </div>
       </div>}
@@ -263,7 +278,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
 
     {tab === 'settings' && <div className="meter-panel meter-settings-panel">
       <section className="meter-settings-block">
-        {building.categories.filter((row) => row.id === 'electric').map((row) => <div key={row.id} className={row.billable ? 'meter-category-config' : 'meter-category-config meter-disabled'}>
+        {building.categories.map((row) => <div key={row.id} className={row.billable ? 'meter-category-config' : 'meter-category-config meter-disabled'}>
           <div className="meter-category-head">
             <h5>{row.name}</h5>
             <label>使用量の単位<input className="meter-narrow" value={row.unit} onChange={(event) => updateCategory(row.id, { unit: event.target.value })} /></label>
@@ -276,8 +291,8 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
-              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
-              <td>{item.kind === 'custom' ? <select value={item.taxMode} onChange={(event) => updateSubItem(item.id, { taxMode: event.target.value as TaxMode })}>{taxModes.map((row) => <option key={row} value={row}>{taxModeLabel[row]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
+              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
+              <td>{item.kind === 'custom' ? <select value={item.taxMode} onChange={(event) => updateSubItem(item.id, { taxMode: event.target.value as TaxMode })}>{taxModes.map((value) => <option key={value} value={value}>{taxModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <input type="number" step="0.01" className="meter-narrow" value={item.defaultUnitPrice ?? ''} placeholder="—" onChange={(event) => updateSubItem(item.id, { defaultUnitPrice: event.target.value ? Number(event.target.value) : null })} /> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' && item.taxMode === 'inclusive' ? <span className="meter-settings-pair">
                 <select value={item.taxRoundingDigits} onChange={(event) => updateSubItem(item.id, { taxRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
@@ -302,7 +317,7 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
             const patch = (value: Partial<typeof row>) => setBuilding({ ...building, surcharges: building.surcharges.map((item) => item.id === row.id ? { ...item, ...value } : item) });
             return <tr key={row.id}>
               <td><input value={row.name} onChange={(event) => patch({ name: event.target.value })} /></td>
-              <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
+              <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(row.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td><span className="meter-settings-pair">
                 <select value={row.usageRoundingDigits} onChange={(event) => patch({ usageRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
                 <select value={row.usageRoundingMode} onChange={(event) => patch({ usageRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
@@ -314,61 +329,45 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
       </section>
 
       <section className="meter-settings-block">
-        {building.categories.filter((row) => row.id !== 'electric').map((row) => <div key={row.id} className={row.billable ? 'meter-category-config' : 'meter-category-config meter-disabled'}>
-          <div className="meter-category-head">
-            <h5>{row.name}</h5>
-            <label>使用量の単位<input className="meter-narrow" value={row.unit} onChange={(event) => updateCategory(row.id, { unit: event.target.value })} /></label>
-            <label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => updateCategory(row.id, { billable: event.target.checked })} />請求する</label>
-            <label className="meter-check"><input type="checkbox" checked={row.fixedBillable} onChange={(event) => updateCategory(row.id, { fixedBillable: event.target.checked })} />基本料を請求する</label>
-            <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
-          </div>
-          <table className="meter-table meter-settings-table">
-            <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th>税区分</th><th>既定単価</th><th>税抜換算の丸め</th><th>使用量の丸め</th><th>既定の請求期間</th><th /></tr></thead>
-            <tbody>{building.subItems.filter((item) => item.categoryId === row.id).map((item) => <tr key={item.id}>
-              <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
-              <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
-              <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
-              <td>{item.kind === 'custom' ? <select value={item.taxMode} onChange={(event) => updateSubItem(item.id, { taxMode: event.target.value as TaxMode })}>{taxModes.map((row) => <option key={row} value={row}>{taxModeLabel[row]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' ? <input type="number" step="0.01" className="meter-narrow" value={item.defaultUnitPrice ?? ''} placeholder="—" onChange={(event) => updateSubItem(item.id, { defaultUnitPrice: event.target.value ? Number(event.target.value) : null })} /> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' && item.taxMode === 'inclusive' ? <span className="meter-settings-pair">
-                <select value={item.taxRoundingDigits} onChange={(event) => updateSubItem(item.id, { taxRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
-                <select value={item.taxRoundingMode} onChange={(event) => updateSubItem(item.id, { taxRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
-              </span> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' ? <span className="meter-settings-pair">
-                <select value={item.usageRoundingDigits} onChange={(event) => updateSubItem(item.id, { usageRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
-                <select value={item.usageRoundingMode} onChange={(event) => updateSubItem(item.id, { usageRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
-              </span> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' ? <select value={item.periodPatternId} onChange={(event) => updateSubItem(item.id, { periodPatternId: event.target.value })}><option value="">未設定</option>{periodPatterns.map((pattern, index) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{patternMark(index)} {pattern.pattern_name}</option>)}</select> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
-            </tr>)}</tbody>
-          </table>
-        </div>)}
-      </section>
-
-      <section className="meter-settings-block">
         <div className="meter-settings-heading"><h4>テナント契約</h4><label className="meter-tax-rate">消費税率<input type="number" step="1" value={Math.round(building.taxRate * 100)} onChange={(event) => setBuilding({ ...building, taxRate: Number(event.target.value) / 100 })} />％</label></div>
         <div className="meter-table-wrap">
-          <table className="meter-table meter-settings-table">
-            <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}単価</th>)}<th>金額の丸め</th>{building.subItems.filter((row) => row.kind === 'custom').map((row) => <th key={row.id}>{row.name}</th>)}{building.surcharges.map((row) => <th key={row.id}>{row.name}</th>)}<th>データ分割設定</th></tr></thead>
-            <tbody>{tenants.map((tenant) => <tr key={tenant.id}>
-              <td className="meter-col-name">{tenant.name}</td>
-              {visibleCategories.map((row) => <td key={row.id}><input type="number" step="0.01" className="meter-narrow" value={tenant.unitPrices[row.id] ?? ''} placeholder="既定" onChange={(event) => updateUnitPrice(tenant.id, row.id, event.target.value === '' ? null : Number(event.target.value))} /></td>)}
-              <td><span className="meter-settings-pair">
-                <select value={tenant.amountRoundingUnit} onChange={(event) => updateTenant(tenant.id, { amountRoundingUnit: Number(event.target.value) })}>{[1, 10, 100].map((unit) => <option key={unit} value={unit}>{unit}円</option>)}</select>
-                <select value={tenant.amountRoundingMode} onChange={(event) => updateTenant(tenant.id, { amountRoundingMode: event.target.value as RoundingMode })}>{roundingModes.map((row) => <option key={row} value={row}>{roundingModeLabel[row]}</option>)}</select>
-              </span></td>
-              {[...building.subItems.filter((row) => row.kind === 'custom').map((row) => row.id), ...building.surcharges.map((row) => row.id)].map((key) => <td key={key}>
-                <select value={tenant.sumMode[key] ?? 'aggregate'} onChange={(event) => updateSumMode(tenant.id, key, event.target.value as SumMode)}>{sumModes.map((row) => <option key={row} value={row}>{sumModeLabel[row]}</option>)}</select>
+          <table className="meter-table meter-settings-table meter-contract-table">
+            <thead>
+              <tr>
+                <th className="meter-col-name" rowSpan={2}>テナント</th>
+                {customSubItems.map((item) => <th key={item.id} colSpan={2}>{item.name}</th>)}
+                {building.subItems.filter((item) => item.kind === 'basic').map((item) => <th key={item.id} rowSpan={2}>{building.categories.find((value) => value.id === item.categoryId)?.name}の{item.name}</th>)}
+                {visibleCategories.map((item) => <th key={item.id} rowSpan={2}>{item.name}の計算方法</th>)}
+                <th rowSpan={2}>小数点</th>
+                <th rowSpan={2}>データ分割設定</th>
+                {tenants.some((item) => item.invoiceSplitByUnit) && <th rowSpan={2}>請求書</th>}
+              </tr>
+              <tr>{customSubItems.flatMap((item) => [<th key={`${item.id}-b`}>請求</th>, <th key={`${item.id}-p`}>単価</th>])}</tr>
+            </thead>
+            <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={index > 0 ? 'meter-contract-sub' : ''}>
+              <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-muted">分割 {index + 1}</span>}</td>
+              {customSubItems.flatMap((item) => [
+                <td key={`${item.id}-b`}><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /></td>,
+                <td key={`${item.id}-p`}><input type="number" step="0.01" className="meter-narrow" value={row.unitPrices[item.id] ?? ''} placeholder="既定" disabled={!row.billable[item.id]} onChange={(event) => updateRow(tenant.id, index, { unitPrices: { ...row.unitPrices, [item.id]: event.target.value === '' ? null : Number(event.target.value) } })} /></td>,
+              ])}
+              {building.subItems.filter((item) => item.kind === 'basic').map((item) => <td key={item.id}>
+                <input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} />
               </td>)}
-              <td className="meter-split-cell">
-                <select value={tenant.dataSplit} onChange={(event) => updateTenant(tenant.id, { dataSplit: event.target.value as DataSplit })}>{dataSplits.map((row) => <option key={row} value={row}>{dataSplitLabel[row]}</option>)}</select>
-                {tenant.dataSplit === 'perInvoice' && <div className="meter-split-invoices">{labelsOf(tenant.id).map((label) => <label key={label}>{label}
-                  <select value={tenant.invoiceByLabel[label] ?? 1} onChange={(event) => updateInvoiceNo(tenant.id, label, Number(event.target.value))}>{[1, 2, 3].map((no) => <option key={no} value={no}>請求書 {no}</option>)}</select>
-                </label>)}</div>}
-              </td>
-            </tr>)}</tbody>
+              {visibleCategories.map((item) => <td key={item.id}>
+                <select value={row.sumMode[item.id] ?? 'aggregate'} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
+              </td>)}
+              <td><select value={row.amountRoundingMode} onChange={(event) => updateRow(tenant.id, index, { amountRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select></td>
+              <td className="meter-split-cell">{index === 0 ? <span className="meter-settings-pair">
+                <label className="meter-check"><input type="checkbox" checked={tenant.splitEnabled} onChange={(event) => { updateTenant(tenant.id, { splitEnabled: event.target.checked }); if (!event.target.checked) setSplitCount(tenant, 1); else if (tenant.rows.length < 2) setSplitCount(tenant, 2); }} />分割する</label>
+                {tenant.splitEnabled && <input type="number" min="1" max="9" className="meter-narrow" value={tenant.rows.length} onChange={(event) => setSplitCount(tenant, Number(event.target.value))} />}
+              </span> : null}</td>
+              {tenants.some((item) => item.invoiceSplitByUnit) && <td>{tenant.invoiceSplitByUnit
+                ? <select value={row.invoiceNo} onChange={(event) => updateRow(tenant.id, index, { invoiceNo: Number(event.target.value) })}>{[1, 2, 3].map((no) => <option key={no} value={no}>請求書 {no}</option>)}</select>
+                : <span className="meter-muted">—</span>}</td>}
+            </tr>))}</tbody>
           </table>
         </div>
+        <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。</p>
       </section>
     </div>}
   </section>;
