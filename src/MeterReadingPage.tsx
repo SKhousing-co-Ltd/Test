@@ -101,6 +101,13 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
     </nav>
 
     {tab === 'summary' && <div className="meter-panel">
+      {building.surcharges.filter((row) => row.billable).length > 0 && <div className="meter-month-rates">
+        {building.surcharges.filter((row) => row.billable).map((row) => <label key={row.id}>
+          {row.name}の単価
+          <input type="number" step="0.01" value={row.unitPrice} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((item) => item.id === row.id ? { ...item, unitPrice: Number(event.target.value) } : item) })} />
+          <span>円／{building.categories.find((item) => item.id === row.categoryId)?.unit ?? ''}</span>
+        </label>)}
+      </div>}
       <div className="meter-table-wrap">
         <table className="meter-table">
           <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}</th>)}{building.surcharges.filter((row) => row.billable).map((row) => <th key={row.id}>{row.name}</th>)}<th>請求合計</th><th>元表</th><th>差</th></tr></thead>
@@ -247,13 +254,11 @@ export function MeterReadingPage({ propertyId, propertyName, period }: { propert
         <section className="meter-settings-block">
         <h4>増額分</h4>
         <table className="meter-table meter-settings-table">
-          <thead><tr><th>名称</th><th>対象の分類</th><th>単価</th><th>請求明細の項目</th><th>請求する</th></tr></thead>
+          <thead><tr><th>名称</th><th>請求明細の項目</th><th>請求する</th></tr></thead>
           <tbody>{building.surcharges.map((row) => {
             const patch = (value: Partial<typeof row>) => setBuilding({ ...building, surcharges: building.surcharges.map((item) => item.id === row.id ? { ...item, ...value } : item) });
             return <tr key={row.id}>
               <td><input value={row.name} onChange={(event) => patch({ name: event.target.value })} /></td>
-              <td><select value={row.categoryId} onChange={(event) => patch({ categoryId: event.target.value as CategoryId })}>{building.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
-              <td><input type="number" step="0.01" className="meter-narrow" value={row.unitPrice} onChange={(event) => patch({ unitPrice: Number(event.target.value) })} /></td>
               <td><select value={row.lineItemId} onChange={(event) => patch({ lineItemId: event.target.value })}>{lineItemOptions}{lineItemsFor(row.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td><label className="meter-check"><input type="checkbox" checked={row.billable} onChange={(event) => patch({ billable: event.target.checked })} />請求する</label></td>
             </tr>;

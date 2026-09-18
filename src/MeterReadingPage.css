@@ -159,3 +159,9 @@
 .meter-settings-panel .meter-settings-table td.meter-col-name { text-align: left !important; }
 .meter-settings-panel .meter-settings-table input, .meter-settings-panel .meter-settings-table select { text-align: center; text-align-last: center; }
 .meter-settings-panel .meter-settings-table .meter-settings-pair { justify-content: center; }
+
+/* 集計：月ごとに変わる単価はここで入力します。 */
+.meter-month-rates { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 12px; border: 1px solid #e0e9f3; border-radius: 8px; background: #f7fafd; }
+.meter-month-rates label { display: inline-flex; align-items: center; gap: 6px; color: #45617f; font-size: 12px; font-weight: 700; }
+.meter-month-rates input { width: 84px; height: 26px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: center; box-sizing: border-box; }
+.meter-month-rates span { color: #7d8b9e; font-weight: 400; }
