@@ -16,6 +16,8 @@ export const sumModeLabel: Record<SumMode, string> = { aggregate: 'まとめて�
 export const roundingModeLabel: Record<RoundingMode, string> = { floor: '切り捨て', ceil: '切り上げ', round: '四捨五入' };
 
 export type CategoryId = 'electric' | 'water' | 'gas';
+export type PriceMode = 'fixed' | 'variable';
+export const priceModeLabel: Record<PriceMode, string> = { fixed: '固定', variable: '変動' };
 export type Category = { id: CategoryId; name: string; unit: string; billable: boolean; fixedBillable: boolean };
 export type SubItem = {
   id: string;
@@ -23,6 +25,8 @@ export type SubItem = {
   name: string;
   kind: 'basic' | 'custom';
   lineItemId: string;
+  // 固定：設定した単価を使う／変動：月ごとに変わる単価を使う（計算は今後実装します）
+  priceMode: PriceMode;
   // ビルの既定単価です。テナントに契約単価が入っていない場合に使います。
   defaultUnitPrice: number | null;
   // 単価が税抜か税込か。税込のときは、下の桁と丸め方で税抜へ戻します。
@@ -79,13 +83,13 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingDigits: 2, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
   ],
   taxRate: 0.1,
   surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
@@ -213,7 +217,9 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   const own = metersFor(subItem.id, tenantId, rowIndex, meters);
   const mode = row.sumMode[category.id] ?? 'aggregate';
   // 単価はメーターの上書き、契約行の単価、小分類のビル既定単価の順で決めます。税込単価は税抜へ戻します。
-  const priceOf = (target: Meter) => toExclusive(target.unitPrice ?? row.unitPrices[subItem.id] ?? subItem.defaultUnitPrice ?? 0, subItem, taxRate);
+  // 変動単価は月ごとに決まるため、計算は今後実装します。今は0円として扱います。
+  const priceOf = (target: Meter) => subItem.priceMode === 'variable' ? 0
+    : toExclusive(target.unitPrice ?? row.unitPrices[subItem.id] ?? subItem.defaultUnitPrice ?? 0, subItem, taxRate);
   const usage = roundUsage(own.reduce((sum, target) => sum + target.usage, 0));
 
   // 単価が違うメーターは、まとめて計算の場合も分けて計算します。
