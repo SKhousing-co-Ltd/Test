@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  calculateSubItem, calculateTenant, initialBuilding, initialMeters, initialTenants, metersFor,
+  calculateSubItem, calculateTenant, metersFor,
   priceModeLabel, roundingModeLabel, sumModeLabel, taxModeLabel,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type Meter,
   type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
 } from './utils/meterReading';
+import { confirmMeterReading, loadConfirmedAmounts, loadMeterReading, newId, releaseMeterReading, saveMeterReading, type ConfirmedAmount, type MeterReadingSnapshot } from './utils/meterReadingStore';
 import { periodRange } from './utils/billingDates';
 import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
@@ -13,7 +14,7 @@ import './MeterReadingPage.css';
 // 検針データの画面です。
 // 分類（電気・水道・ガス）の中に小分類のタブを持ち、小分類ごとに
 // 「使用量の入力」と「メーターの割り当て」を切り替えます。
-// 現時点ではサンプルデータで動く試作で、保存はされません。
+// 設定と検針値は画面上で編集し、「保存」でまとめてSupabaseへ書き込みます。
 
 const yen = new Intl.NumberFormat('ja-JP');
 const amount = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
@@ -23,27 +24,119 @@ const taxModes: TaxMode[] = ['exclusive', 'inclusive'];
 const priceModes: PriceMode[] = ['fixed', 'variable'];
 const utilityKindOf: Record<CategoryId, string> = { electric: 'electricity', water: 'water', gas: 'gas' };
 const patternMark = (index: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(index) || String(index + 1);
+// 物件を読み込むまでの空の状態です。分類は読み込み時にDBの設定で置き換えます。
+const emptyBuilding: BuildingConfig = { categories: [], subItems: [], surcharges: [], taxRate: 0.1 };
 type PeriodPattern = { billing_period_pattern_id: string; pattern_name: string; start_month_offset: number; start_day_type: string; start_meter_day_offset: number; end_month_offset: number; end_day_type: string; end_meter_day_offset: number };
 
 export function MeterReadingPage({ propertyId, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
-  const [building, setBuilding] = useState<BuildingConfig>(initialBuilding);
-  const [tenants, setTenants] = useState<TenantConfig[]>(initialTenants);
-  const [meters, setMeters] = useState<Meter[]>(initialMeters);
+  const [building, setBuildingState] = useState<BuildingConfig>(emptyBuilding);
+  const [tenants, setTenantsState] = useState<TenantConfig[]>([]);
+  const [meters, setMetersState] = useState<Meter[]>([]);
+  // 読み込んだ時点の内容です。保存時に「消えた行」を見つけるために使います。
+  const [baseline, setBaseline] = useState<MeterReadingSnapshot | null>(null);
+  const [status, setStatus] = useState<'draft' | 'confirmed'>('draft');
+  // 確定済みの月は、そのとき保存した金額を表示します。
+  const [confirmedAmounts, setConfirmedAmounts] = useState<ConfirmedAmount[]>([]);
+  const [confirming, setConfirming] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [tab, setTab] = useState<string>('summary');
   const [subTab, setSubTab] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'input' | 'assign'>('input');
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [periodPatterns, setPeriodPatterns] = useState<PeriodPattern[]>([]);
   const [notice, setNotice] = useState('');
-  // 検針日は月ごとに保持し、前回検針日は前月の検針データを参照します。
-  const [meterDates, setMeterDates] = useState<Record<string, string>>({ '2026-9': '2026-09-02', '2026-8': '2026-08-06' });
+  // 検針日は月ごとの検針データに持たせ、前回検針日は前月の行から読みます。
+  const [meterDate, setMeterDateState] = useState('');
+  const [previousMeterDate, setPreviousMeterDate] = useState('');
 
   const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
-  const monthKey = `${calendarYear}-${period.month}`;
-  const previousMonthDate = new Date(calendarYear, period.month - 2, 1);
-  const previousKey = `${previousMonthDate.getFullYear()}-${previousMonthDate.getMonth() + 1}`;
-  const meterDate = meterDates[monthKey] ?? '';
-  const previousMeterDate = meterDates[previousKey] ?? '';
+
+  // 編集はすべてここを通し、未保存かどうかを覚えておきます。
+  const setBuilding: typeof setBuildingState = (value) => { setBuildingState(value); setDirty(true); };
+  const setTenants: typeof setTenantsState = (value) => { setTenantsState(value); setDirty(true); };
+  const setMeters: typeof setMetersState = (value) => { setMetersState(value); setDirty(true); };
+  const setMeterDate = (value: string) => { setMeterDateState(value); setDirty(true); };
+
+  // 物件と対象月の検針データを読み込みます。
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!supabase || !propertyId) { setBaseline(null); setBuildingState(emptyBuilding); setTenantsState([]); setMetersState([]); return; }
+      setLoading(true);
+      try {
+        const snapshot = await loadMeterReading(supabase, propertyId, calendarYear, period.month);
+        if (cancelled) return;
+        setBaseline(snapshot);
+        setBuildingState(snapshot.building);
+        setTenantsState(snapshot.tenants);
+        setMetersState(snapshot.meters);
+        setMeterDateState(snapshot.meterDate);
+        setPreviousMeterDate(snapshot.previousMeterDate);
+        setStatus(snapshot.status);
+        setDirty(false);
+        setNotice('');
+        const confirmed = snapshot.status === 'confirmed' ? await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month) : [];
+        if (cancelled) return;
+        setConfirmedAmounts(confirmed);
+      } catch (error) {
+        if (!cancelled) setNotice(error instanceof Error ? error.message : '検針データを読み込めませんでした');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [propertyId, calendarYear, period.month]);
+
+  // 確定すると、そのときの使用量・単価・丸めごと金額を残し、画面は編集できなくなります。
+  const confirm = async () => {
+    if (!supabase || !propertyId || !baseline || dirty) return;
+    setConfirming(true);
+    try {
+      const names = new Map(lineItems.map((row) => [row.id, row.name]));
+      await confirmMeterReading(supabase, propertyId, calendarYear, period.month, { ...baseline, building, tenants, meters, meterDate, previousMeterDate, status: 'confirmed' }, results, names);
+      setStatus('confirmed');
+      setConfirmedAmounts(await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month));
+      setNotice('この月の金額を確定しました。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '確定できませんでした');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const release = async () => {
+    if (!supabase || !propertyId) return;
+    setConfirming(true);
+    try {
+      await releaseMeterReading(supabase, propertyId, calendarYear, period.month);
+      setStatus('draft');
+      setConfirmedAmounts([]);
+      setNotice('確定を解除しました。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '確定を解除できませんでした');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const save = async () => {
+    if (!supabase || !propertyId || !baseline) return;
+    setSaving(true);
+    try {
+      const snapshot: MeterReadingSnapshot = { ...baseline, building, tenants, meters, meterDate, previousMeterDate, status };
+      await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline);
+      setBaseline(snapshot);
+      setDirty(false);
+      setNotice('保存しました。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '保存できませんでした');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // 請求明細の項目は請求設定から読み込み、請求種別に公共料金が設定されているものだけを対象にします。
   useEffect(() => {
@@ -76,10 +169,25 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const results = useMemo(() => tenants.map((tenant) => calculateTenant(tenant, building, meters)), [building, meters, tenants]);
   const grandTotal = results.reduce((sum, result) => sum + result.total, 0);
   const grandExpected = results.reduce((sum, result) => sum + result.tenant.expected, 0);
+  // 元表との突き合わせ列は、期待値を持つサンプルデータのときだけ出します。
+  const showExpected = results.some((result) => result.tenant.expected);
+  // 確定済みの月は、計算し直した金額ではなく確定時に保存した金額を請求へ渡します。
+  const confirmedByTenant = new Map<string, Map<string, number>>();
+  for (const row of confirmedAmounts) {
+    if (!row.lineItemId) continue;
+    const own = confirmedByTenant.get(row.tenantId) ?? new Map<string, number>();
+    own.set(row.lineItemId, (own.get(row.lineItemId) ?? 0) + row.amount);
+    confirmedByTenant.set(row.tenantId, own);
+  }
+  const lineItemAmounts = (tenantId: string) => status === 'confirmed'
+    ? confirmedByTenant.get(tenantId) ?? new Map<string, number>()
+    : results.find((result) => result.tenant.id === tenantId)?.byLineItem ?? new Map<string, number>();
   const visibleCategories = building.categories.filter((category) => category.billable);
   const customSubItems = building.subItems.filter((row) => row.kind === 'custom');
   const billableSurcharges = building.surcharges.filter((row) => row.billable);
-  const digitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{digits === 0 ? '整数' : `小数第${digits}位`}</option>);
+  // 設定値は「残す桁数」ですが、選ぶときはどの桁を処理するかで示します。
+  // 例：小数第1位まで残す＝小数第2位以下を処理する。
+  const digitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{`小数第${digits + 1}位以下`}</option>);
   const roundingOptions = roundingModes.map((row) => <option key={row} value={row}>{roundingModeLabel[row]}</option>);
   const lineItemsFor = (categoryId: CategoryId) => lineItems.filter((row) => row.utilityKind === utilityKindOf[categoryId]);
   // 分類ごとの色分けです。電気は黄、水道は青、ガスは赤にします。
@@ -94,19 +202,30 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const updateTenant = (id: string, patch: Partial<TenantConfig>) => setTenants((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
   const setSplitCount = (tenant: TenantConfig, count: number) => {
     const next = Math.max(1, Math.min(9, count));
-    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: `${tenant.id}-R${index + 1}`, invoiceNo: index + 1, fixedCharges: {} });
+    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {} });
     updateTenant(tenant.id, { rows });
     // 行を減らしたときは、行きどころのないメーターを1行目へ戻します。
     setMeters((current) => current.map((row) => row.tenantId === tenant.id && row.rowIndex >= next ? { ...row, rowIndex: 0 } : row));
   };
   const addSubItem = (categoryId: CategoryId) => {
-    const id = `sub${Date.now()}`;
-    setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingDigits: 2, taxRoundingMode: 'floor', usageRoundingDigits: 1, usageRoundingMode: 'round' }] }));
+    const id = newId();
+    setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageRoundingMode: 'round' }] }));
     setTenants((current) => current.map((tenant) => ({ ...tenant, rows: tenant.rows.map((row) => ({ ...row, billable: { ...row.billable, [id]: true }, unitPrices: { ...row.unitPrices, [id]: null } })) })));
   };
-  const removeSubItem = (id: string) => { setBuilding((current) => ({ ...current, subItems: current.subItems.filter((row) => row.id !== id) })); setMeters((current) => current.filter((row) => row.subItemId !== id)); };
-  const addMeter = (subItemId: string) => setMeters((current) => [...current, { id: `M${Date.now()}`, subItemId, code: '', label: '', tenantId: tenants[0]?.id ?? '', rowIndex: 0, usage: 0 }]);
-  const removeMeter = (id: string) => setMeters((current) => current.filter((row) => row.id !== id));
+  // 小分類を消すと、保存したときに配下のメーターと過去月の検針値もまとめて消えます。
+  const removeSubItem = (id: string) => {
+    const target = building.subItems.find((row) => row.id === id);
+    const own = meters.filter((row) => row.subItemId === id).length;
+    if (!window.confirm(`小分類「${target?.name ?? ''}」を削除します。保存すると、この小分類のメーター${own}件と、過去の月を含むすべての検針値も消えます。よろしいですか。`)) return;
+    setBuilding((current) => ({ ...current, subItems: current.subItems.filter((row) => row.id !== id) }));
+    setMeters((current) => current.filter((row) => row.subItemId !== id));
+  };
+  const addMeter = (subItemId: string) => setMeters((current) => [...current, { id: newId(), subItemId, code: '', label: '', tenantId: tenants[0]?.id ?? '', rowIndex: 0, usage: 0 }]);
+  const removeMeter = (id: string) => {
+    const target = meters.find((row) => row.id === id);
+    if (!window.confirm(`メーター「${target?.code || '番号なし'}」を削除します。保存すると、過去の月を含むこのメーターの検針値も消えます。よろしいですか。`)) return;
+    setMeters((current) => current.filter((row) => row.id !== id));
+  };
 
   const category = visibleCategories.find((row) => row.id === tab);
   const categorySubItems = category ? building.subItems.filter((row) => row.categoryId === category.id && (row.kind !== 'basic' || category.fixedBillable)) : [];
@@ -117,8 +236,17 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     <header className="meter-page-heading">
       <div><p className="section-kicker">METER</p><h2>検針データ</h2></div>
       <div className="meter-date-fields">
-        <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDates({ ...meterDates, [monthKey]: event.target.value })} /></label>
+        <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
         <span className="meter-date-previous">前回検針日<b>{previousMeterDate ? previousMeterDate.replace(/-/g, '/') : '前月の検針データなし'}</b></span>
+        {status === 'draft'
+          ? <>
+            <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
+            <button type="button" className="meter-confirm" disabled={dirty || confirming || loading || !baseline || !tenants.length} onClick={() => void confirm()}>{confirming ? '確定中…' : '確定'}</button>
+          </>
+          : <>
+            <span className="meter-confirmed-mark">確定済み</span>
+            <button type="button" className="meter-release" disabled={confirming || loading} onClick={() => void release()}>確定を解除</button>
+          </>}
       </div>
     </header>
 
@@ -127,6 +255,10 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       return <span key={pattern.billing_period_pattern_id}><b>{patternMark(index)} {pattern.pattern_name}</b>{range.start && range.end ? `${range.start}～${range.end}` : '検針日を入力してください'}</span>;
     })}</div>}
     {notice && <p className="tenant-billing-notice">{notice}</p>}
+    {loading && <p className="tenant-billing-notice">検針データを読み込んでいます…</p>}
+    {!loading && baseline && !tenants.length && <p className="tenant-billing-notice">対象月に契約中のテナントがありません。</p>}
+
+    {status === 'confirmed' && <p className="tenant-billing-notice">この月は確定済みです。編集するには確定を解除してください。</p>}
 
     <nav className="meter-tabs">
       <button type="button" className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>集計</button>
@@ -134,6 +266,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       <button type="button" className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>設定</button>
     </nav>
 
+    <fieldset className="meter-lock" disabled={status === 'confirmed'}>
     {tab === 'summary' && <div className="meter-panel">
       {billableSurcharges.length > 0 && <div className="meter-month-rates">
         {billableSurcharges.map((row) => <label key={row.id}>
@@ -144,22 +277,24 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       </div>}
       <div className="meter-table-wrap">
         <table className="meter-table">
-          <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}</th>)}{billableSurcharges.map((row) => <th key={row.id}>{row.name}</th>)}<th>請求合計</th><th>元表</th><th>差</th></tr></thead>
+          <thead><tr><th className="meter-col-name">テナント</th>{visibleCategories.map((row) => <th key={row.id}>{row.name}</th>)}{billableSurcharges.map((row) => <th key={row.id}>{row.name}</th>)}<th>請求合計</th>{showExpected ? <><th>元表</th><th>差</th></> : null}</tr></thead>
           <tbody>{results.flatMap((result) => [
             <tr key={result.tenant.id}>
               <td className="meter-col-name"><strong>{result.tenant.name}</strong>{result.tenant.splitEnabled ? <small>{result.tenant.rows.length} 分割</small> : null}</td>
               {visibleCategories.map((row) => <td key={row.id} className="numeric">{yen.format(result.rows.reduce((sum, item) => sum + (item.categories.find((value) => value.category.id === row.id)?.amount ?? 0), 0))}</td>)}
               {billableSurcharges.map((row) => <td key={row.id} className="numeric">{yen.format(result.rows.reduce((sum, item) => sum + (item.surcharges.find((value) => value.surcharge.id === row.id)?.amount ?? 0), 0))}</td>)}
               <td className="numeric meter-total">{yen.format(result.total)}</td>
-              <td className="numeric meter-muted">{yen.format(result.tenant.expected)}</td>
-              <td className={result.difference === 0 ? 'numeric meter-ok' : 'numeric meter-warn'}>{result.difference === 0 ? '一致' : yen.format(result.difference)}</td>
+              {showExpected ? <>
+                <td className="numeric meter-muted">{yen.format(result.tenant.expected)}</td>
+                <td className={result.difference === 0 ? 'numeric meter-ok' : 'numeric meter-warn'}>{result.difference === 0 ? '一致' : yen.format(result.difference)}</td>
+              </> : null}
             </tr>,
             ...(result.tenant.splitEnabled ? result.rows.map((row) => <tr key={`${result.tenant.id}-${row.index}`} className="meter-split-row">
               <td className="meter-col-name">分割 {row.index + 1}{result.tenant.invoiceSplitByUnit ? <small>請求書 {row.row.invoiceNo}</small> : null}</td>
               {visibleCategories.map((item) => <td key={item.id} className="numeric">{yen.format(row.categories.find((value) => value.category.id === item.id)?.amount ?? 0)}</td>)}
               {billableSurcharges.map((item) => <td key={item.id} className="numeric">{yen.format(row.surcharges.find((value) => value.surcharge.id === item.id)?.amount ?? 0)}</td>)}
               <td className="numeric">{yen.format(row.total)}</td>
-              <td /><td />
+              {showExpected ? <><td /><td /></> : null}
             </tr>) : []),
           ])}</tbody>
           <tfoot><tr>
@@ -167,21 +302,26 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             {visibleCategories.map((row) => <td key={row.id} className="numeric">{yen.format(results.reduce((sum, result) => sum + result.rows.reduce((value, item) => value + (item.categories.find((target) => target.category.id === row.id)?.amount ?? 0), 0), 0))}</td>)}
             {billableSurcharges.map((row) => <td key={row.id} className="numeric">{yen.format(results.reduce((sum, result) => sum + result.rows.reduce((value, item) => value + (item.surcharges.find((target) => target.surcharge.id === row.id)?.amount ?? 0), 0), 0))}</td>)}
             <td className="numeric meter-total">{yen.format(grandTotal)}</td>
-            <td className="numeric meter-muted">{yen.format(grandExpected)}</td>
-            <td className={grandTotal === grandExpected ? 'numeric meter-ok' : 'numeric meter-warn'}>{grandTotal === grandExpected ? '一致' : yen.format(grandTotal - grandExpected)}</td>
+            {showExpected ? <>
+              <td className="numeric meter-muted">{yen.format(grandExpected)}</td>
+              <td className={grandTotal === grandExpected ? 'numeric meter-ok' : 'numeric meter-warn'}>{grandTotal === grandExpected ? '一致' : yen.format(grandTotal - grandExpected)}</td>
+            </> : null}
           </tr></tfoot>
         </table>
       </div>
 
       <div className="meter-settings-block">
-        <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとの金額です。この単位で請求書作成へ渡します。</p></div>
+        <div className="meter-settings-heading"><h4>請求明細の項目別</h4><p>小分類に紐づけた明細項目ごとの金額です。この単位で請求書作成へ渡します。{status === 'confirmed' ? 'この月は確定済みのため、確定したときの金額を表示しています。' : ''}</p></div>
         <div className="meter-table-wrap">
           <table className="meter-table">
             <thead><tr><th className="meter-col-name">テナント</th>{lineItems.length ? lineItems.map((row) => <th key={row.id}>{row.name}</th>) : <th>明細項目が未登録です</th>}</tr></thead>
-            <tbody>{results.map((result) => <tr key={result.tenant.id}>
-              <td className="meter-col-name">{result.tenant.name}</td>
-              {lineItems.length ? lineItems.map((row) => <td key={row.id} className="numeric">{result.byLineItem.get(row.id) ? yen.format(result.byLineItem.get(row.id) ?? 0) : <span className="meter-muted">—</span>}</td>) : <td className="meter-muted">請求設定で公共料金の明細項目を登録してください。</td>}
-            </tr>)}</tbody>
+            <tbody>{results.map((result) => {
+              const amounts = lineItemAmounts(result.tenant.id);
+              return <tr key={result.tenant.id}>
+                <td className="meter-col-name">{result.tenant.name}</td>
+                {lineItems.length ? lineItems.map((row) => <td key={row.id} className="numeric">{amounts.get(row.id) ? yen.format(amounts.get(row.id) ?? 0) : <span className="meter-muted">—</span>}</td>) : <td className="meter-muted">請求設定で公共料金の明細項目を登録してください。</td>}
+              </tr>;
+            })}</tbody>
           </table>
         </div>
       </div>
@@ -266,7 +406,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               return <tr key={row.id}>
                 <td><input value={row.code} placeholder="メーター番号" onChange={(event) => updateMeter(row.id, { code: event.target.value })} /></td>
                 <td><input value={row.label} placeholder="設置位置・区画など" onChange={(event) => updateMeter(row.id, { label: event.target.value })} /></td>
-                <td><select value={row.tenantId} onChange={(event) => updateMeter(row.id, { tenantId: event.target.value, rowIndex: 0 })}>{tenants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
+                <td><select value={row.tenantId} onChange={(event) => updateMeter(row.id, { tenantId: event.target.value, rowIndex: 0 })}><option value="">未割当</option>{tenants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
                 <td>{target && target.rows.length > 1
                   ? <select value={row.rowIndex} onChange={(event) => updateMeter(row.id, { rowIndex: Number(event.target.value) })}>{target.rows.map((item, index) => <option key={item.id} value={index}>分割 {index + 1}</option>)}</select>
                   : <span className="meter-muted">—</span>}</td>
@@ -293,8 +433,8 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
           </div>
           <table className="meter-table meter-settings-table meter-subitem-table">
-            <colgroup><col style={{ width: 132 }} /><col style={{ width: 104 }} /><col style={{ width: 260 }} /><col style={{ width: 88 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 186 }} /><col style={{ width: 186 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
-            <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th>税区分</th><th>単価計算方法</th><th>既定単価</th><th>税抜換算の丸め</th><th>使用量の丸め</th><th>既定の請求期間</th><th /></tr></thead>
+            <colgroup><col style={{ width: 132 }} /><col style={{ width: 104 }} /><col style={{ width: 260 }} /><col style={{ width: 88 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
+            <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th>税区分</th><th>単価計算方法</th><th>既定単価</th><th>税抜換算の丸め<small>小数点以下</small></th><th>使用量の丸め</th><th>既定の請求期間</th><th /></tr></thead>
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id && (item.kind !== 'basic' || row.fixedBillable)).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
@@ -302,10 +442,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               <td>{item.kind === 'custom' ? <select value={item.taxMode} onChange={(event) => updateSubItem(item.id, { taxMode: event.target.value as TaxMode })}>{taxModes.map((value) => <option key={value} value={value}>{taxModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <select value={item.priceMode} onChange={(event) => updateSubItem(item.id, { priceMode: event.target.value as PriceMode })}>{priceModes.map((value) => <option key={value} value={value}>{priceModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' && item.priceMode === 'fixed' ? <input type="number" step="0.01" className="meter-narrow" value={item.defaultUnitPrice ?? ''} placeholder="—" onChange={(event) => updateSubItem(item.id, { defaultUnitPrice: event.target.value ? Number(event.target.value) : null })} /> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' && item.taxMode === 'inclusive' ? <span className="meter-settings-pair">
-                <select value={item.taxRoundingDigits} onChange={(event) => updateSubItem(item.id, { taxRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
-                <select value={item.taxRoundingMode} onChange={(event) => updateSubItem(item.id, { taxRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
-              </span> : <span className="meter-muted">—</span>}</td>
+              <td>{item.kind === 'custom' && item.taxMode === 'inclusive'
+                ? <select value={item.taxRoundingMode} onChange={(event) => updateSubItem(item.id, { taxRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
+                : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <span className="meter-settings-pair">
                 <select value={item.usageRoundingDigits} onChange={(event) => updateSubItem(item.id, { usageRoundingDigits: Number(event.target.value) })}>{digitOptions}</select>
                 <select value={item.usageRoundingMode} onChange={(event) => updateSubItem(item.id, { usageRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
@@ -395,5 +534,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。</p>
       </section>
     </div>}
+    </fieldset>
   </section>;
 }
