@@ -80,6 +80,34 @@ type RentRollRow = {
   parkingSpaceNumber: string;
   parkingAccessCode: string;
   parkingVehicle: string;
+  areaTsubo?: number | null;
+  sourceFileName?: string;
+  sourceSheetName?: string;
+  sourceRowNumber?: number | null;
+  terminationScheduled?: boolean;
+};
+
+type SnapshotSource = {
+  rent_roll_snapshot_row_id: string;
+  source_sheet_name: string;
+  source_row_number: number | null;
+  floor_label: string | null;
+  unit_code: string | null;
+  unit_type: string | null;
+  tenant_name: string | null;
+  source_status: string | null;
+  occupancy_status: 'occupied' | 'vacant';
+  area_sqm: number | null;
+  area_tsubo: number | null;
+  monthly_rent_amount: number | null;
+  monthly_common_charge_amount: number | null;
+  monthly_parking_amount: number | null;
+  other_monthly_amount: number | null;
+  deposit_amount: number | null;
+  security_deposit_amount: number | null;
+  key_money_amount: number | null;
+  renewal_fee_amount: number | null;
+  review_flags: string | null;
 };
 
 const today = new Date().toISOString().slice(0, 10);
@@ -178,6 +206,29 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
   };
 }
 
+function toSnapshotRow(source: SnapshotSource, sourceFileName: string): RentRollRow {
+  const terminationScheduled = (source.review_flags ?? '').includes('termination') || (source.source_status ?? '').includes('解約');
+  const status: RentRollStatus = source.occupancy_status === 'vacant' ? 'vacant' : terminationScheduled ? 'scheduled' : 'occupied';
+  const rent = Number(source.monthly_rent_amount ?? 0);
+  const commonCharge = Number(source.monthly_common_charge_amount ?? 0);
+  const parkingAmount = Number(source.monthly_parking_amount ?? 0);
+  const otherMonthlyAmount = Number(source.other_monthly_amount ?? 0);
+  const occupied = status !== 'vacant';
+  return {
+    unitId: source.rent_roll_snapshot_row_id, leaseContractUnitId: null, unitType: source.unit_type ?? 'office', status,
+    productCategory: normalizeProductCategory(source.unit_type ?? 'office'), floor: source.floor_label ?? '',
+    unitCode: source.unit_code ?? '', unitName: source.unit_code ?? '', discriminator: null, tenantName: source.tenant_name ?? '',
+    leaseTermLabel: '—', contractPeriod: '—', area: source.area_sqm, areaTsubo: source.area_tsubo,
+    rent: occupied ? rent : 0, commonCharge: occupied ? commonCharge : 0, rentCommonTotal: occupied ? rent + commonCharge : 0,
+    parkingAmount: occupied ? parkingAmount : 0, otherMonthlyAmount: occupied ? otherMonthlyAmount : 0,
+    total: occupied ? rent + commonCharge + parkingAmount + otherMonthlyAmount : 0,
+    deposit: Number(source.deposit_amount ?? 0), securityDeposit: Number(source.security_deposit_amount ?? 0),
+    keyMoney: Number(source.key_money_amount ?? 0), renewalFee: Number(source.renewal_fee_amount ?? 0), parkingScope: null,
+    parkingSpaceNumber: '', parkingAccessCode: '', parkingVehicle: '', sourceFileName, sourceSheetName: source.source_sheet_name,
+    sourceRowNumber: source.source_row_number, terminationScheduled,
+  };
+}
+
 function formatCurrency(value: number): string {
   return value === 0 ? '—' : currencyFormatter.format(value);
 }
@@ -196,6 +247,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const [error, setError] = useState<string | null>(null);
   const [selectedLeaseContractUnitId, setSelectedLeaseContractUnitId] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [viewMode, setViewMode] = useState<'current' | 'snapshot'>('current');
+  const [snapshotDates, setSnapshotDates] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,23 +304,47 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         setLoadingRows(false);
         return;
       }
-      const result = await supabase.rpc('rent_roll_list_with_terms_at_date', {
-          p_property_id: propertyId,
-          p_as_of_date: asOfDate,
-        });
+      let loadedRows: RentRollRow[] = [];
+      let loadError: { message: string } | null = null;
+      if (viewMode === 'snapshot') {
+        const batch = await supabase.from('rent_roll_snapshot_batch')
+          .select('rent_roll_snapshot_batch_id, source_file_name')
+          .eq('as_of_date', asOfDate)
+          .order('source_file_updated_at', { ascending: false })
+          .limit(1).maybeSingle();
+        if (batch.error) loadError = batch.error;
+        else if (batch.data) {
+          const detail = await supabase.from('rent_roll_snapshot_row').select('*')
+            .eq('rent_roll_snapshot_batch_id', batch.data.rent_roll_snapshot_batch_id)
+            .eq('property_id', propertyId).order('floor_label').order('source_row_number');
+          if (detail.error) loadError = detail.error;
+          else loadedRows = (detail.data as SnapshotSource[] ?? []).map((row) => toSnapshotRow(row, batch.data!.source_file_name));
+        }
+      } else {
+        const result = await supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: asOfDate });
+        loadError = result.error;
+        loadedRows = ((result.data ?? []) as RentRollSource[]).map(toRentRollRow);
+      }
 
       if (cancelled) return;
-      if (result.error) {
+      const result = { error: loadError! };
+      if (loadError) {
         setRows([]);
         setError(`レントロールの取得に失敗しました: ${result.error.message}`);
       } else {
-        setRows(((result.data ?? []) as RentRollSource[]).map(toRentRollRow));
+        setRows(loadedRows);
       }
       setLoadingRows(false);
     };
     void loadRows();
     return () => { cancelled = true; };
-  }, [propertyId, asOfDate, refreshVersion]);
+  }, [propertyId, asOfDate, refreshVersion, viewMode]);
+
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.from('rent_roll_snapshot_batch').select('as_of_date').order('as_of_date', { ascending: false })
+      .then(({ data }) => setSnapshotDates([...new Set((data ?? []).map((row) => String(row.as_of_date)))]));
+  }, []);
 
   const sortedRows = useMemo(() => [...rows].sort((a, b) => {
     const floorDifference = floorOrder(a.floor) - floorOrder(b.floor);
@@ -322,9 +399,15 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       </div>
     </div>
 
+    <div className="rent-roll-mode-switch" role="group" aria-label="表示モード">
+      <button type="button" className={viewMode === 'current' ? 'active' : ''} onClick={() => setViewMode('current')}>現在のレントロール</button>
+      <button type="button" className={viewMode === 'snapshot' ? 'active' : ''} onClick={() => { setViewMode('snapshot'); if (snapshotDates[0]) setAsOfDate(snapshotDates[0]); }}>過去スナップショット</button>
+    </div>
+    {viewMode === 'snapshot' && <p className="rent-roll-snapshot-banner">{asOfDate} 時点の過去スナップショット</p>}
+
     <div className="rent-roll-toolbar">
       <label>基準日
-        <input type="date" value={asOfDate} onChange={(event) => setAsOfDate(event.target.value)} />
+        {viewMode === 'snapshot' ? <select value={asOfDate} onChange={(event) => setAsOfDate(event.target.value)}>{snapshotDates.map((date) => <option key={date} value={date}>{date}</option>)}</select> : <input type="date" value={asOfDate} onChange={(event) => setAsOfDate(event.target.value)} />}
       </label>
       <label>物件
         <select value={propertyId} onChange={(event) => setPropertyId(event.target.value)} disabled={loadingProperties}>
