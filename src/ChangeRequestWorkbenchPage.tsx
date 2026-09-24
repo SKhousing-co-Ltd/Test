@@ -991,14 +991,14 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           </article>)}
         </section>}
         <AppsuiteSourceContext request={selected} />
-        {isAppsuiteContractRequest && editable && <section className="change-card"><h4>過去レントロール確認</h4><p>Excelスナップショットを手動確認した結果を記録します。</p><div className="change-item-editor">
+        {isAppsuiteContractRequest && editable && <details className="change-card historical-roll-check" open={historicalCandidates.length === 0}><summary>過去レントロール確認（手動確認・証跡）</summary><p>候補が見つからない場合や、Excelの確認結果を証跡として残す場合に使用します。</p><div className="change-item-editor">
           <label>基準日<input type="date" value={snapshotDate} onChange={(event) => setSnapshotDate(event.target.value)} /></label>
           <label>ファイル名<input value={snapshotFile} onChange={(event) => setSnapshotFile(event.target.value)} /></label>
           <label>シート名<input value={snapshotSheet} onChange={(event) => setSnapshotSheet(event.target.value)} /></label>
           <label>行番号<input inputMode="numeric" value={snapshotRow} onChange={(event) => setSnapshotRow(event.target.value)} /></label>
           <label>確認結果<select value={snapshotResult} onChange={(event) => setSnapshotResult(event.target.value as typeof snapshotResult)}><option value="rent_roll_only">レントロールに存在・contractなし</option><option value="not_found">レントロールにも存在しない</option><option value="uncertain">要追加確認</option></select></label>
           <button className="secondary-button" onClick={() => void saveSnapshotEvidence()} disabled={working}>確認証跡を保存</button>
-        </div></section>}
+        </div></details>}
         {isAppsuiteContractRequest && <section className="change-card workflow-contract-candidates">
           <h4>契約候補</h4>
           <p>候補は自動確定されません。候補理由を確認して、対象契約を手動で確定してください。</p>
@@ -1006,11 +1006,22 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
             <label>解約対象範囲<select value={terminationScope} onChange={(event) => { setTerminationScope(event.target.value as 'contract' | 'unit' | 'parking'); setTerminationUnitIds([]); }}>
               <option value="contract">契約全体</option><option value="unit">選択した区画（貸室・駐車場など）</option><option value="parking">駐車場のみ</option>
             </select></label>
-            {terminationScope !== 'contract' && <label>対象区画（貸室・駐車場など／複数選択可）<select multiple value={terminationUnitIds} onChange={(event) => setTerminationUnitIds(Array.from(event.target.selectedOptions, (option) => option.value))}>
-              {workflowCandidates.filter((candidate) => terminationScope !== 'parking' || contractUnits.find((unit) => unit.lease_contract_unit_id === candidate.lease_contract_unit_id)?.unit?.unit_type === 'parking').map((candidate) => { const unit = contractUnits.find((entry) => entry.lease_contract_unit_id === candidate.lease_contract_unit_id)?.unit; return <option key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} value={candidate.lease_contract_unit_id}>{candidate.property_name} / {candidate.floor_label ?? candidate.unit_code} / {unit?.unit_type === 'parking' ? '駐車場' : '貸室等'} / {candidate.tenant_name}</option>; })}
-            </select></label>}
+            {terminationScope !== 'contract' && <fieldset className="termination-unit-picker">
+              <legend>対象区画（複数選択可）</legend>
+              <p className="muted">解約する区画にチェックを入れてください。現在 {terminationUnitIds.length} 区画を選択中です。</p>
+              <div className="termination-unit-options">
+                {workflowCandidates.filter((candidate) => terminationScope !== 'parking' || contractUnits.find((unit) => unit.lease_contract_unit_id === candidate.lease_contract_unit_id)?.unit?.unit_type === 'parking').map((candidate) => {
+                  const unit = contractUnits.find((entry) => entry.lease_contract_unit_id === candidate.lease_contract_unit_id)?.unit;
+                  const checked = terminationUnitIds.includes(candidate.lease_contract_unit_id);
+                  return <label key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className={checked ? 'termination-unit-option selected' : 'termination-unit-option'}>
+                    <input type="checkbox" checked={checked} onChange={(event) => setTerminationUnitIds((current) => event.target.checked ? [...current, candidate.lease_contract_unit_id] : current.filter((id) => id !== candidate.lease_contract_unit_id))} />
+                    <span><strong>{candidate.floor_label ?? candidate.unit_code}</strong><small>{candidate.property_name} / {unit?.unit_type === 'parking' ? '駐車場' : '貸室等'} / {candidate.tenant_name}</small></span>
+                  </label>;
+                })}
+              </div>
+            </fieldset>}
           </div>}
-          {candidateLoading ? <p className="muted">候補を取得中です…</p> : workflowCandidates.length === 0 ? <p className="muted">候補なし。分類・建物・テナント・契約期間を確認してください。</p> : workflowCandidates.map((candidate) => <article key={candidate.lease_contract_id} className="workflow-contract-candidate">
+          {candidateLoading ? <p className="muted">候補を取得中です…</p> : workflowCandidates.length === 0 ? <p className="muted">候補なし。分類・建物・テナント・契約期間を確認してください。</p> : workflowCandidates.map((candidate) => <article key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className="workflow-contract-candidate">
             <div><strong>{candidate.tenant_name}</strong><span>{candidate.property_name} / {candidate.floor_label ?? candidate.unit_code}</span><span>契約期間: {candidate.contract_start_date ?? '未設定'} ～ {candidate.contract_end_date ?? '継続中'}</span></div>
             <div><strong>判定: {candidate.suggestion_level}</strong><ul>{candidate.match_reasons.filter((reason) => reason.matched || reason.rule === 'effective_date').map((reason) => <li key={reason.rule}>{reason.matched ? '✓ ' : '⚠ '}{reason.message}</li>)}</ul></div>
             {editable && <button className="secondary-button" onClick={() => void confirmWorkflowContract(candidate)} disabled={working}>この契約に紐付ける</button>}
