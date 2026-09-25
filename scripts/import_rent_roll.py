@@ -63,6 +63,9 @@ class RentRollRecord:
     contract_end_date: str | None
     renewal_terms: str | None
     payment_terms: str | None
+    source_notes: str | None = None
+    bicycle_monthly_amount: int | None = None
+    bicycle_count: int | None = None
     source_unit_discriminator: str = ""
     source_contract_discriminator: str = ""
 
@@ -243,6 +246,9 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
         if selected_sheet_names is not None and sheet.title not in selected_sheet_names:
             continue
         found_sheet_names.add(sheet.title)
+        if sheet.title == "中之島":
+            read_nakanoshima_sheet(sheet, records, issues)
+            continue
         if sheet.title in SPECIAL_LAYOUT_SHEETS:
             issues.append(ImportIssue(sheet.title, None, "layout_not_supported", "棟・住居用の専用レイアウトのため、設定を追加するまで自動取込の対象外です。"))
             continue
@@ -316,7 +322,7 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
             base = primary_tenant_code(record.tenant_code) or normalize_tenant_name(record.tenant_name) or f"row-{record.source_row_number}"
             discriminators[base] = discriminators.get(base, 0) + 1
             record.source_unit_discriminator = base if discriminators[base] == 1 else f"{base}-row-{record.source_row_number}"
-            issues.append(ImportIssue(record.source_sheet_name, record.source_row_number, "temporary_unit_discriminator", "同一階・同一区画名が複数あるため、暫定識別子を付けて登録します。", {"floor": record.floor_label, "unit": record.unit_code, "discriminator": record.source_unit_discriminator, "tenant_code": record.tenant_code, "tenant_name": record.tenant_name}))
+            issues.append(ImportIssue(record.source_sheet_name, record.source_row_number, "temporary_unit_discriminator", "同一階・同一区画名が複数あるため、暫定識別子を付けて登録します。", {"floor": record.floor_label, "unit": record.unit_code, "discriminator": record.source_unit_discriminator, "tenant_code": record.tenant_code, "tenant_name": record.tenant_name, "notes": record.source_notes}))
 
     contract_groups: dict[tuple[str, str], list[RentRollRecord]] = {}
     for record in records:
@@ -330,6 +336,35 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
         for record in group:
             record.source_contract_discriminator = record.contract_start_date or f"row-{record.source_row_number}"
     return records, issues
+
+
+def read_nakanoshima_sheet(sheet: Any, records: list[RentRollRecord], issues: list[ImportIssue]) -> None:
+    """Read the residential Nakanoshima rent-roll layout.
+
+    The sheet is intentionally handled separately from the office layout:
+    C=unit/room code, D=contract holder, F=area (sqm), I=rent, K=deposit,
+    N/O/P=parking total/count/deposit, Q/R=bicycle fee/count, T=contract date,
+    V=notice/termination information, W=notes.
+    Parking and bicycle contracts are imported from their dedicated ledgers;
+    the rent-roll values remain source evidence for reconciliation.
+    """
+    property_name = "リバーサイドタワー中之島"
+    for row_number, row in enumerate(sheet.iter_rows(min_row=4, values_only=True), start=4):
+        unit_code = normalize_identifier(cell(row, 3))
+        if not unit_code or not re.fullmatch(r"\d{3,4}", unit_code):
+            continue
+        tenant_name = normalize_text(cell(row, 4)) or None
+        floor_label = f"{int(unit_code[:-2])}F"
+        notes = normalize_text(cell(row, 23)) or None
+        records.append(RentRollRecord(
+            sheet.title, row_number, property_name, "",
+            None, floor_label, unit_code, "residential", None, tenant_name,
+            as_number(cell(row, 6)), as_number(cell(row, 9)), None,
+            as_number(cell(row, 14)), None, as_number(cell(row, 11)),
+            None, as_number(cell(row, 13)), None, as_date(cell(row, 20)),
+            None, normalize_text(cell(row, 21)) or None, None,
+            notes, as_number(cell(row, 17)), as_number(cell(row, 18)),
+        ))
 
 
 class SupabaseRest:
