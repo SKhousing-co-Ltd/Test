@@ -52,25 +52,8 @@
 .meter-settings-table input[type='number'] { width: 84px; }
 .meter-settings-pair { display: inline-flex; gap: 4px; }
 
-.meter-tenant-list { display: grid; gap: 12px; }
-.meter-tenant { overflow: hidden; border: 1px solid #e3eaf3; border-radius: 9px; }
-.meter-tenant > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 10px 13px; border-bottom: 1px solid #eef2f7; background: #f7fafd; }
-.meter-tenant > header strong { color: #2f4864; font-size: 13px; }
-.meter-tenant > header small { display: block; margin-top: 2px; color: #8b99ab; font-size: 10px; }
-.meter-tenant-amount { display: flex; align-items: baseline; gap: 12px; }
-.meter-tenant-amount span { color: #6d7d91; font-size: 12px; }
-.meter-tenant-amount b { color: #1f4d7d; font-size: 17px; }
-.meter-tenant-areas { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; padding: 12px 13px; }
-.meter-area h5 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 5px; padding-bottom: 4px; border-bottom: 1px solid #eef2f7; color: #45617f; font-size: 11px; }
-.meter-area h5 em { color: #b0603f; font-style: normal; font-size: 10px; }
-.meter-area table { width: 100%; border-collapse: collapse; }
-.meter-area td { padding: 2px 3px; border: 0; color: #52667e; font-size: 11px; text-align: left; white-space: nowrap; }
-.meter-area input { width: 92px; height: 25px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 11px; text-align: right; box-sizing: border-box; }
 .meter-readonly { display: inline-block; width: 92px; color: #7d8b9e; font-size: 11px; text-align: right; }
 .meter-unit { color: #a3b0c0; }
-.meter-area-sum { margin: 5px 0 0; color: #45617f; font-size: 11px; font-weight: 700; }
-.meter-tenant > footer { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 9px 13px; border-top: 1px solid #eef2f7; background: #fbfdff; }
-.meter-tenant > footer span { color: #6d7d91; font-size: 11px; }
 
 .meter-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
 .meter-tabs button { border: 0; border-radius: 7px; padding: 9px 15px; color: #62748b; background: transparent; font-size: 12px; font-weight: 700; }
@@ -80,7 +63,6 @@
 .meter-panel-heading h3 { margin: 0 0 4px; color: #2f4864; font-size: 15px; }
 .meter-panel-heading p { margin: 0; color: #7d8b9e; font-size: 12px; }
 .meter-panel .meter-table-wrap { border: 1px solid #e6edf4; }
-.meter-scroll { max-height: 340px; }
 .meter-panel select { height: 27px; max-width: 210px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #33506f; background: #fff; font: inherit; font-size: 12px; }
 .meter-settings-panel input { width: 150px; height: 27px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; box-sizing: border-box; }
 .meter-settings-panel input.meter-narrow { width: 82px; text-align: right; }
@@ -247,3 +229,43 @@
 .meter-subitem-table th small { display: block; margin-top: 1px; color: #93a1b2; font-size: 10px; font-weight: 600; }
 /* 丸めは「小数第2位以下」のほうが長いので、桁の選択に広く取ります。 */
 .meter-subitem-table .meter-settings-pair select:first-child { flex-grow: 1.3; }
+
+/* メーター割り当て：見出しと入力欄の左端をそろえ、列が間延びしないよう内容に合わせた幅にします。 */
+.meter-table.meter-assign-table { width: auto; min-width: 0; }
+.meter-assign-table th, .meter-assign-table td { padding: 7px 16px 7px 0; text-align: left; vertical-align: middle; }
+.meter-assign-table th:first-child, .meter-assign-table td:first-child { padding-left: 12px; }
+.meter-assign-table input { width: 150px; text-align: left; }
+.meter-assign-table input[type='number'] { width: 96px; }
+.meter-assign-table .meter-assign-tenant { min-width: 260px; }
+
+/* テナント一覧：分割した行の識別名は、テナント名の下に入力します。 */
+.meter-settings-panel .meter-col-name .meter-split-label { display: block; width: 180px; margin-top: 3px; text-align: left; }
+
+/* 使用量の入力：検針表と同じく、1行1メーターの表にします。階が変わるところは太い罫線で区切ります。 */
+.meter-table.meter-input-table { width: auto; min-width: 0; table-layout: fixed; }
+.meter-input-col-floor { width: 64px; }
+.meter-input-col-tenant { width: 240px; }
+.meter-input-col-price { width: 80px; }
+.meter-input-col-code { width: 130px; }
+.meter-input-col-usage { width: 150px; }
+.meter-input-col-sum { width: 110px; }
+.meter-input-col-amount { width: 120px; }
+.meter-input-table th, .meter-input-table td { padding: 5px 12px; border-bottom: 0; text-align: left; vertical-align: middle; white-space: normal; }
+.meter-input-table th { text-align: center; }
+.meter-input-table td.numeric { text-align: right; }
+.meter-input-table td[rowspan].numeric { vertical-align: top; padding-top: 9px; }
+.meter-input-table td.meter-col-name { vertical-align: top; padding-top: 9px; }
+.meter-input-table td.meter-input-floor { color: #2f4864; font-size: 13px; font-weight: 700; text-align: center; vertical-align: top; padding-top: 9px; background: #f7fafd; border-right: 1px solid #e3eaf3; }
+.meter-input-table tr.meter-input-first > td { border-top: 1px solid #e6edf4; }
+.meter-input-table tr.meter-input-floor-first > td { border-top: 2px solid #b9cbe0; }
+.meter-input-table tbody tr:first-child > td { border-top: 0; }
+.meter-input-table td.meter-total { border-left: 1px solid #e6edf4; }
+.meter-input-table small { display: block; margin-top: 2px; color: #8b99ab; font-size: 10px; font-weight: 400; }
+.meter-input-table td.meter-input-code { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: center; }
+.meter-input-table input { width: 96px; height: 25px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: right; box-sizing: border-box; }
+.meter-input-table .meter-unit { margin-left: 5px; color: #8b99ab; font-size: 11px; }
+.meter-assign-table input.meter-floor-input { width: 72px; }
+.meter-input-table tfoot td { padding-top: 8px; padding-bottom: 8px; border-top: 2px solid #b9cbe0; color: #2f4864; background: #f8fbfe; font-weight: 700; }
+.meter-input-table tfoot td.numeric { vertical-align: middle; }
+.meter-input-table td.meter-input-total-label { text-align: center; }
+input.meter-number-input { text-align: right; font-variant-numeric: tabular-nums; }

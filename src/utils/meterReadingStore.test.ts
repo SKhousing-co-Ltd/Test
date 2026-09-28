@@ -3,8 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
-import type { ContractRow, RoundingMode, SubItem, SumMode } from './meterReading.ts';
+import { meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
+import { floorLabel, type ContractRow, type RoundingMode, type SubItem, type SumMode } from './meterReading.ts';
 
 type Call = { table: string; op: string; rows: unknown; filters: Array<[string, unknown]> };
 const calls: Call[] = [];
@@ -34,7 +34,7 @@ const client = {
 const subItem = (id: string, name: string, kind: 'basic' | 'custom'): SubItem => ({
   id, categoryId: 'electric', name, kind, lineItemId: '', priceMode: 'fixed', defaultUnitPrice: 35,
   taxMode: 'exclusive', taxRoundingMode: 'floor',
-  usageRoundingDigits: 1, usageRoundingMode: 'round', periodPatternId: '',
+  usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '',
 });
 const contractRow = (id: string): ContractRow => ({
   id, invoiceNo: 1,
@@ -43,7 +43,7 @@ const contractRow = (id: string): ContractRow => ({
   unitPrices: { light: 31.65 },
   fixedCharges: { basic: 50379 },
   sumMode: { electric: 'aggregate' as SumMode, water: 'aggregate' as SumMode, gas: 'aggregate' as SumMode },
-  amountRoundingMode: 'round' as RoundingMode, note: '',
+  amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '',
 });
 const snapshot = (over: Partial<MeterReadingSnapshot> = {}): MeterReadingSnapshot => ({
   building: {
@@ -109,4 +109,48 @@ test('画面で未割当にしたメーターは、割り当てなしで保存�
   const next = snapshot({ meters: [{ id: 'M1', subItemId: 'light', code: 'NEW-1', label: '', tenantId: '', rowIndex: 0, usage: 0 }] });
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
   assert.equal(rowsOf('asset_meter', 'upsert')?.[0].meter_reading_contract_id, null);
+});
+
+const meter = (id: string, code: string, subItemId = 'light') => ({ id, subItemId, code, label: '', tenantId: 'T1', rowIndex: 0, usage: 0 });
+
+test('同じ小分類でメーター番号が空欄・重複していると、何も書き込まずに止まる', async () => {
+  reset();
+  const next = snapshot({ meters: [meter('M1', '223-607-805'), meter('M2', ''), meter('M3', ' '), meter('M4', '223-607-805 ')] });
+  await assert.rejects(saveMeterReading(client, 'A1', 2026, 9, next, snapshot()), /電灯：メーター番号が未入力のメーターが2件.*電灯：メーター番号「223-607-805」が2件重複/);
+  assert.equal(calls.length, 0);
+});
+
+test('別の小分類なら同じメーター番号でも保存できる', () => {
+  assert.deepEqual(meterCodeProblems([meter('M1', 'A-1', 'light'), meter('M2', 'A-1', 'basic')], snapshot().building.subItems), []);
+});
+
+test('メーター番号は前後の空白を除いて保存される', async () => {
+  reset();
+  const next = snapshot({ meters: [meter('M1', ' A-1 ')] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.equal(rowsOf('asset_meter', 'upsert')?.[0].meter_code, 'A-1');
+});
+
+test('分割した行だけ識別名を保存する', async () => {
+  reset();
+  const split = { ...contractRow('C1'), splitLabel: ' 3F ' };
+  const next = snapshot({ tenants: [
+    { id: 'T1', name: 'テナント1', splitEnabled: true, rows: [split, { ...contractRow('C2'), splitLabel: '' }], invoiceSplitByUnit: false, expected: 0 },
+    { id: 'T2', name: 'テナント2', splitEnabled: false, rows: [{ ...contractRow('C3'), splitLabel: '残っていた名前' }], invoiceSplitByUnit: false, expected: 0 },
+  ] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('meter_reading_contract', 'upsert')?.map((row) => row.split_label), ['3F', null, null]);
+});
+
+test('メーターは画面の並び順を保存する', async () => {
+  reset();
+  const next = snapshot({ meters: [meter('M2', 'B-1'), meter('M1', 'A-1')] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('asset_meter', 'upsert')?.map((row) => [row.meter_code, row.sort_order]), [['B-1', 0], ['A-1', 1]]);
+});
+
+test('メーター識別は階数の英数字だけにする', () => {
+  assert.equal(floorLabel('２Ｆ 南'), '2F');
+  assert.equal(floorLabel('b1f'), 'B1F');
+  assert.equal(floorLabel('7F・北'), '7F');
 });

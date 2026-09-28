@@ -35,6 +35,8 @@ export type SubItem = {
   taxRoundingMode: RoundingMode;
   // 使用量の小数点以下の扱いです。
   usageRoundingDigits: number;
+  // 使用量を画面に出すときの小数点以下の桁数です（計算の丸めとは別です）。
+  usageDisplayDigits: number;
   usageRoundingMode: RoundingMode;
   // 既定の請求期間です。請求設定の請求期間パターンから選びます。
   periodPatternId: string;
@@ -72,7 +74,16 @@ export type ContractRow = {
   sumMode: Record<CategoryId, SumMode>;
   amountRoundingMode: RoundingMode;
   note: string;
+  // 分割した行を見分けるための名前です（3F など）。空欄なら「分割 n」と表示します。
+  splitLabel: string;
 };
+
+// メーター識別には階数だけを入れます（2F、B1F など）。全角は半角に直し、英数字以外は取り除きます。
+export const floorLabel = (value: string) => value
+  .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0))
+  .toUpperCase().replace(/[^0-9A-Z]/g, '');
+
+export const splitName = (row: ContractRow, index: number) => row.splitLabel.trim() || `分割 ${index + 1}`;
 
 export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[]; taxRate: number };
 
@@ -83,13 +94,13 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
   ],
   taxRate: 0.1,
   surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
@@ -108,6 +119,7 @@ const contractRow = (id: string, electric: number | null, options: { invoiceNo?:
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' },
   amountRoundingMode: options.rounding ?? 'floor',
   note: '',
+  splitLabel: '',
 });
 
 const tenant = (id: string, name: string, electric: number | null, expected: number, options: { rounding?: RoundingMode; basic?: number; rows?: number; invoiceSplit?: boolean } = {}): TenantConfig => ({
