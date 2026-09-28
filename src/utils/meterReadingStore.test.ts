@@ -34,7 +34,7 @@ const client = {
 const subItem = (id: string, name: string, kind: 'basic' | 'custom'): SubItem => ({
   id, categoryId: 'electric', name, kind, lineItemId: '', priceMode: 'fixed', defaultUnitPrice: 35,
   taxMode: 'exclusive', taxRoundingMode: 'floor',
-  usageRoundingDigits: 1, usageRoundingMode: 'round', periodPatternId: '',
+  usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '',
 });
 const contractRow = (id: string): ContractRow => ({
   id, invoiceNo: 1,

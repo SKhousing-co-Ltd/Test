@@ -35,6 +35,8 @@ export type SubItem = {
   taxRoundingMode: RoundingMode;
   // 使用量の小数点以下の扱いです。
   usageRoundingDigits: number;
+  // 使用量を画面に出すときの小数点以下の桁数です（計算の丸めとは別です）。
+  usageDisplayDigits: number;
   usageRoundingMode: RoundingMode;
   // 既定の請求期間です。請求設定の請求期間パターンから選びます。
   periodPatternId: string;
@@ -92,13 +94,13 @@ export const initialBuilding: BuildingConfig = {
     { id: 'gas', name: 'ガス', unit: '㎥', billable: true, fixedBillable: false },
   ],
   subItems: [
-    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
-    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'electric_basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'ac', categoryId: 'electric', name: '空調', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 35, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_basic', categoryId: 'water', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'water_usage', categoryId: 'water', name: '水道', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 338.27, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_basic', categoryId: 'gas', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
+    { id: 'gas_usage', categoryId: 'gas', name: 'ガス', kind: 'custom', lineItemId: '', priceMode: 'fixed' as PriceMode, defaultUnitPrice: 160, periodPatternId: '', taxMode: 'exclusive' as TaxMode, taxRoundingMode: 'floor' as RoundingMode, usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round' as RoundingMode },
   ],
   taxRate: 0.1,
   surcharges: [{ id: 'surcharge', name: '電気増額分', categoryId: 'electric', unitPrice: 8.02, lineItemId: '', billable: true }],
