@@ -45,6 +45,19 @@ test('退去したテナントの保存行は無視する', () => {
   assert.deepEqual(orderTenants(rows.filter((row) => row.tenant_id === 'A' || row.tenant_id === 'E'), saved), ['E', 'A']);
 });
 
+test('階順は文字列ではなく、地下→低層→高層の順にする', () => {
+  // RPC は階を文字列で並べるため、10F が 2F より前、B1F が 9F より後ろで届きます。
+  const fromRpc = [
+    { tenant_id: 'ten', unit_id: 'u10', floor_label: '10F', unit_code: '1001' },
+    { tenant_id: 'two', unit_id: 'u2', floor_label: '2F', unit_code: '201' },
+    { tenant_id: 'nine', unit_id: 'u9', floor_label: '9F', unit_code: '901' },
+    { tenant_id: 'base', unit_id: 'ub', floor_label: 'B1F', unit_code: 'B101' },
+  ];
+  assert.deepEqual(orderTenants(fromRpc, []), ['base', 'two', 'nine', 'ten']);
+  // 未保存のテナントも、この階順で「自分より上の階のテナントの手前」に差し込みます。
+  assert.deepEqual(orderTenants(fromRpc, [{ tenant_id: 'ten', sort_order: 0 }, { tenant_id: 'two', sort_order: 1 }]), ['base', 'nine', 'ten', 'two']);
+});
+
 test('並び順に居ないテナントは後ろに回し、元の順番を保つ', () => {
   const compare = tenantComparator(['B', 'A']);
   const items = [{ id: 'x', tenant: null }, { id: 'a', tenant: 'A' }, { id: 'y', tenant: 'Q' }, { id: 'b', tenant: 'B' }];

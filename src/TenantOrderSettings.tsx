@@ -55,8 +55,12 @@ export function TenantOrderSettings({ propertyId, canEdit }: { propertyId: strin
       rows.map((row, index) => ({ asset_id: propertyId, tenant_id: row.tenantId, sort_order: index })),
       { onConflict: 'asset_id,tenant_id' },
     );
+    if (error) { setSaving(false); setNotice(`テナント並び順を保存できませんでした: ${error.message}`); return; }
+    // 退去したテナントの古い並び順は消します。残すと、過去の月を開いたときに今のテナントと順番がぶつかります。
+    const { error: cleanupError } = await supabase.from('asset_billing_tenant_order').delete()
+      .eq('asset_id', propertyId).not('tenant_id', 'in', `(${rows.map((row) => row.tenantId).join(',')})`);
     setSaving(false);
-    if (error) { setNotice(`テナント並び順を保存できませんでした: ${error.message}`); return; }
+    if (cleanupError) { setNotice(`退去したテナントの並び順を消せませんでした: ${cleanupError.message}`); return; }
     setRows((current) => current.map((row) => ({ ...row, saved: true })));
     setDirty(false);
     setNotice('テナント並び順を保存しました。');

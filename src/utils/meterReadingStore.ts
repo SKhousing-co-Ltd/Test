@@ -55,7 +55,7 @@ type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item
 type MonthRow = { asset_id: string; billing_month: string; meter_date: string | null; status: 'draft' | 'confirmed' };
 type MonthSurchargeRow = { asset_id: string; billing_month: string; asset_meter_surcharge_id: string; unit_price: number };
 type EntryRow = { asset_id: string; billing_month: string; asset_meter_id: string; usage_amount: number };
-type RentRollRow = { tenant_id: string | null; tenant_name: string | null; unit_id: string | null; unit_type: string | null };
+type RentRollRow = { tenant_id: string | null; tenant_name: string | null; unit_id: string | null; unit_type: string | null; floor_label: string | null; unit_name: string | null; unit_code: string | null };
 
 // 検針の対象になる貸室の区画種別です。駐車場・駐輪場・アンテナなどだけを契約しているテナントは出しません。
 const roomUnitTypes = new Set(['office', 'residential', 'warehouse']);
