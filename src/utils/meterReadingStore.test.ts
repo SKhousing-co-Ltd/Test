@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
-import type { ContractRow, RoundingMode, SubItem, SumMode } from './meterReading.ts';
+import { floorLabel, type ContractRow, type RoundingMode, type SubItem, type SumMode } from './meterReading.ts';
 
 type Call = { table: string; op: string; rows: unknown; filters: Array<[string, unknown]> };
 const calls: Call[] = [];
@@ -147,4 +147,10 @@ test('メーターは画面の並び順を保存する', async () => {
   const next = snapshot({ meters: [meter('M2', 'B-1'), meter('M1', 'A-1')] });
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
   assert.deepEqual(rowsOf('asset_meter', 'upsert')?.map((row) => [row.meter_code, row.sort_order]), [['B-1', 0], ['A-1', 1]]);
+});
+
+test('メーター識別は階数の英数字だけにする', () => {
+  assert.equal(floorLabel('２Ｆ 南'), '2F');
+  assert.equal(floorLabel('b1f'), 'B1F');
+  assert.equal(floorLabel('7F・北'), '7F');
 });

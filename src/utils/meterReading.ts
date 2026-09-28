@@ -76,6 +76,11 @@ export type ContractRow = {
   splitLabel: string;
 };
 
+// メーター識別には階数だけを入れます（2F、B1F など）。全角は半角に直し、英数字以外は取り除きます。
+export const floorLabel = (value: string) => value
+  .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0))
+  .toUpperCase().replace(/[^0-9A-Z]/g, '');
+
 export const splitName = (row: ContractRow, index: number) => row.splitLabel.trim() || `分割 ${index + 1}`;
 
 export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[]; taxRate: number };
