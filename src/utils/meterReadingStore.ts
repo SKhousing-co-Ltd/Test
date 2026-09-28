@@ -223,10 +223,33 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 
 const removedIds = (base: string[], next: string[]) => { const keep = new Set(next); return base.filter((id) => !keep.has(id)); };
 
+// メーター番号は小分類の中で一意です（uq_asset_meter_code）。空欄や重複のまま保存すると
+// DBの一意制約エラーになり、途中まで書き込まれた状態で止まるため、書き込む前に確かめます。
+export function meterCodeProblems(meters: Meter[], subItems: SubItem[]): string[] {
+  const nameOf = (id: string) => subItems.find((row) => row.id === id)?.name ?? '小分類';
+  const problems: string[] = [];
+  const blank = new Map<string, number>();
+  const seen = new Map<string, Map<string, number>>();
+  for (const meter of meters) {
+    const code = meter.code.trim();
+    if (!code) { blank.set(meter.subItemId, (blank.get(meter.subItemId) ?? 0) + 1); continue; }
+    const codes = seen.get(meter.subItemId) ?? new Map<string, number>();
+    codes.set(code, (codes.get(code) ?? 0) + 1);
+    seen.set(meter.subItemId, codes);
+  }
+  for (const [subItemId, count] of blank) problems.push(`${nameOf(subItemId)}：メーター番号が未入力のメーターが${count}件あります`);
+  for (const [subItemId, codes] of seen) {
+    for (const [code, count] of codes) if (count > 1) problems.push(`${nameOf(subItemId)}：メーター番号「${code}」が${count}件重複しています`);
+  }
+  return problems;
+}
+
 export async function saveMeterReading(
   client: SupabaseClient, assetId: string, year: number, month: number,
   next: MeterReadingSnapshot, base: MeterReadingSnapshot,
 ) {
+  const problems = meterCodeProblems(next.meters, next.building.subItems);
+  if (problems.length) throw new Error(`メーター番号を確認してください。${problems.join('／')}`);
   const billingMonth = monthStart(year, month);
   const check = (result: { error: { message: string } | null }, label: string) => { if (result.error) throw new Error(`${label}を保存できませんでした: ${result.error.message}`); };
 
@@ -291,7 +314,7 @@ export async function saveMeterReading(
   const contractIdOf = (meter: Meter) => next.tenants.find((tenant) => tenant.id === meter.tenantId)?.rows[meter.rowIndex]?.id
     ?? (meter.tenantId ? null : next.unresolvedContracts[meter.id] ?? null);
   if (next.meters.length) check(await client.from('asset_meter').upsert(next.meters.map((row) => ({
-    asset_meter_id: row.id, asset_id: assetId, asset_meter_sub_item_id: row.subItemId, meter_code: row.code, meter_label: row.label || null,
+    asset_meter_id: row.id, asset_id: assetId, asset_meter_sub_item_id: row.subItemId, meter_code: row.code.trim(), meter_label: row.label || null,
     meter_reading_contract_id: contractIdOf(row), unit_price_override: row.unitPrice ?? null, is_active: true,
   }))), 'メーター');
 

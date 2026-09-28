@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
+import { meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
 import type { ContractRow, RoundingMode, SubItem, SumMode } from './meterReading.ts';
 
 type Call = { table: string; op: string; rows: unknown; filters: Array<[string, unknown]> };
@@ -109,4 +109,24 @@ test('画面で未割当にしたメーターは、割り当てなしで保存�
   const next = snapshot({ meters: [{ id: 'M1', subItemId: 'light', code: 'NEW-1', label: '', tenantId: '', rowIndex: 0, usage: 0 }] });
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
   assert.equal(rowsOf('asset_meter', 'upsert')?.[0].meter_reading_contract_id, null);
+});
+
+const meter = (id: string, code: string, subItemId = 'light') => ({ id, subItemId, code, label: '', tenantId: 'T1', rowIndex: 0, usage: 0 });
+
+test('同じ小分類でメーター番号が空欄・重複していると、何も書き込まずに止まる', async () => {
+  reset();
+  const next = snapshot({ meters: [meter('M1', '223-607-805'), meter('M2', ''), meter('M3', ' '), meter('M4', '223-607-805 ')] });
+  await assert.rejects(saveMeterReading(client, 'A1', 2026, 9, next, snapshot()), /電灯：メーター番号が未入力のメーターが2件.*電灯：メーター番号「223-607-805」が2件重複/);
+  assert.equal(calls.length, 0);
+});
+
+test('別の小分類なら同じメーター番号でも保存できる', () => {
+  assert.deepEqual(meterCodeProblems([meter('M1', 'A-1', 'light'), meter('M2', 'A-1', 'basic')], snapshot().building.subItems), []);
+});
+
+test('メーター番号は前後の空白を除いて保存される', async () => {
+  reset();
+  const next = snapshot({ meters: [meter('M1', ' A-1 ')] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.equal(rowsOf('asset_meter', 'upsert')?.[0].meter_code, 'A-1');
 });
