@@ -43,7 +43,7 @@ const contractRow = (id: string): ContractRow => ({
   unitPrices: { light: 31.65 },
   fixedCharges: { basic: 50379 },
   sumMode: { electric: 'aggregate' as SumMode, water: 'aggregate' as SumMode, gas: 'aggregate' as SumMode },
-  amountRoundingMode: 'round' as RoundingMode, note: '',
+  amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '',
 });
 const snapshot = (over: Partial<MeterReadingSnapshot> = {}): MeterReadingSnapshot => ({
   building: {
@@ -129,4 +129,15 @@ test('メーター番号は前後の空白を除いて保存される', async ()
   const next = snapshot({ meters: [meter('M1', ' A-1 ')] });
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
   assert.equal(rowsOf('asset_meter', 'upsert')?.[0].meter_code, 'A-1');
+});
+
+test('分割した行だけ識別名を保存する', async () => {
+  reset();
+  const split = { ...contractRow('C1'), splitLabel: ' 3F ' };
+  const next = snapshot({ tenants: [
+    { id: 'T1', name: 'テナント1', splitEnabled: true, rows: [split, { ...contractRow('C2'), splitLabel: '' }], invoiceSplitByUnit: false, expected: 0 },
+    { id: 'T2', name: 'テナント2', splitEnabled: false, rows: [{ ...contractRow('C3'), splitLabel: '残っていた名前' }], invoiceSplitByUnit: false, expected: 0 },
+  ] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('meter_reading_contract', 'upsert')?.map((row) => row.split_label), ['3F', null, null]);
 });

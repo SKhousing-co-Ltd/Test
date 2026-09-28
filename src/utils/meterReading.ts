@@ -72,7 +72,11 @@ export type ContractRow = {
   sumMode: Record<CategoryId, SumMode>;
   amountRoundingMode: RoundingMode;
   note: string;
+  // 分割した行を見分けるための名前です（3F など）。空欄なら「分割 n」と表示します。
+  splitLabel: string;
 };
+
+export const splitName = (row: ContractRow, index: number) => row.splitLabel.trim() || `分割 ${index + 1}`;
 
 export type BuildingConfig = { categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[]; taxRate: number };
 
@@ -108,6 +112,7 @@ const contractRow = (id: string, electric: number | null, options: { invoiceNo?:
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' },
   amountRoundingMode: options.rounding ?? 'floor',
   note: '',
+  splitLabel: '',
 });
 
 const tenant = (id: string, name: string, electric: number | null, expected: number, options: { rounding?: RoundingMode; basic?: number; rows?: number; invoiceSplit?: boolean } = {}): TenantConfig => ({

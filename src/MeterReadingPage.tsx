@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   calculateSubItem, calculateTenant, metersFor,
-  priceModeLabel, roundingModeLabel, sumModeLabel, taxModeLabel,
+  priceModeLabel, roundingModeLabel, splitName, sumModeLabel, taxModeLabel,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type Meter,
   type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
 } from './utils/meterReading';
@@ -202,7 +202,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const updateTenant = (id: string, patch: Partial<TenantConfig>) => setTenants((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
   const setSplitCount = (tenant: TenantConfig, count: number) => {
     const next = Math.max(1, Math.min(9, count));
-    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {} });
+    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {}, splitLabel: '' });
     updateTenant(tenant.id, { rows });
     // 行を減らしたときは、行きどころのないメーターを1行目へ戻します。
     setMeters((current) => current.map((row) => row.tenantId === tenant.id && row.rowIndex >= next ? { ...row, rowIndex: 0 } : row));
@@ -226,6 +226,11 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     if (!window.confirm(`メーター「${target?.code || '番号なし'}」を削除します。保存すると、過去の月を含むこのメーターの検針値も消えます。よろしいですか。`)) return;
     setMeters((current) => current.filter((row) => row.id !== id));
   };
+
+  // 割当テナントの選択肢です。分割したテナントは、分割した行ごとに識別名を添えて並べます。
+  const assignOptions = tenants.flatMap((tenant) => tenant.rows.length > 1
+    ? tenant.rows.map((row, index) => ({ value: `${tenant.id}:${index}`, label: `${tenant.name}（${splitName(row, index)}）` }))
+    : [{ value: `${tenant.id}:0`, label: tenant.name }]);
 
   const category = visibleCategories.find((row) => row.id === tab);
   const categorySubItems = category ? building.subItems.filter((row) => row.categoryId === category.id && (row.kind !== 'basic' || category.fixedBillable)) : [];
@@ -290,7 +295,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               </> : null}
             </tr>,
             ...(result.tenant.splitEnabled ? result.rows.map((row) => <tr key={`${result.tenant.id}-${row.index}`} className="meter-split-row">
-              <td className="meter-col-name">分割 {row.index + 1}{result.tenant.invoiceSplitByUnit ? <small>請求書 {row.row.invoiceNo}</small> : null}</td>
+              <td className="meter-col-name">{splitName(row.row, row.index)}{result.tenant.invoiceSplitByUnit ? <small>請求書 {row.row.invoiceNo}</small> : null}</td>
               {visibleCategories.map((item) => <td key={item.id} className="numeric">{yen.format(row.categories.find((value) => value.category.id === item.id)?.amount ?? 0)}</td>)}
               {billableSurcharges.map((item) => <td key={item.id} className="numeric">{yen.format(row.surcharges.find((value) => value.surcharge.id === item.id)?.amount ?? 0)}</td>)}
               <td className="numeric">{yen.format(row.total)}</td>
@@ -399,17 +404,16 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       {subItem && subItem.kind === 'custom' && mode === 'assign' && <div className="meter-assign">
         <div className="meter-settings-heading"><h4>{subItem.name}のメーター割り当て</h4><p>メーター番号と、設置位置などのメーター識別を入力し、テナントと分割行を紐づけます。</p><button type="button" className="text-button" onClick={() => addMeter(subItem.id)}>メーターを追加</button></div>
         <div className="meter-table-wrap meter-scroll">
-          <table className="meter-table meter-settings-table">
-            <thead><tr><th>メーター番号</th><th>メーター識別</th><th>割当テナント</th><th>分割</th><th>単価の上書き</th><th /></tr></thead>
+          <table className="meter-table meter-assign-table">
+            <thead><tr><th>メーター番号</th><th>メーター識別</th><th>割当テナント</th><th>単価の上書き</th><th /></tr></thead>
             <tbody>{meters.filter((row) => row.subItemId === subItem.id).map((row) => {
-              const target = tenants.find((item) => item.id === row.tenantId);
               return <tr key={row.id}>
                 <td><input value={row.code} placeholder="メーター番号" onChange={(event) => updateMeter(row.id, { code: event.target.value })} /></td>
                 <td><input value={row.label} placeholder="設置位置・区画など" onChange={(event) => updateMeter(row.id, { label: event.target.value })} /></td>
-                <td><select value={row.tenantId} onChange={(event) => updateMeter(row.id, { tenantId: event.target.value, rowIndex: 0 })}><option value="">未割当</option>{tenants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
-                <td>{target && target.rows.length > 1
-                  ? <select value={row.rowIndex} onChange={(event) => updateMeter(row.id, { rowIndex: Number(event.target.value) })}>{target.rows.map((item, index) => <option key={item.id} value={index}>分割 {index + 1}</option>)}</select>
-                  : <span className="meter-muted">—</span>}</td>
+                <td><select className="meter-assign-tenant" value={row.tenantId ? `${row.tenantId}:${row.rowIndex}` : ''} onChange={(event) => {
+                  const [tenantId = '', rowIndex = '0'] = event.target.value.split(':');
+                  updateMeter(row.id, { tenantId, rowIndex: Number(rowIndex) });
+                }}><option value="">未割当</option>{assignOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></td>
                 <td><input type="number" step="0.01" className="meter-narrow" value={row.unitPrice ?? ''} placeholder="契約単価" onChange={(event) => updateMeter(row.id, { unitPrice: event.target.value ? Number(event.target.value) : undefined })} /></td>
                 <td><button type="button" className="meter-delete" onClick={() => removeMeter(row.id)}>削除</button></td>
               </tr>;
@@ -494,7 +498,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               ])}</tr>
             </thead>
             <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={`${index === 0 ? 'meter-contract-first' : 'meter-contract-sub'}${tenant.splitEnabled ? ' meter-contract-split' : ''}`}>
-              <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-contract-continued">{tenant.name}</span>}{tenant.splitEnabled ? <small>分割 {index + 1} ／ {tenant.rows.length}</small> : null}</td>
+              <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-contract-continued">{tenant.name}</span>}{tenant.splitEnabled ? <input className="meter-split-label" value={row.splitLabel} placeholder={`分割 ${index + 1} の識別名（3F など）`} onChange={(event) => updateRow(tenant.id, index, { splitLabel: event.target.value })} /> : null}</td>
               {visibleCategories.flatMap((item) => {
                 const basic = building.subItems.find((value) => value.categoryId === item.id && value.kind === 'basic');
                 const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');

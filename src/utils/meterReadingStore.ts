@@ -47,7 +47,7 @@ type ContractRowRecord = {
   meter_reading_contract_id: string; asset_id: string; tenant_id: string; row_no: number; invoice_number: number;
   electric_billable: boolean; water_billable: boolean; gas_billable: boolean;
   electric_sum_mode: SumMode; water_sum_mode: SumMode; gas_sum_mode: SumMode;
-  amount_rounding_mode: RoundingMode; note: string | null;
+  amount_rounding_mode: RoundingMode; note: string | null; split_label: string | null;
 };
 type ContractItemRow = { meter_reading_contract_id: string; asset_meter_sub_item_id: string; is_billable: boolean; unit_price: number | null; fixed_amount: number | null };
 type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item_id: string; meter_code: string; meter_label: string | null; meter_reading_contract_id: string | null; unit_price_override: number | null; is_active: boolean };
@@ -79,7 +79,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('asset_meter_category_setting').select('asset_id, category, usage_unit, is_billable, is_basic_billable').eq('asset_id', assetId),
     client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, billing_period_pattern_id, sort_order').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable').eq('asset_id', assetId).order('surcharge_name'),
-    client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note').eq('asset_id', assetId).order('row_no'),
+    client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note, split_label').eq('asset_id', assetId).order('row_no'),
     client.from('asset_meter').select('asset_meter_id, asset_id, asset_meter_sub_item_id, meter_code, meter_label, meter_reading_contract_id, unit_price_override, is_active').eq('asset_id', assetId).order('meter_code'),
     client.from('meter_reading_month').select('asset_id, billing_month, meter_date, status').eq('asset_id', assetId).in('billing_month', [billingMonth, previousMonth]),
     client.from('meter_reading_month_surcharge').select('asset_id, billing_month, asset_meter_surcharge_id, unit_price').eq('asset_id', assetId).eq('billing_month', billingMonth),
@@ -171,7 +171,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
       categoryBillable: { electric: record.electric_billable, water: record.water_billable, gas: record.gas_billable },
       billable, unitPrices, fixedCharges,
       sumMode: { electric: record.electric_sum_mode, water: record.water_sum_mode, gas: record.gas_sum_mode },
-      amountRoundingMode: record.amount_rounding_mode, note: record.note ?? '',
+      amountRoundingMode: record.amount_rounding_mode, note: record.note ?? '', splitLabel: record.split_label ?? '',
     };
   };
 
@@ -182,7 +182,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     unitPrices: Object.fromEntries(subItems.map((row) => [row.id, null])),
     fixedCharges: {},
     sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' },
-    amountRoundingMode: 'floor', note: '',
+    amountRoundingMode: 'floor', note: '', splitLabel: '',
   });
 
   const tenants: TenantConfig[] = tenantList.map(({ id, name }) => {
@@ -294,6 +294,8 @@ export async function saveMeterReading(
     electric_billable: row.categoryBillable.electric, water_billable: row.categoryBillable.water, gas_billable: row.categoryBillable.gas,
     electric_sum_mode: row.sumMode.electric, water_sum_mode: row.sumMode.water, gas_sum_mode: row.sumMode.gas,
     amount_rounding_mode: row.amountRoundingMode, note: row.note || null,
+    // 分割していない行は識別名を持ちません。
+    split_label: tenant.rows.length > 1 ? row.splitLabel.trim() || null : null,
   })))), '契約行');
 
   // 5. 契約行ごとの小分類設定
