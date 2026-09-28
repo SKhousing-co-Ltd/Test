@@ -141,3 +141,10 @@ test('分割した行だけ識別名を保存する', async () => {
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
   assert.deepEqual(rowsOf('meter_reading_contract', 'upsert')?.map((row) => row.split_label), ['3F', null, null]);
 });
+
+test('メーターは画面の並び順を保存する', async () => {
+  reset();
+  const next = snapshot({ meters: [meter('M2', 'B-1'), meter('M1', 'A-1')] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('asset_meter', 'upsert')?.map((row) => [row.meter_code, row.sort_order]), [['B-1', 0], ['A-1', 1]]);
+});

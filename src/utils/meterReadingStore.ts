@@ -80,7 +80,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, billing_period_pattern_id, sort_order').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable').eq('asset_id', assetId).order('surcharge_name'),
     client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note, split_label').eq('asset_id', assetId).order('row_no'),
-    client.from('asset_meter').select('asset_meter_id, asset_id, asset_meter_sub_item_id, meter_code, meter_label, meter_reading_contract_id, unit_price_override, is_active').eq('asset_id', assetId).order('meter_code'),
+    client.from('asset_meter').select('asset_meter_id, asset_id, asset_meter_sub_item_id, meter_code, meter_label, meter_reading_contract_id, unit_price_override, is_active').eq('asset_id', assetId).order('sort_order').order('meter_code'),
     client.from('meter_reading_month').select('asset_id, billing_month, meter_date, status').eq('asset_id', assetId).in('billing_month', [billingMonth, previousMonth]),
     client.from('meter_reading_month_surcharge').select('asset_id, billing_month, asset_meter_surcharge_id, unit_price').eq('asset_id', assetId).eq('billing_month', billingMonth),
     client.from('meter_reading_entry').select('asset_id, billing_month, asset_meter_id, usage_amount').eq('asset_id', assetId).eq('billing_month', billingMonth),
@@ -315,9 +315,11 @@ export async function saveMeterReading(
   // 対象月に居ないテナントのメーターは画面では未割当に見えるため、元の割り当てを残します。
   const contractIdOf = (meter: Meter) => next.tenants.find((tenant) => tenant.id === meter.tenantId)?.rows[meter.rowIndex]?.id
     ?? (meter.tenantId ? null : next.unresolvedContracts[meter.id] ?? null);
-  if (next.meters.length) check(await client.from('asset_meter').upsert(next.meters.map((row) => ({
+  if (next.meters.length) check(await client.from('asset_meter').upsert(next.meters.map((row, index) => ({
     asset_meter_id: row.id, asset_id: assetId, asset_meter_sub_item_id: row.subItemId, meter_code: row.code.trim(), meter_label: row.label || null,
     meter_reading_contract_id: contractIdOf(row), unit_price_override: row.unitPrice ?? null, is_active: true,
+    // 画面に並んでいる順番をそのまま残します。
+    sort_order: index,
   }))), 'メーター');
 
   // 7. 月次のヘッダーは、検針値と増額分の単価より先に作ります（参照先になるため）。

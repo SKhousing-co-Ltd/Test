@@ -403,7 +403,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
 
       {subItem && subItem.kind === 'custom' && mode === 'assign' && <div className="meter-assign">
         <div className="meter-settings-heading"><h4>{subItem.name}のメーター割り当て</h4><p>メーター番号と、設置位置などのメーター識別を入力し、テナントと分割行を紐づけます。</p><button type="button" className="text-button" onClick={() => addMeter(subItem.id)}>メーターを追加</button></div>
-        <div className="meter-table-wrap meter-scroll">
+        <div className="meter-table-wrap">
           <table className="meter-table meter-assign-table">
             <thead><tr><th>メーター番号</th><th>メーター識別</th><th>割当テナント</th><th>単価の上書き</th><th /></tr></thead>
             <tbody>{meters.filter((row) => row.subItemId === subItem.id).map((row) => {
