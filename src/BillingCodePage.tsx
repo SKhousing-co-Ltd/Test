@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
+import { loadSavedTenantOrder, orderTenants, tenantComparator, type TenantUnitRow } from "./utils/tenantOrder";
 import type { BillingPeriod } from "./TenantBillingControls";
 
 type ChargeType =
@@ -186,7 +187,7 @@ export function BillingCodePage({
     }
     setLoading(true);
     setError("");
-    const [codeResult, unitResult, assetResult, settingResult, typeResult, contractAllocationResult] =
+    const [codeResult, unitResult, assetResult, settingResult, typeResult, contractAllocationResult, rentRollResult, savedOrder] =
       await Promise.all([
         supabase
           .from("billing_code")
@@ -218,12 +219,19 @@ export function BillingCodePage({
           .eq("is_active", true)
           .order("sort_order"),
         supabase.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
+        supabase.rpc("rent_roll_list_with_terms_at_date", { p_property_id: propertyId, p_as_of_date: referenceDate }),
+        loadSavedTenantOrder(supabase, propertyId),
       ]);
     if (codeResult.error || unitResult.error)
       setError(
         `テナントコード一覧を読み込めませんでした: ${codeResult.error?.message ?? unitResult.error?.message}`,
       );
-    setCodes((codeResult.data ?? []) as unknown as BillingCode[]);
+    // コードは請求設定のテナント並び順で並べます。預り金のコード（物件コード＋00）は先頭、
+    // テナント未紐づけのコードは末尾に、それぞれ発行コード順で置きます。
+    const depositCode = `${assetResult.data?.asset_code ?? ""}00`;
+    const compareTenant = tenantComparator(orderTenants((rentRollResult.data ?? []) as TenantUnitRow[], savedOrder));
+    setCodes(((codeResult.data ?? []) as unknown as BillingCode[]).sort((left, right) =>
+      Number(right.issue_code === depositCode) - Number(left.issue_code === depositCode) || compareTenant(left.tenant_id, right.tenant_id)));
     setUnits((unitResult.data ?? []) as unknown as Unit[]);
     setAssetCode(String(assetResult.data?.asset_code ?? ""));
     if (settingResult.error || typeResult.error)

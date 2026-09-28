@@ -67,3 +67,11 @@
 .billing-settings-dialog-codes span { display: inline-flex; align-items: baseline; gap: 6px; border-radius: 6px; padding: 5px 9px; color: #52667e; background: #f1f6fb; font-size: 11px; }
 .billing-settings-dialog-codes strong { color: #2f5580; font-size: 12px; }
 .billing-settings-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 12px; }
+
+/* テナント並び順 */
+.tenant-order-settings p { margin: 4px 0 0; }
+.tenant-order-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.tenant-order-notice { color: #56708c; font-size: 12px; }
+.tenant-order-unsaved { margin-left: 8px; padding: 1px 6px; border-radius: 4px; color: #9a5b14; background: #fdf1de; font-size: 10px; font-weight: 700; }
+.tenant-order-move { white-space: nowrap; }
+.tenant-order-move button { padding: 2px 8px; }

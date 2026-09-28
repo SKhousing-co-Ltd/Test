@@ -7,6 +7,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   BuildingConfig, Category, CategoryId, ContractRow, Meter, PriceMode, RoundingMode, SubItem, SumMode, Surcharge, TaxMode, TenantConfig, TenantResult,
 } from './meterReading';
+import { loadSavedTenantOrder, orderTenants } from './tenantOrder.ts';
 
 export type MeterReadingSnapshot = {
   building: BuildingConfig;
@@ -54,23 +55,27 @@ type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item
 type MonthRow = { asset_id: string; billing_month: string; meter_date: string | null; status: 'draft' | 'confirmed' };
 type MonthSurchargeRow = { asset_id: string; billing_month: string; asset_meter_surcharge_id: string; unit_price: number };
 type EntryRow = { asset_id: string; billing_month: string; asset_meter_id: string; usage_amount: number };
-type RentRollRow = { tenant_id: string | null; tenant_name: string | null; unit_type: string | null };
+type RentRollRow = { tenant_id: string | null; tenant_name: string | null; unit_id: string | null; unit_type: string | null };
 
 // 検針の対象になる貸室の区画種別です。駐車場・駐輪場・アンテナなどだけを契約しているテナントは出しません。
 const roomUnitTypes = new Set(['office', 'residential', 'warehouse']);
 
 const firstError = (...results: Array<{ error: { message: string } | null }>) => results.find((row) => row.error)?.error ?? null;
 
-// 物件のテナントを、レントロールと同じフロア順で取り出します。同じテナントが複数区画を
-// 契約している場合は1件にまとめます。貸室の契約があるテナントだけを対象にします。
+// 物件のテナントを、請求設定のテナント並び順（未設定ならレントロールの階順）で取り出します。
+// 同じテナントが複数区画を契約している場合は1件にまとめます。貸室の契約があるテナントだけを対象にします。
 async function loadTenantList(client: SupabaseClient, assetId: string, asOfDate: string) {
-  const { data, error } = await client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: assetId, p_as_of_date: asOfDate });
+  const [{ data, error }, saved] = await Promise.all([
+    client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: assetId, p_as_of_date: asOfDate }),
+    loadSavedTenantOrder(client, assetId),
+  ]);
   if (error) throw new Error(`テナントを読み込めませんでした: ${error.message}`);
+  const rows = (data ?? []) as RentRollRow[];
   const found = new Map<string, string>();
-  for (const row of (data ?? []) as RentRollRow[]) {
+  for (const row of rows) {
     if (row.tenant_id && row.tenant_name && roomUnitTypes.has(row.unit_type ?? '') && !found.has(row.tenant_id)) found.set(row.tenant_id, row.tenant_name);
   }
-  return [...found.entries()].map(([id, name]) => ({ id, name }));
+  return orderTenants(rows, saved).filter((id) => found.has(id)).map((id) => ({ id, name: found.get(id)! }));
 }
 
 export async function loadMeterReading(client: SupabaseClient, assetId: string, year: number, month: number): Promise<MeterReadingSnapshot> {

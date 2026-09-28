@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { supabase } from './lib/supabase';
+import { loadSavedTenantOrder, orderTenants, tenantComparator } from './utils/tenantOrder';
 import type { BillingPeriod } from './TenantBillingControls';
 import { dueDate, periodRange, periodText } from './utils/billingDates';
 import './InvoiceCreationPage.css';
 
-type RentRollSource = { unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number | null; monthly_common_charge_amount: number | null; monthly_parking_amount: number | null; other_monthly_amount: number | null; };
+type RentRollSource = { unit_id: string | null; unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number | null; monthly_common_charge_amount: number | null; monthly_parking_amount: number | null; other_monthly_amount: number | null; };
 type BillingCode = { billing_code_id: string; tenant_id: string | null; issue_code: string; is_primary: boolean; invoice_display_name: string | null; invoice_subject: string | null };
 type DuePattern = { billing_due_date_pattern_id: string; pattern_number: number; month_offset: number; day_of_month: number; holiday_adjustment: 'previous' | 'next' };
 type ContractAllocation = { lease_contract_unit_id: string; billing_code_id: string };
@@ -88,7 +89,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       if (!supabase || !propertyId) { setRows([]); setLoading(false); return; }
       setLoading(true); setError('');
       const referenceDate = `${calendarYear}-${String(period.month).padStart(2, '0')}-01`;
-      const [rentRollResult, codeResult, allocationResult, unitResult, lineAllocationResult, typeResult, dueResult, assetItemResult, splitResult, periodResult] = await Promise.all([
+      const [rentRollResult, codeResult, allocationResult, unitResult, lineAllocationResult, typeResult, dueResult, assetItemResult, splitResult, periodResult, savedOrder] = await Promise.all([
         supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: referenceDate }),
         supabase.from('billing_code').select('billing_code_id, tenant_id, issue_code, is_primary, invoice_display_name, invoice_subject').eq('property_id', propertyId).eq('is_active', true),
         supabase.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
@@ -99,6 +100,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
         supabase.from('asset_billing_line_item').select('asset_billing_line_item_id, billing_charge_type_id').eq('asset_id', propertyId).eq('is_active', true),
         supabase.from('billing_invoice_split_setting').select('billing_code_id, split_mode, assignments:billing_invoice_split_assignment(asset_billing_line_item_id, lease_contract_unit_id, invoice_number)').eq('asset_id', propertyId),
         supabase.from('asset_billing_period_pattern').select('billing_period_pattern_id, pattern_name, start_month_offset, start_day_type, start_meter_day_offset, end_month_offset, end_day_type, end_meter_day_offset').eq('asset_id', propertyId).order('sort_order'),
+        loadSavedTenantOrder(supabase, propertyId),
       ]);
       if (cancelled) return;
       if (rentRollResult.error || codeResult.error) { setError(`請求データを読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`); setRows([]); setLoading(false); return; }
@@ -125,7 +127,10 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       }
       const next: InvoiceRow[] = [];
       let invoiceNumber = 0;
-      for (const [invoiceKey, invoice] of invoices) {
+      // 請求書は請求設定のテナント並び順で並べ、その順に請求書番号を振ります。同じテナントの請求書はレントロールの順のままです。
+      const compareTenant = tenantComparator(orderTenants((rentRollResult.data ?? []) as RentRollSource[], savedOrder));
+      const tenantOfKey = (key: string) => key.slice(0, key.indexOf(':'));
+      for (const [invoiceKey, invoice] of [...invoices].sort(([left], [right]) => compareTenant(tenantOfKey(left), tenantOfKey(right)))) {
         invoiceNumber += 1;
         const total = [...invoice.lines.values()].reduce((sum, value) => sum + value, 0); const tax = Math.floor(total * 0.1);
         [...invoice.lines.entries()].forEach(([name, amount], index) => { const values = emptyValues(); if (index === 0) { values[0] = String(invoiceNumber); values[1] = invoice.code; values[2] = invoice.displayName || invoice.tenantName; values[3] = invoice.subject || `${propertyName}${[...invoice.unitNames].join('・')} 御請求書`; values[4] = nextDueDates[nextDuePatterns[0]?.billing_due_date_pattern_id ?? ''] ?? ''; values[5] = yen.format(total); values[6] = yen.format(tax); values[7] = yen.format(total + tax); }
