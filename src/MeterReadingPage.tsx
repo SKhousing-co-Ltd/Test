@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
   applyRounding, calculateSubItem, calculateTenant,
   floorLabel, priceModeLabel, roundingModeLabel, splitName, sumModeLabel, taxModeLabel,
@@ -18,6 +18,33 @@ import './MeterReadingPage.css';
 
 const yen = new Intl.NumberFormat('ja-JP');
 const amount = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 });
+const usageFormat = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 3 });
+
+// 使用量の入力欄です。入力中以外はカンマ区切りで見せ、Enter で下の行の入力欄へ移ります。
+function UsageInput({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const moveNext = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    const inputs = [...document.querySelectorAll<HTMLInputElement>('input[data-usage-input]')];
+    const next = inputs[inputs.indexOf(event.currentTarget) + (event.shiftKey ? -1 : 1)];
+    if (next) { next.focus(); next.select(); }
+  };
+  return <input
+    data-usage-input="" inputMode="decimal" className="meter-usage-input"
+    value={draft ?? usageFormat.format(value)}
+    onFocus={(event) => { setDraft(value ? String(value) : ''); const target = event.currentTarget; requestAnimationFrame(() => target.select()); }}
+    onBlur={() => setDraft(null)}
+    onKeyDown={moveNext}
+    onChange={(event) => {
+      // 全角数字やカンマ付きで入力されても数値として受け取ります。
+      const text = event.target.value.replace(/[０-９．]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xFEE0));
+      setDraft(text);
+      const parsed = Number(text.replace(/,/g, ''));
+      if (Number.isFinite(parsed)) onChange(parsed);
+    }}
+  />;
+}
 const sumModes: SumMode[] = ['aggregate', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 const taxModes: TaxMode[] = ['exclusive', 'inclusive'];
@@ -430,7 +457,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             {position === 0 && <td rowSpan={group.meters.length} className="meter-col-name">{group.name ? <strong>{group.name}</strong> : <span className="meter-muted">未割当</span>}</td>}
             <td className="numeric">{group.priceOf(item) === null ? '' : `${group.priceOf(item)} 円`}</td>
             <td className="meter-input-code">{item.code}</td>
-            <td><input type="number" step="0.001" value={item.usage} onChange={(event) => updateMeter(item.id, { usage: Number(event.target.value) })} /><span className="meter-unit">{category.unit}</span></td>
+            <td><UsageInput value={item.usage} onChange={(usage) => updateMeter(item.id, { usage })} /><span className="meter-unit">{category.unit}</span></td>
             {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${amount.format(group.result.usage)} ${category.unit}` : ''}</td>}
             <td className="numeric">{group.amountOf(item) === null ? '' : `${yen.format(group.amountOf(item) ?? 0)} 円`}</td>
             {position === 0 && group.tenantSpan > 0 && <td rowSpan={group.tenantSpan} className="numeric meter-total">{group.tenantTotal === null ? '' : `${yen.format(group.tenantTotal)} 円`}</td>}
