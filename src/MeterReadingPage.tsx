@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  calculateSubItem, calculateTenant,
+  applyRounding, calculateSubItem, calculateTenant,
   floorLabel, priceModeLabel, roundingModeLabel, splitName, sumModeLabel, taxModeLabel,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type Meter,
   type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
@@ -209,12 +209,17 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       const tenant = tenants.find((item) => item.id === group.tenantId);
       const row = tenant?.rows[group.rowIndex];
       const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, meters, building.taxRate) : null;
-      const price = row ? row.unitPrices[target.id] ?? target.defaultUnitPrice ?? 0 : null;
+      // 単価は、メーターの割り当てで上書きした単価、契約行の単価、小分類の既定単価の順で決めます。
+      // 使用料は、この単価に使用量を掛けて、契約行の金額の丸め方で円にしたものです。
+      const priceOf = (meter: Meter) => row && target.priceMode !== 'variable' ? meter.unitPrice ?? row.unitPrices[target.id] ?? target.defaultUnitPrice ?? 0 : null;
+      const amountOf = (meter: Meter) => {
+        const price = priceOf(meter);
+        return row && result && price !== null ? applyRounding(meter.usage * price, 1, row.amountRoundingMode) : null;
+      };
       return {
-        ...group, result,
+        ...group, result, priceOf, amountOf,
         floor: [...new Set(group.meters.map((item) => item.label).filter(Boolean))].join('・'),
         name: tenant ? rowLabel(tenant, group.rowIndex) : '',
-        unitPrice: price === null ? '' : target.priceMode === 'variable' ? '変動' : `${price} 円`,
         floorSpan: 0, tenantSpan: 0, tenantTotal: null as number | null,
       };
     });
@@ -422,16 +427,12 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
           <thead><tr><th>階数</th><th>テナント名</th><th>単価</th><th>メーター番号</th><th>使用量</th><th>使用合計</th><th>使用料</th><th>テナント使用料合計</th></tr></thead>
           <tbody>{usageTable(subItem, category).map((group) => group.meters.map((item, position) => <tr key={item.id} className={position > 0 ? undefined : group.floorSpan ? 'meter-input-floor-first' : 'meter-input-first'}>
             {position === 0 && group.floorSpan > 0 && <td rowSpan={group.floorSpan} className="meter-input-floor">{group.floor || '—'}</td>}
-            {position === 0 && <>
-              <td rowSpan={group.meters.length} className="meter-col-name">{group.name ? <strong>{group.name}</strong> : <span className="meter-muted">未割当</span>}</td>
-              <td rowSpan={group.meters.length} className="numeric">{group.unitPrice}</td>
-            </>}
-            <td className="meter-input-code">{item.code}{item.unitPrice ? <em>単価 {item.unitPrice} 円</em> : null}</td>
+            {position === 0 && <td rowSpan={group.meters.length} className="meter-col-name">{group.name ? <strong>{group.name}</strong> : <span className="meter-muted">未割当</span>}</td>}
+            <td className="numeric">{group.priceOf(item) === null ? '' : `${group.priceOf(item)} 円`}</td>
+            <td className="meter-input-code">{item.code}</td>
             <td><input type="number" step="0.001" value={item.usage} onChange={(event) => updateMeter(item.id, { usage: Number(event.target.value) })} /><span className="meter-unit">{category.unit}</span></td>
-            {position === 0 && <>
-              <td rowSpan={group.meters.length} className="numeric">{group.result ? `${amount.format(group.result.usage)} ${category.unit}` : ''}</td>
-              <td rowSpan={group.meters.length} className="numeric">{group.result ? <>{yen.format(group.result.amount)} 円{group.result.groups.length > 1 ? group.result.groups.map((value) => <small key={value.key}>{value.label}：{amount.format(value.usage)} × {value.unitPrice} ＝ {yen.format(value.amount)}</small>) : null}</> : ''}</td>
-            </>}
+            {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${amount.format(group.result.usage)} ${category.unit}` : ''}</td>}
+            <td className="numeric">{group.amountOf(item) === null ? '' : `${yen.format(group.amountOf(item) ?? 0)} 円`}</td>
             {position === 0 && group.tenantSpan > 0 && <td rowSpan={group.tenantSpan} className="numeric meter-total">{group.tenantTotal === null ? '' : `${yen.format(group.tenantTotal)} 円`}</td>}
           </tr>))}</tbody>
         </table>
