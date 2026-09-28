@@ -25,18 +25,18 @@ const formatUsage = (value: number, digits: number) => {
   return usageFormats.get(digits)!.format(value);
 };
 
-// 使用量の入力欄です。入力中以外はカンマ区切りで見せ、Enter で下の行の入力欄へ移ります。
-function UsageInput({ value, digits, onChange }: { value: number; digits: number; onChange: (value: number) => void }) {
+// 使用量・金額の入力欄です。入力中以外はカンマ区切りで見せ、Enter で同じ表の下の行の入力欄へ移ります。
+function NumberInput({ value, digits, group, onChange }: { value: number; digits: number; group: string; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
   const moveNext = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    const inputs = [...document.querySelectorAll<HTMLInputElement>('input[data-usage-input]')];
+    const inputs = [...document.querySelectorAll<HTMLInputElement>(`input[data-nav-input="${group}"]`)];
     const next = inputs[inputs.indexOf(event.currentTarget) + (event.shiftKey ? -1 : 1)];
     if (next) { next.focus(); next.select(); }
   };
   return <input
-    data-usage-input="" inputMode="decimal" className="meter-usage-input"
+    data-nav-input={group} inputMode={digits ? 'decimal' : 'numeric'} className="meter-number-input"
     value={draft ?? formatUsage(value, digits)}
     onFocus={(event) => { setDraft(value ? String(value) : ''); const target = event.currentTarget; requestAnimationFrame(() => target.select()); }}
     onBlur={() => setDraft(null)}
@@ -438,6 +438,19 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               <td className="numeric meter-total">{yen.format(categoryResult.amount)}</td>
             </tr>;
           }))}</tbody>
+          <tfoot>{(() => {
+            const categoryResults = results.flatMap((result) => result.rows.map((row) => row.categories.find((item) => item.category.id === category.id)).filter((item) => item !== undefined));
+            return <tr>
+              <td className="meter-col-name">合計</td>
+              {categorySubItems.map((item) => {
+                const found = categoryResults.map((value) => value.subItems.find((target) => target.subItem.id === item.id));
+                const usage = found.reduce((sum, value) => sum + (value?.usage ?? 0), 0);
+                return <td key={item.id} className="numeric">{yen.format(found.reduce((sum, value) => sum + (value?.amount ?? 0), 0))}{usage ? <small className="meter-note">{formatUsage(usage, item.usageRoundingDigits)} {category.unit}</small> : null}</td>;
+              })}
+              <td className="numeric">{amount.format(categoryResults.reduce((sum, value) => sum + value.usage, 0))} {category.unit}</td>
+              <td className="numeric meter-total">{yen.format(categoryResults.reduce((sum, value) => sum + value.amount, 0))}</td>
+            </tr>;
+          })()}</tfoot>
         </table>
       </div>}
 
@@ -447,9 +460,13 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
           <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id}>
             <td className="meter-col-name">{rowLabel(tenant, index)}</td>
             <td>{row.billable[subItem.id]
-              ? <input type="number" value={row.fixedCharges[subItem.id] ?? 0} onChange={(event) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [subItem.id]: Number(event.target.value) } })} />
+              ? <NumberInput group="basic" value={row.fixedCharges[subItem.id] ?? 0} digits={0} onChange={(value) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [subItem.id]: value } })} />
               : <span className="meter-muted">請求しない</span>}</td>
           </tr>))}</tbody>
+          <tfoot><tr>
+            <td className="meter-col-name">合計</td>
+            <td className="numeric meter-total">{yen.format(tenants.reduce((sum, tenant) => sum + tenant.rows.reduce((value, row) => value + (row.billable[subItem.id] ? row.fixedCharges[subItem.id] ?? 0 : 0), 0), 0))}</td>
+          </tr></tfoot>
         </table>
       </div>}
 
@@ -458,6 +475,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         const allMeters = usageRows.flatMap((group) => group.meters);
         const totalUsage = allMeters.reduce((sum, item) => sum + item.usage, 0);
         const totalAmount = usageRows.reduce((sum, group) => sum + (group.result?.amount ?? 0), 0);
+        const totalGroupUsage = usageRows.reduce((sum, group) => sum + (group.result?.usage ?? 0), 0);
         return <div className="meter-table-wrap">
         <table className="meter-table meter-input-table">
           <colgroup><col className="meter-input-col-floor" /><col className="meter-input-col-tenant" /><col className="meter-input-col-price" /><col className="meter-input-col-code" /><col className="meter-input-col-usage" /><col className="meter-input-col-sum" /><col className="meter-input-col-amount" /><col className="meter-input-col-amount" /></colgroup>
@@ -467,7 +485,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             {position === 0 && <td rowSpan={group.meters.length} className="meter-col-name">{group.name ? <strong>{group.name}</strong> : <span className="meter-muted">未割当</span>}</td>}
             <td className="numeric">{group.priceOf(item) === null ? '' : `${group.priceOf(item)} 円`}</td>
             <td className="meter-input-code">{item.code}</td>
-            <td><UsageInput value={item.usage} digits={subItem.usageDisplayDigits} onChange={(usage) => updateMeter(item.id, { usage })} /><span className="meter-unit">{category.unit}</span></td>
+            <td><NumberInput group="usage" value={item.usage} digits={subItem.usageDisplayDigits} onChange={(usage) => updateMeter(item.id, { usage })} /><span className="meter-unit">{category.unit}</span></td>
             {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${formatUsage(group.result.usage, subItem.usageRoundingDigits)} ${category.unit}` : ''}</td>}
             {group.perMeter
               ? <td className="numeric">{group.amountOf(item) === null ? '' : `${yen.format(group.amountOf(item) ?? 0)} 円`}</td>
@@ -477,9 +495,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
           <tfoot><tr>
             <td colSpan={4} className="meter-input-total-label">合計</td>
             <td className="numeric">{formatUsage(totalUsage, subItem.usageDisplayDigits)}<span className="meter-unit">{category.unit}</span></td>
-            <td />
+            <td className="numeric">{formatUsage(totalGroupUsage, subItem.usageRoundingDigits)} {category.unit}</td>
             <td className="numeric">{yen.format(totalAmount)} 円</td>
-            <td />
+            <td className="numeric meter-total">{yen.format(totalAmount)} 円</td>
           </tr></tfoot>
         </table>
       </div>;

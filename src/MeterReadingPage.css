@@ -268,3 +268,4 @@
 .meter-input-table tfoot td { padding-top: 8px; padding-bottom: 8px; border-top: 2px solid #b9cbe0; color: #2f4864; background: #f8fbfe; font-weight: 700; }
 .meter-input-table tfoot td.numeric { vertical-align: middle; }
 .meter-input-table td.meter-input-total-label { text-align: center; }
+input.meter-number-input { text-align: right; font-variant-numeric: tabular-nums; }
