@@ -82,7 +82,7 @@ export function TenantOrderSettings({ propertyId, canEdit }: { propertyId: strin
   return <section className="property-period-patterns tenant-order-settings">
     <div>
       <h4>テナント並び順</h4>
-      <p>テナントコード一覧・入金明細・請求明細・請求書作成・検針データは、この順番でテナントを表示します。請求書番号もこの順で採番します。</p>
+      <p>入金明細・請求明細・請求書作成・検針データは、この順番でテナントを表示します。請求書番号もこの順で採番します。テナントコード一覧は発行コード順です。</p>
       <p>「未設定」のテナントは、保存するまでレントロールの階順の位置に表示します。同じ区画に入居しているテナントは、そのテナントのすぐ下に表示します。</p>
     </div>
     <div className="tenant-order-actions">
