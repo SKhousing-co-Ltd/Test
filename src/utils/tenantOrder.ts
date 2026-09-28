@@ -60,6 +60,15 @@ export function orderTenants(rows: TenantUnitRow[], saved: SavedTenantOrder[]): 
   return ordered;
 }
 
+// ドラッグした行（from）を、insertBefore 番目の行の手前へ移します。insertBefore が行数と同じなら末尾です。
+export function moveBefore<T>(items: T[], from: number, insertBefore: number): T[] {
+  if (from < 0 || from >= items.length || insertBefore < 0 || insertBefore > items.length) return items;
+  const next = [...items];
+  const [moved] = next.splice(from, 1);
+  next.splice(insertBefore > from ? insertBefore - 1 : insertBefore, 0, moved);
+  return next;
+}
+
 // 並び順を比較関数にします。並び順に居ないテナント（テナント未設定を含む）は後ろに回し、元の順番を保ちます。
 export function tenantComparator(order: string[]) {
   const rank = new Map(order.map((id, index) => [id, index]));

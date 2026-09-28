@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type DragEvent } from 'react';
 import { supabase } from './lib/supabase';
-import { loadSavedTenantOrder, orderTenants } from './utils/tenantOrder';
+import { loadSavedTenantOrder, moveBefore, orderTenants } from './utils/tenantOrder';
 
 type RentRollRow = { tenant_id: string | null; tenant_name: string | null; unit_id: string | null; unit_code: string | null; unit_name: string | null; floor_label: string | null };
 type TenantRow = { tenantId: string; name: string; floor: string; units: string[]; saved: boolean };
@@ -41,11 +41,24 @@ export function TenantOrderSettings({ propertyId, canEdit }: { propertyId: strin
     return () => { cancelled = true; };
   }, [propertyId]);
 
-  const move = (index: number, offset: number) => {
-    const target = index + offset;
-    if (target < 0 || target >= rows.length) return;
-    setRows((current) => { const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next; });
-    setDirty(true);
+  // 行の左端のつまみをドラッグして並べ替えます。dropBefore は挿入線を引く位置（その番目の行の手前）です。
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropBefore, setDropBefore] = useState<number | null>(null);
+  const endDrag = () => { setDragIndex(null); setDropBefore(null); };
+  const dragOver = (event: DragEvent<HTMLTableRowElement>, index: number) => {
+    if (dragIndex === null) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    const box = event.currentTarget.getBoundingClientRect();
+    setDropBefore(event.clientY < box.top + box.height / 2 ? index : index + 1);
+  };
+  const drop = (event: DragEvent<HTMLTableRowElement>) => {
+    event.preventDefault();
+    if (dragIndex !== null && dropBefore !== null && dropBefore !== dragIndex && dropBefore !== dragIndex + 1) {
+      setRows((current) => moveBefore(current, dragIndex, dropBefore));
+      setDirty(true);
+    }
+    endDrag();
   };
 
   const save = async () => {
@@ -78,19 +91,33 @@ export function TenantOrderSettings({ propertyId, canEdit }: { propertyId: strin
     </div>
     <div className="property-billing-settings-table-wrap">
       <table>
-        <thead><tr><th>順番</th><th>階</th><th>テナント名</th><th>区画</th><th>並べ替え</th></tr></thead>
+        <thead><tr><th aria-label="並べ替え" /><th>階</th><th>テナント名</th><th>区画</th></tr></thead>
         <tbody>
-          {loading && <tr><td colSpan={5}>読み込み中…</td></tr>}
-          {!loading && !rows.length && <tr><td colSpan={5}>契約中のテナントがありません。</td></tr>}
-          {!loading && rows.map((row, index) => <tr key={row.tenantId}>
-            <td>{index + 1}</td>
+          {loading && <tr><td colSpan={4}>読み込み中…</td></tr>}
+          {!loading && !rows.length && <tr><td colSpan={4}>契約中のテナントがありません。</td></tr>}
+          {!loading && rows.map((row, index) => <tr
+            key={row.tenantId}
+            className={[
+              dragIndex === index ? 'tenant-order-dragging' : '',
+              dropBefore === index ? 'tenant-order-drop-before' : '',
+              dropBefore === index + 1 && index === rows.length - 1 ? 'tenant-order-drop-after' : '',
+            ].filter(Boolean).join(' ') || undefined}
+            onDragOver={(event) => dragOver(event, index)}
+            onDrop={drop}
+          >
+            <td className="tenant-order-handle-cell">
+              <span
+                className="tenant-order-handle"
+                draggable={canEdit}
+                title={canEdit ? 'ドラッグして並べ替え' : undefined}
+                aria-label={`${row.name}を並べ替え`}
+                onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', row.tenantId); setDragIndex(index); }}
+                onDragEnd={endDrag}
+              >⋮⋮</span>
+            </td>
             <td>{row.floor || '—'}</td>
             <td>{row.name}{!row.saved && <span className="tenant-order-unsaved">未設定</span>}</td>
             <td>{row.units.join('・') || '—'}</td>
-            <td className="tenant-order-move">
-              <button type="button" className="text-button" disabled={!canEdit || index === 0} onClick={() => move(index, -1)} aria-label={`${row.name}を上へ`}>▲</button>
-              <button type="button" className="text-button" disabled={!canEdit || index === rows.length - 1} onClick={() => move(index, 1)} aria-label={`${row.name}を下へ`}>▼</button>
-            </td>
           </tr>)}
         </tbody>
       </table>

@@ -1,7 +1,18 @@
 // テナント並び順の決め方を確かめます。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { orderTenants, tenantComparator } from './tenantOrder.ts';
+import { moveBefore, orderTenants, tenantComparator } from './tenantOrder.ts';
+
+test('ドラッグした行を、挿入線の位置へ移す', () => {
+  const items = ['A', 'B', 'C', 'D'];
+  assert.deepEqual(moveBefore(items, 0, 2), ['B', 'A', 'C', 'D']);
+  assert.deepEqual(moveBefore(items, 3, 1), ['A', 'D', 'B', 'C']);
+  assert.deepEqual(moveBefore(items, 1, 4), ['A', 'C', 'D', 'B']);
+  assert.deepEqual(moveBefore(items, 2, 0), ['C', 'A', 'B', 'D']);
+  // 自分の上下に落としても並びは変わりません。
+  assert.deepEqual(moveBefore(items, 1, 1), items);
+  assert.deepEqual(moveBefore(items, 1, 2), items);
+});
 
 // レントロールの並び（階順）です。B と C は同じ区画 u2 を契約しています。
 const rows = [
