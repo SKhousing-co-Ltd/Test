@@ -155,9 +155,10 @@
 .meter-confirmed-mark { display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; background: #e8f3ea; color: #2f7a46; font-size: 11px; font-weight: 700; }
 /* 確定済みの月は中身をまとめて編集不可にします。表示の並びは変えません。 */
 .meter-lock { display: contents; border: 0; margin: 0; padding: 0; }
-.meter-periods { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 14px; border: 1px solid #e0e9f3; border-radius: 9px; background: #f7fafd; }
-.meter-periods span { display: inline-flex; align-items: baseline; gap: 7px; color: #45617f; font-size: 12px; }
-.meter-periods b { color: #2f4864; font-size: 12px; }
+.meter-settings-table td.meter-center { text-align: center; }
+/* 選んでいる小分類の請求期間は、小分類のタブの右に出します。 */
+.meter-subtab-period { display: inline-flex; align-items: baseline; gap: 7px; margin-left: 14px; align-self: center; color: #45617f; font-size: 12px; }
+.meter-subtab-period b { color: #2f4864; font-size: 11px; }
 
 .meter-date-previous { display: inline-flex; align-items: center; gap: 8px; color: #7d8b9e; font-size: 12px; }
 .meter-date-previous b { color: #45617f; font-size: 12px; }
@@ -269,3 +270,18 @@
 .meter-input-table tfoot td.numeric { vertical-align: middle; }
 .meter-input-table td.meter-input-total-label { text-align: center; }
 input.meter-number-input { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 単価計算：変動単価の小分類で、その月の単価を手入力するか、請求額÷使用量で求めます。 */
+.meter-price-calc { display: grid; gap: 10px; max-width: 760px; }
+.meter-price-method { display: flex; gap: 16px; }
+.meter-price-grid { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px 12px; padding: 12px; border: 1px solid #e6edf4; border-radius: 9px; background: #fbfdff; }
+.meter-price-grid > span:nth-child(odd) { color: #6d7d91; font-size: 11px; font-weight: 700; }
+.meter-price-grid input.meter-number-input { width: 140px; }
+.meter-price-grid input.meter-number-input:disabled { color: #9aa8b8; background: #eef2f6; }
+.meter-price-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.meter-price-result b { color: #2f4864; font-size: 14px; font-variant-numeric: tabular-nums; }
+.meter-price-result small { color: #8595a8; font-size: 11px; }
+.meter-price-section { margin: 4px 0 0; color: #35516f; font-size: 12px; }
+.meter-price-period { display: flex; align-items: center; gap: 6px; }
+.meter-price-grid > span.numeric { text-align: left; font-variant-numeric: tabular-nums; }
+.meter-price-note { margin-left: 6px; color: #8595a8; font-size: 11px; }
