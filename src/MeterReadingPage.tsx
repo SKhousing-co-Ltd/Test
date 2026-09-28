@@ -432,7 +432,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               <td className="meter-col-name"><strong>{rowLabel(result.tenant, row.index)}</strong></td>
               {categorySubItems.map((item) => {
                 const found = categoryResult.subItems.find((value) => value.subItem.id === item.id);
-                return <td key={item.id} className="numeric">{yen.format(found?.amount ?? 0)}{found && found.usage ? <small className="meter-note">{formatUsage(found.usage, item.usageDisplayDigits)} {category.unit}</small> : null}</td>;
+                return <td key={item.id} className="numeric">{yen.format(found?.amount ?? 0)}{found && found.usage ? <small className="meter-note">{formatUsage(found.usage, item.usageRoundingDigits)} {category.unit}</small> : null}</td>;
               })}
               <td className="numeric">{amount.format(categoryResult.usage)} {category.unit}</td>
               <td className="numeric meter-total">{yen.format(categoryResult.amount)}</td>
@@ -453,24 +453,37 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         </table>
       </div>}
 
-      {subItem && subItem.kind === 'custom' && mode === 'input' && <div className="meter-table-wrap">
+      {subItem && subItem.kind === 'custom' && mode === 'input' && (() => {
+        const usageRows = usageTable(subItem, category);
+        const allMeters = usageRows.flatMap((group) => group.meters);
+        const totalUsage = allMeters.reduce((sum, item) => sum + item.usage, 0);
+        const totalAmount = usageRows.reduce((sum, group) => sum + (group.result?.amount ?? 0), 0);
+        return <div className="meter-table-wrap">
         <table className="meter-table meter-input-table">
           <colgroup><col className="meter-input-col-floor" /><col className="meter-input-col-tenant" /><col className="meter-input-col-price" /><col className="meter-input-col-code" /><col className="meter-input-col-usage" /><col className="meter-input-col-sum" /><col className="meter-input-col-amount" /><col className="meter-input-col-amount" /></colgroup>
           <thead><tr><th>階数</th><th>テナント名</th><th>単価</th><th>メーター番号</th><th>使用量</th><th>使用合計</th><th>使用料</th><th>テナント使用料合計</th></tr></thead>
-          <tbody>{usageTable(subItem, category).map((group) => group.meters.map((item, position) => <tr key={item.id} className={position > 0 ? undefined : group.floorSpan ? 'meter-input-floor-first' : 'meter-input-first'}>
+          <tbody>{usageRows.map((group) => group.meters.map((item, position) => <tr key={item.id} className={position > 0 ? undefined : group.floorSpan ? 'meter-input-floor-first' : 'meter-input-first'}>
             {position === 0 && group.floorSpan > 0 && <td rowSpan={group.floorSpan} className="meter-input-floor">{group.floor || '—'}</td>}
             {position === 0 && <td rowSpan={group.meters.length} className="meter-col-name">{group.name ? <strong>{group.name}</strong> : <span className="meter-muted">未割当</span>}</td>}
             <td className="numeric">{group.priceOf(item) === null ? '' : `${group.priceOf(item)} 円`}</td>
             <td className="meter-input-code">{item.code}</td>
             <td><UsageInput value={item.usage} digits={subItem.usageDisplayDigits} onChange={(usage) => updateMeter(item.id, { usage })} /><span className="meter-unit">{category.unit}</span></td>
-            {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${formatUsage(group.result.usage, subItem.usageDisplayDigits)} ${category.unit}` : ''}</td>}
+            {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${formatUsage(group.result.usage, subItem.usageRoundingDigits)} ${category.unit}` : ''}</td>}
             {group.perMeter
               ? <td className="numeric">{group.amountOf(item) === null ? '' : `${yen.format(group.amountOf(item) ?? 0)} 円`}</td>
               : position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${yen.format(group.result.amount)} 円` : ''}</td>}
             {position === 0 && group.tenantSpan > 0 && <td rowSpan={group.tenantSpan} className="numeric meter-total">{group.tenantTotal === null ? '' : `${yen.format(group.tenantTotal)} 円`}</td>}
           </tr>))}</tbody>
+          <tfoot><tr>
+            <td colSpan={4} className="meter-input-total-label">合計</td>
+            <td className="numeric">{formatUsage(totalUsage, subItem.usageDisplayDigits)}<span className="meter-unit">{category.unit}</span></td>
+            <td />
+            <td className="numeric">{yen.format(totalAmount)} 円</td>
+            <td />
+          </tr></tfoot>
         </table>
-      </div>}
+      </div>;
+      })()}
 
       {subItem && subItem.kind === 'custom' && mode === 'assign' && <div className="meter-assign">
         <div className="meter-settings-heading"><h4>{subItem.name}のメーター割り当て</h4><p>メーター番号と設置階を入力し、テナントと分割行を紐づけます。階は 2F、B1F のように英数字で入力します。</p><button type="button" className="text-button" onClick={() => addMeter(subItem.id)}>メーターを追加</button></div>
@@ -508,11 +521,10 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
           </div>
           <table className="meter-table meter-settings-table meter-subitem-table">
-            <colgroup><col style={{ width: 132 }} /><col style={{ width: 104 }} /><col style={{ width: 260 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 128 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
-            <thead><tr><th>小分類</th><th>種類</th><th>請求明細の項目</th><th>単価計算方法</th><th>既定単価</th><th>税区分</th><th>税抜換算の丸め<small>小数点以下</small></th><th>使用量の丸め</th><th>使用量の表示桁数</th><th>既定の請求期間</th><th /></tr></thead>
+            <colgroup><col style={{ width: 132 }} /><col style={{ width: 260 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 128 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
+            <thead><tr><th>小分類</th><th>請求明細の項目</th><th>単価計算方法</th><th>既定単価</th><th>税区分</th><th>税抜換算の丸め<small>小数点以下</small></th><th>使用量の丸め</th><th>入力使用量の表示桁数</th><th>既定の請求期間</th><th /></tr></thead>
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id && (item.kind !== 'basic' || row.fixedBillable)).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
-              <td className="meter-muted">{item.kind === 'basic' ? '基本料（固定）' : 'メーター検針'}</td>
               <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td>{item.kind === 'custom' ? <select value={item.priceMode} onChange={(event) => updateSubItem(item.id, { priceMode: event.target.value as PriceMode })}>{priceModes.map((value) => <option key={value} value={value}>{priceModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' && item.priceMode === 'fixed' ? <input type="number" step="0.01" className="meter-narrow" value={item.defaultUnitPrice ?? ''} placeholder="—" onChange={(event) => updateSubItem(item.id, { defaultUnitPrice: event.target.value ? Number(event.target.value) : null })} /> : <span className="meter-muted">—</span>}</td>
@@ -530,7 +542,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             </tr>)}
             {building.surcharges.filter((item) => item.categoryId === row.id && item.billable).map((item) => <tr key={item.id} className="meter-surcharge-row">
               <td><span className="meter-fixed-name">{item.name}</span></td>
-              <td className="meter-muted">使用量にかかる加算</td>
               <td><select value={item.lineItemId} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, lineItemId: event.target.value } : target) })}><option value="">未設定</option>{lineItemsFor(item.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td />
             </tr>)}</tbody>

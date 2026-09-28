@@ -265,3 +265,6 @@
 .meter-input-table input { width: 96px; height: 25px; padding: 2px 6px; border: 1px solid #d4dfeb; border-radius: 4px; color: #244d76; background: #fff; font: inherit; font-size: 12px; text-align: right; box-sizing: border-box; }
 .meter-input-table .meter-unit { margin-left: 5px; color: #8b99ab; font-size: 11px; }
 .meter-assign-table input.meter-floor-input { width: 72px; }
+.meter-input-table tfoot td { padding-top: 8px; padding-bottom: 8px; border-top: 2px solid #b9cbe0; color: #2f4864; background: #f8fbfe; font-weight: 700; }
+.meter-input-table tfoot td.numeric { vertical-align: middle; }
+.meter-input-table td.meter-input-total-label { text-align: center; }
