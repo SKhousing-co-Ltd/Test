@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
-  applyRounding, calculateSubItem, calculateTenant,
+  calculateSubItem, calculateTenant,
   floorLabel, priceModeLabel, roundingModeLabel, splitName, sumModeLabel, taxModeLabel,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type Meter,
   type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
@@ -243,14 +243,13 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       const row = tenant?.rows[group.rowIndex];
       const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, meters, building.taxRate) : null;
       // 単価は、メーターの割り当てで上書きした単価、契約行の単価、小分類の既定単価の順で決めます。
-      // 使用料は、この単価に使用量を掛けて、契約行の金額の丸め方で円にしたものです。
       const priceOf = (meter: Meter) => row && target.priceMode !== 'variable' ? meter.unitPrice ?? row.unitPrices[target.id] ?? target.defaultUnitPrice ?? 0 : null;
-      const amountOf = (meter: Meter) => {
-        const price = priceOf(meter);
-        return row && result && price !== null ? applyRounding(meter.usage * price, 1, row.amountRoundingMode) : null;
-      };
+      // 使用料は、メーターごとに計算する行はメーターの行ごとに、まとめて計算する行は分割した行の合計を1つの欄に出します。
+      // どちらも請求に使う計算結果（使用量の丸め・金額の丸めを通したもの）をそのまま出します。
+      const perMeter = row?.sumMode[targetCategory.id] === 'perMeter';
+      const amountOf = (meter: Meter) => result?.groups.find((value) => value.key === meter.id)?.amount ?? null;
       return {
-        ...group, result, priceOf, amountOf,
+        ...group, result, priceOf, amountOf, perMeter,
         floor: [...new Set(group.meters.map((item) => item.label).filter(Boolean))].join('・'),
         name: tenant ? rowLabel(tenant, group.rowIndex) : '',
         floorSpan: 0, tenantSpan: 0, tenantTotal: null as number | null,
@@ -465,7 +464,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <td className="meter-input-code">{item.code}</td>
             <td><UsageInput value={item.usage} digits={subItem.usageDisplayDigits} onChange={(usage) => updateMeter(item.id, { usage })} /><span className="meter-unit">{category.unit}</span></td>
             {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${formatUsage(group.result.usage, subItem.usageDisplayDigits)} ${category.unit}` : ''}</td>}
-            <td className="numeric">{group.amountOf(item) === null ? '' : `${yen.format(group.amountOf(item) ?? 0)} 円`}</td>
+            {group.perMeter
+              ? <td className="numeric">{group.amountOf(item) === null ? '' : `${yen.format(group.amountOf(item) ?? 0)} 円`}</td>
+              : position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${yen.format(group.result.amount)} 円` : ''}</td>}
             {position === 0 && group.tenantSpan > 0 && <td rowSpan={group.tenantSpan} className="numeric meter-total">{group.tenantTotal === null ? '' : `${yen.format(group.tenantTotal)} 円`}</td>}
           </tr>))}</tbody>
         </table>
