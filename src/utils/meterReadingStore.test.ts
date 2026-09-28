@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
-import { floorLabel, type ContractRow, type RoundingMode, type SubItem, type SumMode } from './meterReading.ts';
+import { floorLabel, subItemDefaults, type ContractRow, type RoundingMode, type SubItem, type SumMode } from './meterReading.ts';
 
 type Call = { table: string; op: string; rows: unknown; filters: Array<[string, unknown]> };
 const calls: Call[] = [];
@@ -34,7 +34,7 @@ const client = {
 const subItem = (id: string, name: string, kind: 'basic' | 'custom'): SubItem => ({
   id, categoryId: 'electric', name, kind, lineItemId: '', priceMode: 'fixed', defaultUnitPrice: 35,
   taxMode: 'exclusive', taxRoundingMode: 'floor',
-  usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '',
+  usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults(),
 });
 const contractRow = (id: string): ContractRow => ({
   id, invoiceNo: 1,
@@ -147,6 +147,52 @@ test('メーターは画面の並び順を保存する', async () => {
   const next = snapshot({ meters: [meter('M2', 'B-1'), meter('M1', 'A-1')] });
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
   assert.deepEqual(rowsOf('asset_meter', 'upsert')?.map((row) => [row.meter_code, row.sort_order]), [['B-1', 0], ['A-1', 1]]);
+});
+
+test('変動単価の小分類だけ、決め方・単価の丸めと月次の入力を保存する', async () => {
+  reset();
+  const next = snapshot();
+  next.building.subItems[1] = {
+    ...next.building.subItems[1], priceMode: 'variable', variablePriceMethod: 'billed', unitPriceRoundingDigits: 3, unitPriceRoundingMode: 'round',
+    monthly: { unitPrice: 300, billedInclusive: 110000, billedTax: null, billedExclusive: null, billedUsage: 325 },
+  };
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  const saved = rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'light');
+  assert.equal(saved?.variable_price_method, 'billed');
+  assert.equal(saved?.unit_price_rounding_digits, 3);
+  assert.equal(saved?.unit_price_rounding_mode, 'round');
+  assert.equal(saved?.show_unit_price_on_invoice, true);
+  // 手入力の単価も、切り替えて戻したときのために残します。
+  assert.deepEqual(rowsOf('meter_reading_month_sub_item', 'upsert'), [{
+    asset_id: 'A1', billing_month: '2026-09-01', asset_meter_sub_item_id: 'light',
+    unit_price: 300, billed_inclusive: 110000, billed_tax: null, billed_exclusive: null, billed_usage: 325,
+  }]);
+  // 月次の入力は、検針日のヘッダーより後に書き込みます（外部キーの参照先のため）。
+  const order = calls.map((entry) => entry.table);
+  assert.ok(order.indexOf('meter_reading_month') < order.indexOf('meter_reading_month_sub_item'));
+});
+
+test('固定単価だけなら、単価計算の月次入力は書き込まない', async () => {
+  reset();
+  await saveMeterReading(client, 'A1', 2026, 9, snapshot(), snapshot());
+  assert.equal(rowsOf('meter_reading_month_sub_item', 'upsert'), undefined);
+});
+
+test('仕入を入れた増額分は、算出した税抜単価と仕入の情報を保存する', async () => {
+  reset();
+  const next = snapshot();
+  next.building.surcharges = [{
+    id: 'S1', name: '電気増額分', categoryId: 'electric', unitPrice: 99, lineItemId: '', billable: true,
+    purchase: { periodStart: '2026-08-01', periodEnd: '2026-08-31', amountInclusive: 100000, usage: 3000 }, periodPatternId: 'P1',
+  }];
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  // 回収：基本料50,379＋564.5kWh×31.65＝17,866（四捨五入）→ 68,245円 → 税込75,070円（75069.5を四捨五入）
+  // 差額 24,930円 ÷564.5kWh＝44.163… → ÷1.1＝40.148… → 切り上げで40.15
+  assert.deepEqual(rowsOf('meter_reading_month_surcharge', 'upsert'), [{
+    asset_id: 'A1', billing_month: '2026-09-01', asset_meter_surcharge_id: 'S1', unit_price: 40.15,
+    purchase_period_start: '2026-08-01', purchase_period_end: '2026-08-31', purchase_amount_inclusive: 100000, purchase_usage: 3000,
+  }]);
+  assert.equal(rowsOf('asset_meter_surcharge', 'upsert')?.[0].billing_period_pattern_id, 'P1');
 });
 
 test('メーター識別は階数の英数字だけにする', () => {
