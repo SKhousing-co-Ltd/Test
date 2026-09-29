@@ -334,7 +334,6 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
   const [termType, setTermType] = useState<'ordinary' | 'fixed_term' | ''>(contract?.lease_term_type ?? '');
   const [renewalDueDate, setRenewalDueDate] = useState(contract?.renewal_due_date ?? '');
   const [contractEndDate, setContractEndDate] = useState(contract?.contract_end_date ?? '');
-  const [nextRenewalDate, setNextRenewalDate] = useState('');
   const [fixedAction, setFixedAction] = useState<'recontract' | 'move_out'>('recontract');
   const [newStartDate, setNewStartDate] = useState(nextDay(contract?.contract_end_date ?? null));
   const [newEndDate, setNewEndDate] = useState('');
@@ -398,20 +397,6 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
     await onSaved('契約形態を確定しました。');
   };
 
-  const updateRenewal = async () => {
-    if (!supabase || !canManage || !nextRenewalDate) return;
-    onWorking(true); onError('');
-    const { error } = await supabase.rpc('set_next_ordinary_renewal_due_date', {
-      p_change_request_id: request.change_request_id,
-      p_expected_request_row_version: request.row_version,
-      p_expected_contract_row_version: contract.row_version,
-      p_next_renewal_due_date: nextRenewalDate,
-    });
-    onWorking(false);
-    if (error) { onError(`次回更新予定日を設定できませんでした: ${error.message}`); return; }
-    await onSaved('次回更新予定日を設定し、契約を継続しました。');
-  };
-
   const resolveFixed = async () => {
     if (!supabase || !canManage || !reason.trim()) return;
     const units = unitDrafts.filter((unit) => unit.included).map(({ included: _included, label: _label, ...unit }) => ({
@@ -454,11 +439,9 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
   </section>;
 
   if (request.request_type === 'contract_renewal_due') return <section className="change-card">
-    <h4>次回更新予定日を設定</h4><p>契約は終了させず、同じ契約を継続します。現在: {String(request.source_payload.target_date ?? '—')}</p>
-    <ChecklistBox items={['契約書・更新通知で次回更新予定日を確認します。']} />
-    <label>次回更新予定日<input type="date" value={nextRenewalDate} onChange={(event) => setNextRenewalDate(event.target.value)} /></label>
-    <ChangeSummary rows={[{ label: '次回更新予定日', before: contract.renewal_due_date || '—', after: nextRenewalDate || '未入力' }]} />
-    <ActionButton className="primary-button" onClick={() => void updateRenewal()} disabled={working || !canManage || !nextRenewalDate} label="次回更新予定日を設定" hint="内容を正本データへ反映します。" />
+    <h4>普通賃貸借の自動更新</h4><p>初回登録時に設定した次回更新予定日を基準に、月次処理で1年間自動更新します。解約・終了予定の契約は自動更新されません。</p>
+    <ChecklistBox items={['この対応依頼は月次の自動更新処理で処理されます。', '自動更新が完了すると対応依頼は「確定済み（applied）」になります。']} />
+    <ChangeSummary rows={[{ label: '現在の次回更新予定日', before: contract.renewal_due_date || '—', after: '自動更新待ち' }]} />
   </section>;
 
   return <section className="change-card">
