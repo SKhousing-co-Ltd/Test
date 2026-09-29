@@ -83,6 +83,39 @@ a { color: inherit; text-decoration: none; }
 .plan-selection > header { border-bottom: 1px solid #e8edf3; }.plan-groups { display: grid; gap: 0; }.plan-group { padding: 14px 16px; border-bottom: 1px solid #e9eef4; }.plan-group:last-child { border-bottom: 0; }.plan-group-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; color: #40546f; font-size: 12px; }.plan-group-heading span { color: #8492a4; font-size: 10px; }.plan-candidates { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }.plan-candidates label { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #d9e4ee; border-radius: 6px; padding: 6px 8px; color: #3e5776; background: #f9fbfd; font-size: 11px; font-weight: 700; }.plan-candidates input { accent-color: #d33731; }.plan-preview { position: relative; overflow: hidden; max-height: 235px; border: 1px solid #e0e6ee; background: #f3f6f9; }.plan-preview img { display: block; width: 100%; max-height: 235px; object-fit: contain; }.plan-preview svg { position: absolute; inset: 0; width: 100%; height: 100%; }.plan-preview path { fill: rgb(213 46 38 / 25%); stroke: #c6221e; stroke-width: .006; vector-effect: non-scaling-stroke; }.plan-empty { margin: 0; padding: 16px; color: #8a6040; background: #fff8ef; font-size: 11px; line-height: 1.65; }.saved-plan-list > div { display: grid; gap: 8px; padding: 13px 16px; border-bottom: 1px solid #e9eef4; color: #45617f; font-size: 11px; }.saved-plan-list > div:last-child { border-bottom: 0; }.saved-plan-list img { width: 100%; max-height: 180px; object-fit: contain; border: 1px solid #e0e6ee; background: #f6f8fb; }
 @media print { .sidebar, .topbar, .document-editor, .document-heading > div:last-child, .document-message, .template-note { display: none !important; }.portal-main, .page-content, .contract-document-page, .document-workspace { display: block; padding: 0; }.contract-preview { position: static; }.paper { min-height: auto; border: 0; box-shadow: none; } }
 
+/* KANAME brand surface */
+.auth-showcase { background: linear-gradient(145deg, #07152f 0%, #102b61 52%, #075b68 100%); }
+.brand-mark { width: 34px; height: 34px; background: linear-gradient(145deg, #50d0c1, #2872bb); color: #fff; font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif JP', 'Noto Sans JP', serif; font-size: 23px; font-weight: 700; line-height: 1; }
+.sidebar .brand-mark { width: 32px; height: 32px; font-size: 21px; }
+.auth-architecture { position: absolute; right: 9%; bottom: 15%; display: flex; align-items: end; gap: 9px; opacity: .5; transform: skewY(-8deg); }
+.auth-architecture span { display: block; width: 48px; height: 170px; border: 1px solid rgb(133 231 222 / 35%); background: linear-gradient(180deg, rgb(45 174 191 / 35%), rgb(4 28 65 / 60%)); }
+.auth-architecture span:nth-child(2) { width: 62px; height: 245px; }
+.auth-architecture span:nth-child(3) { width: 40px; height: 130px; }
+.sidebar { background: linear-gradient(180deg, #091b3d, #102b60 58%, #073f4b); }
+.auth-brand { align-items: flex-start; flex-direction: column; gap: 8px; }
+.auth-brand .brand-mark { width: auto; height: auto; border-radius: 0; padding: 0; background: linear-gradient(145deg, #f4ffff 8%, #62e0d3 48%, #3b8ed2 92%); background-clip: text; -webkit-background-clip: text; color: transparent; -webkit-text-fill-color: transparent; font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif JP', serif; font-size: clamp(68px, 8vw, 108px); font-weight: 900; line-height: .9; text-shadow: 0 4px 0 rgb(255 255 255 / 10%); }
+.auth-brand > span:last-child { margin-left: 7px; font-family: Georgia, 'Times New Roman', serif; font-size: 25px; letter-spacing: .2em; }
+.auth-showcase::after { border-color: rgb(73 214 219 / 20%); }
+.auth-showcase .auth-architecture { right: 2%; bottom: 9%; gap: 11px; opacity: .62; transform: skewY(-12deg); }
+.auth-showcase .auth-architecture span { width: 52px; height: 230px; border-color: rgb(74 198 220 / 48%); background: linear-gradient(180deg, rgb(42 113 169 / 60%), rgb(3 26 61 / 85%)); }
+.auth-showcase .auth-architecture span:nth-child(2) { width: 72px; height: 390px; background: linear-gradient(180deg, rgb(22 87 145 / 70%), rgb(4 23 55 / 92%)); }
+.auth-showcase .auth-architecture span:nth-child(3) { width: 46px; height: 180px; }
+.auth-showcase .auth-message h1 { font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif JP', serif; font-weight: 700; letter-spacing: .02em; }
+.auth-preview { border-color: rgb(110 218 221 / 28%); background: rgb(4 24 58 / 42%); }
+.auth-preview strong { font-family: Georgia, serif; letter-spacing: .16em; }
+.auth-showcase { align-items: center; text-align: center; }
+.auth-brand { align-items: center; }
+.auth-showcase > .auth-brand { margin-top: clamp(48px, 12vh, 132px); }
+.auth-brand > span:last-child { margin-left: 0; }
+.auth-message { width: min(100%, 470px); margin: auto 0 32px; }
+.auth-tagline { color: #d6eef0 !important; font-family: Georgia, 'Times New Roman', serif; font-size: 13px !important; letter-spacing: .18em; line-height: 1.8 !important; }
+.auth-message p:not(.eyebrow) { margin-inline: auto; }
+.auth-preview { margin-inline: auto; text-align: center; }
+.auth-showcase .auth-architecture { right: 50%; bottom: 7%; transform: translateX(50%) skewY(-12deg); }
+.sidebar .brand { align-items: center; }
+.sidebar .brand-mark { width: auto; height: auto; border-radius: 0; padding: 0; background: transparent; font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Noto Serif JP', serif; font-size: 42px; line-height: .8; }
+.sidebar .brand > span:last-child { font-family: Georgia, serif; letter-spacing: .16em; }
+
 .document-form label.full-width { grid-column: 1 / -1; }
 .document-form textarea { box-sizing: border-box; width: 100%; min-height: 88px; padding: 9px; border: 1px solid #d9e2ec; border-radius: 6px; color: #263a55; background: #fff; font: inherit; font-size: 12px; line-height: 1.55; resize: vertical; }
 .document-form textarea:focus { outline: 0; border-color: #2675d9; box-shadow: 0 0 0 3px rgb(38 117 217 / 12%); }
