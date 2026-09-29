@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addDays, allocateMeters, basicRatios, meterProblems, occupantChanges, proratedAmount, readingPeriod, reassignUnit, segmentsOf, totalUsage, unitAt,
+  addDays, allocateMeters, basicRatios, meterProblems, occupantChanges, occupantsIn, proratedAmount, readingPeriod, reassignUnit, segmentsOf, totalUsage, unitAt,
   type AssetMeter, type Occupancy,
 } from './meterAllocation.ts';
 import type { ContractRow, TenantConfig } from './meterReading.ts';
@@ -105,6 +105,15 @@ test('入力の不備：期間外・重複・未入力の中間検針、マイ�
   assert.deepEqual(meterProblems(meter({ previousReading: 10, currentReading: 5 }), 'reading', period), ['使用量がマイナスになります。指針を確認してください']);
   assert.deepEqual(meterProblems(meter({ previousReading: null, currentReading: 5 }), 'reading', period), ['前月指針が未入力です']);
   assert.deepEqual(meterProblems(meter({ previousReading: 1, currentReading: 5, exchange: { removedReading: 2, installedReading: 0 }, breaks: [{ date: '2026-08-20', reading: 3, usage: null }] }), 'reading', period), ['メーター交換と中間検針は同じ月に入力できません']);
+});
+
+test('貸室以外（その他など）の区画も、メーターを付けていれば入居日数・テナント一覧の対象にする', () => {
+  const occupancy: Occupancy = new Map();
+  for (let date = '2026-08-06'; date <= '2026-09-05'; date = addDays(date, 1)) occupancy.set(date, new Map([['U5', { tenantId: 'T5', tenantName: '倉庫', unitType: 'other' }]]));
+  assert.deepEqual(basicRatios([tenant('T5')], occupancy, period).get('T5-R1'), { days: 0, totalDays: 31 });
+  assert.deepEqual(basicRatios([tenant('T5')], occupancy, period, new Set(['U5'])).get('T5-R1'), { days: 31, totalDays: 31 });
+  assert.deepEqual(occupantsIn(occupancy, period), []);
+  assert.deepEqual(occupantsIn(occupancy, period, new Set(['U5'])), [{ id: 'T5', name: '倉庫' }]);
 });
 
 test('基本料の日割りは、分割行ごとに入居日数を数え、全日入居なら満額のまま', () => {

@@ -10,7 +10,7 @@ import type {
 } from './meterReading';
 import { calculateAll, emptySurchargePurchase, emptyVariablePrice, meterInvoiceLines, subItemDefaults, type MeterInvoiceLine } from './meterReading.ts';
 import type { AssetMeter, InputMode, MeterBreak, Occupancy, Period, UnitAssignment, UnitOption } from './meterAllocation';
-import { allocateMeters, basicRatios, monthFirst, occupancyRange, occupantsIn, readingPeriod, totalUsage } from './meterAllocation.ts';
+import { allocateMeters, basicRatios, meteredUnitIds, monthFirst, occupancyRange, occupantsIn, readingPeriod, totalUsage } from './meterAllocation.ts';
 import { loadSavedTenantOrder, orderTenants } from './tenantOrder.ts';
 
 export type MeterReadingSnapshot = {
@@ -26,6 +26,11 @@ export type MeterReadingSnapshot = {
   occupancy: Occupancy;
   // 前月の当月指針（メーターごと）です。前月指針を手入力から自動に戻すときに使います。
   previousMonthReadings: Record<string, number>;
+  // 保存済みの契約行です。中間検針で一覧に居ないテナントが出てきたとき、保存済みの設定で加えるために使います。
+  savedContracts: Record<string, ContractRow[]>;
+  invoiceSplitTenantIds: string[];
+  // DBに保存済みの契約行のidです。未保存の契約行があるうちは確定できません（確定額が契約行を参照するため）。
+  persistedContractIds: string[];
 };
 
 export const categoryIds: CategoryId[] = ['electric', 'water', 'gas'];
@@ -291,11 +296,13 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   // テナントは、請求月の1日時点の入居テナントに、検針期間中に入居・退去したテナントを加えます。
   const period = readingPeriod(year, month, meterDate, previousMeterDate);
   const listed = new Set(tenantList.map((row) => row.id));
-  const allTenants = [...tenantList, ...occupantsIn(occupancy, period).filter((row) => !listed.has(row.id))];
-  const tenants: TenantConfig[] = allTenants.map(({ id, name }) => {
-    const own = contractRows.filter((row) => row.tenant_id === id).sort((left, right) => left.row_no - right.row_no);
-    return tenantConfig(id, name, own.length ? own.map(toContractRow) : [emptyContractRow(subItems)], splitTenants.has(id));
-  });
+  const allTenants = [...tenantList, ...occupantsIn(occupancy, period, meteredUnitIds(meters)).filter((row) => !listed.has(row.id))];
+  const savedContracts: Record<string, ContractRow[]> = {};
+  for (const record of [...contractRows].sort((left, right) => left.row_no - right.row_no)) {
+    savedContracts[record.tenant_id] = [...(savedContracts[record.tenant_id] ?? []), toContractRow(record)];
+  }
+  const tenants: TenantConfig[] = allTenants.map(({ id, name }) =>
+    tenantConfig(id, name, savedContracts[id] ?? [emptyContractRow(subItems)], splitTenants.has(id)));
 
   return {
     building: { categories, subItems, surcharges, taxRate },
@@ -303,6 +310,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     status: currentMonth?.status ?? 'draft',
     units, occupancy,
     previousMonthReadings: Object.fromEntries(previousReadingByMeter),
+    savedContracts, invoiceSplitTenantIds: [...splitTenants], persistedContractIds: contractIds,
   };
 }
 
@@ -322,7 +330,8 @@ const tenantConfig = (id: string, name: string, rows: ContractRow[], invoiceSpli
 // 対象月の計算です。メーターを区間ごとに入居テナントへ振り分け、基本料を日割りして金額を出します。
 // 中間検針の区切りで、テナント一覧に居ないテナント（期間中に退去・入居したテナント）が出てきた場合は、
 // 空の契約行で一覧に加えます（tenants として返すので、画面はそれを一覧に取り込みます）。
-export type MonthInput = Pick<MeterReadingSnapshot, 'building' | 'tenants' | 'meters' | 'meterDate' | 'previousMeterDate' | 'occupancy'>;
+export type MonthInput = Pick<MeterReadingSnapshot, 'building' | 'tenants' | 'meters' | 'meterDate' | 'previousMeterDate' | 'occupancy'>
+  & Partial<Pick<MeterReadingSnapshot, 'savedContracts' | 'invoiceSplitTenantIds'>>;
 export function computeMonth(input: MonthInput, year: number, month: number) {
   const period: Period = readingPeriod(year, month, input.meterDate, input.previousMeterDate);
   const billingFirst = monthFirst(year, month);
@@ -333,10 +342,10 @@ export function computeMonth(input: MonthInput, year: number, month: number) {
   const missing = new Map<string, string>();
   for (const allocation of allocated.allocations) for (const segment of allocation.segments) if (segment.tenantId && !known.has(segment.tenantId)) missing.set(segment.tenantId, segment.tenantName);
   if (missing.size) {
-    tenants = [...tenants, ...[...missing].map(([id, name]) => tenantConfig(id, name, [emptyContractRow(input.building.subItems)], false))];
+    tenants = [...tenants, ...[...missing].map(([id, name]) => tenantConfig(id, name, input.savedContracts?.[id] ?? [emptyContractRow(input.building.subItems)], input.invoiceSplitTenantIds?.includes(id) ?? false))];
     allocated = allocateMeters(input.meters, modeOf, tenants, input.occupancy, period, billingFirst);
   }
-  const ratios = basicRatios(tenants, input.occupancy, period);
+  const ratios = basicRatios(tenants, input.occupancy, period, meteredUnitIds(input.meters));
   const calculated = calculateAll(tenants, input.building, allocated.shares, ratios);
   return { ...calculated, tenants, period, shares: allocated.shares, allocations: allocated.allocations, ratios };
 }
@@ -434,11 +443,18 @@ export async function saveMeterReading(
     split_label: tenant.rows.length > 1 ? row.splitLabel.trim() || null : null,
   })))), '契約行');
 
-  // 分割行の区画です。入れ直します。分割していないテナントは1行目だけなので持ちません。
-  if (nextContracts.length) check(await client.from('meter_reading_contract_unit').delete().in('meter_reading_contract_id', nextContracts), '分割行の区画');
+  // 分割行の区画です。分割していないテナントは1行目だけなので持ちません。
+  // 途中で失敗しても消えたままにならないよう、先に書き込み、外れたものだけを後で消します。
   const contractUnits = next.tenants.filter((tenant) => tenant.rows.length > 1)
     .flatMap((tenant) => tenant.rows.flatMap((row) => [...new Set(row.unitIds)].map((unitId) => ({ meter_reading_contract_id: row.id, unit_id: unitId }))));
-  if (contractUnits.length) check(await client.from('meter_reading_contract_unit').insert(contractUnits), '分割行の区画');
+  if (contractUnits.length) check(await client.from('meter_reading_contract_unit').upsert(contractUnits, { onConflict: 'meter_reading_contract_id,unit_id', ignoreDuplicates: true }), '分割行の区画');
+  const keptUnits = new Set(contractUnits.map((row) => `${row.meter_reading_contract_id}|${row.unit_id}`));
+  const goneSet = new Set(goneContracts);
+  for (const row of base.tenants.flatMap((tenant) => tenant.rows).filter((item) => !goneSet.has(item.id))) {
+    for (const unitId of row.unitIds.filter((id) => !keptUnits.has(`${row.id}|${id}`))) {
+      check(await client.from('meter_reading_contract_unit').delete().eq('meter_reading_contract_id', row.id).eq('unit_id', unitId), '分割行の区画');
+    }
+  }
 
   // 5. 契約行ごとの小分類設定
   const subItemIds = new Set(next.building.subItems.map((row) => row.id));
@@ -507,14 +523,19 @@ export async function saveMeterReading(
     };
   }), { onConflict: 'asset_id,billing_month,asset_meter_id' }), '検針値');
 
-  // 中間検針です。この月の分を入れ直します。
-  check(await client.from('meter_reading_break').delete().eq('asset_id', assetId).eq('billing_month', billingMonth), '中間検針');
+  // 中間検針です。途中で失敗しても消えたままにならないよう、先に書き込み、消えた区切りだけを後で消します。
   const breaks = next.meters.flatMap((row) => row.breaks.filter((item) => item.date).map((item) => ({
     asset_id: assetId, billing_month: billingMonth, asset_meter_id: row.id, break_date: item.date,
     reading: modeOf(row.subItemId) === 'reading' ? item.reading : null,
     usage_amount: modeOf(row.subItemId) === 'usage' ? item.usage : null,
   })));
-  if (breaks.length) check(await client.from('meter_reading_break').insert(breaks), '中間検針');
+  if (breaks.length) check(await client.from('meter_reading_break').upsert(breaks, { onConflict: 'asset_id,billing_month,asset_meter_id,break_date' }), '中間検針');
+  const keptBreaks = new Set(breaks.map((row) => `${row.asset_meter_id}|${row.break_date}`));
+  for (const row of base.meters.filter((item) => liveMeters.has(item.id))) {
+    for (const item of row.breaks.filter((value) => value.date && !keptBreaks.has(`${row.id}|${value.date}`))) {
+      check(await client.from('meter_reading_break').delete().eq('asset_id', assetId).eq('billing_month', billingMonth).eq('asset_meter_id', row.id).eq('break_date', item.date), '中間検針');
+    }
+  }
 }
 
 // 月次確定です。確定した金額は、そのときの使用量・単価・丸めごと残します。

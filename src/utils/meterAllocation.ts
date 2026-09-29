@@ -39,7 +39,10 @@ export type Occupancy = Map<string, Map<string, Occupant>>;
 export type Period = { start: string; end: string };
 
 // 検針の対象になる貸室の区画種別です（テナント一覧・基本料の日割りに使います）。
+// 貸室以外（その他など）の区画でも、メーターを付けている区画は対象にします。
 export const roomUnitTypes = new Set(['office', 'residential', 'warehouse']);
+export const meteredUnitIds = (meters: AssetMeter[]) => new Set(meters.flatMap((meter) => meter.assignments.map((row) => row.unitId)));
+const counted = (unitId: string, occupant: Occupant, metered: Set<string>) => roomUnitTypes.has(occupant.unitType) || metered.has(unitId);
 
 // ---- 日付（YYYY-MM-DD の文字列で扱います） ----
 const toUtc = (value: string) => { const [y, m, d] = value.split('-').map(Number); return Date.UTC(y, m - 1, d); };
@@ -190,13 +193,13 @@ export function occupantChanges(meter: AssetMeter, occupancy: Occupancy, period:
 
 // 基本料の日割りです。検針期間のうち、テナントがその分割行の区画に入居していた日数を数えます。
 export type BasicRatio = { days: number; totalDays: number };
-export function basicRatios(tenants: TenantConfig[], occupancy: Occupancy, period: Period): Map<string, BasicRatio> {
+export function basicRatios(tenants: TenantConfig[], occupancy: Occupancy, period: Period, metered: Set<string> = new Set()): Map<string, BasicRatio> {
   const days = eachDay(period);
   const ratios = new Map<string, BasicRatio>();
   for (const tenant of tenants) {
     tenant.rows.forEach((row, index) => {
       const occupied = days.filter((date) => [...(occupancy.get(date)?.entries() ?? [])].some(([unitId, occupant]) =>
-        occupant.tenantId === tenant.id && roomUnitTypes.has(occupant.unitType) && rowIndexForUnit(tenant, unitId) === index)).length;
+        occupant.tenantId === tenant.id && counted(unitId, occupant, metered) && rowIndexForUnit(tenant, unitId) === index)).length;
       ratios.set(row.id, { days: occupied, totalDays: days.length });
     });
   }
@@ -211,11 +214,11 @@ export const proratedAmount = (amount: number, ratio: BasicRatio | undefined, ro
 };
 
 // 期間中に貸室へ入居していたテナントです（入居日順）。テナント一覧に加えるために使います。
-export function occupantsIn(occupancy: Occupancy, period: Period): Array<{ id: string; name: string }> {
+export function occupantsIn(occupancy: Occupancy, period: Period, metered: Set<string> = new Set()): Array<{ id: string; name: string }> {
   const found = new Map<string, string>();
   for (const date of eachDay(period)) {
-    for (const occupant of occupancy.get(date)?.values() ?? []) {
-      if (roomUnitTypes.has(occupant.unitType) && !found.has(occupant.tenantId)) found.set(occupant.tenantId, occupant.tenantName);
+    for (const [unitId, occupant] of occupancy.get(date) ?? []) {
+      if (counted(unitId, occupant, metered) && !found.has(occupant.tenantId)) found.set(occupant.tenantId, occupant.tenantName);
     }
   }
   return [...found].map(([id, name]) => ({ id, name }));

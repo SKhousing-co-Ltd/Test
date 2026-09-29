@@ -141,7 +141,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         setMeterDateState(snapshot.meterDate);
         setPreviousMeterDate(snapshot.previousMeterDate);
         setStatus(snapshot.status);
-        setDirty(false);
+        // 初めて出てきたテナントなど、まだ保存していない契約行があれば未保存として保存を促します。
+        const persistedIds = new Set(snapshot.persistedContractIds);
+        setDirty(snapshot.status === 'draft' && snapshot.tenants.some((tenant) => tenant.rows.some((row) => !persistedIds.has(row.id))));
         setNotice('');
         const confirmed = snapshot.status === 'confirmed' ? await loadConfirmedAmounts(supabase, propertyId, calendarYear, period.month) : [];
         if (cancelled) return;
@@ -192,7 +194,11 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     if (!supabase || !propertyId || !baseline) return;
     setSaving(true);
     try {
-      const snapshot: MeterReadingSnapshot = { ...baseline, building, tenants, meters, meterDate, previousMeterDate, status };
+      const snapshot: MeterReadingSnapshot = {
+        ...baseline, building, tenants, meters, meterDate, previousMeterDate, status,
+        persistedContractIds: tenants.flatMap((tenant) => tenant.rows.map((row) => row.id)),
+        savedContracts: { ...baseline.savedContracts, ...Object.fromEntries(tenants.map((tenant) => [tenant.id, tenant.rows])) },
+      };
       await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline);
       setBaseline(snapshot);
       setDirty(false);
@@ -234,14 +240,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
 
   // メーターを区間ごとに区画の入居テナントへ振り分け、基本料を日割りして計算します。
   // 増額分は、仕入の請求金額を入れた月は増額分タブで算出した単価で計算します。
-  const calculated = useMemo(() => computeMonth({ building, tenants, meters, meterDate, previousMeterDate, occupancy }, calendarYear, period.month),
-    [building, meters, tenants, meterDate, previousMeterDate, occupancy, calendarYear, period.month]);
+  const calculated = useMemo(() => computeMonth({ building, tenants, meters, meterDate, previousMeterDate, occupancy, savedContracts: baseline?.savedContracts, invoiceSplitTenantIds: baseline?.invoiceSplitTenantIds }, calendarYear, period.month),
+    [building, meters, tenants, meterDate, previousMeterDate, occupancy, baseline, calendarYear, period.month]);
   const results = calculated.results;
   const readingPeriodText = `${slashDate(calculated.period.start)}～${slashDate(calculated.period.end)}`;
   const billingFirst = monthFirst(calendarYear, period.month);
   // 中間検針の区切りで一覧に居ないテナント（期間中に退去・入居したテナント）が出てきたら、一覧に加えます。
   useEffect(() => {
-    if (calculated.tenants.length > tenants.length) setTenantsState(calculated.tenants);
+    if (calculated.tenants.length > tenants.length) setTenants(calculated.tenants);
   }, [calculated.tenants, tenants.length]);
   const allocationByMeter = new Map(calculated.allocations.map((row) => [row.meter.id, row]));
   // 区間ごとの MeterShare から、元のメーターと区間を引けるようにします。
@@ -253,6 +259,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   };
   const unitById = new Map(units.map((row) => [row.id, row]));
   const blockingProblems = calculated.allocations.filter((row) => row.problems.length);
+  // 確定額は契約行を参照するため、まだ保存していない契約行（初めて出てきたテナントなど）があるうちは確定できません。
+  const persisted = new Set(baseline?.persistedContractIds ?? []);
+  const unsavedRows = tenants.some((tenant) => tenant.rows.some((row) => !persisted.has(row.id)));
   const grandTotal = results.reduce((sum, result) => sum + result.total, 0);
   const grandExpected = results.reduce((sum, result) => sum + result.tenant.expected, 0);
   // 元表との突き合わせ列は、期待値を持つサンプルデータのときだけ出します。
@@ -306,7 +315,9 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       // 使用料は、メーターごとに計算する行はメーターの行ごとに、まとめて計算する行は分割した行の合計を1つの欄に出します。
       // どちらも請求に使う計算結果（使用量の丸め・金額の丸めを通したもの）をそのまま出します。
       const perMeter = row?.sumMode[targetCategory.id] === 'perMeter';
-      const amountOf = (meter: MeterShare) => result?.groups.find((value) => value.key === meter.id)?.amount ?? null;
+      // 区間に分かれたメーターは、メーターごとの使用料をグループ内の最初の区間の行にだけ出します。
+      const amountOf = (meter: MeterShare) => group.meters.find((item) => (item.meterId ?? item.id) === (meter.meterId ?? meter.id)) !== meter ? null
+        : result?.groups.find((value) => value.key === (meter.meterId ?? meter.id))?.amount ?? null;
       return {
         ...group, result, priceOf, amountOf, perMeter,
         floor: [...new Set(group.meters.map((item) => item.label).filter(Boolean))].join('・'),
@@ -423,7 +434,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         {status === 'draft'
           ? <>
             <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
-            <button type="button" className="meter-confirm" disabled={dirty || confirming || loading || !baseline || !tenants.length || blockingProblems.length > 0} title={blockingProblems.length ? '検針値の入力に不備があるため確定できません' : undefined} onClick={() => void confirm()}>{confirming ? '確定中…' : '確定'}</button>
+            <button type="button" className="meter-confirm" disabled={dirty || confirming || loading || !baseline || !tenants.length || blockingProblems.length > 0 || unsavedRows} title={blockingProblems.length ? '検針値の入力に不備があるため確定できません' : unsavedRows ? 'まだ保存していないテナントの設定があります。保存してから確定してください' : undefined} onClick={() => void confirm()}>{confirming ? '確定中…' : '確定'}</button>
           </>
           : <>
             <span className="meter-confirmed-mark">確定済み</span>

@@ -309,7 +309,8 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
 
   // 単価が違うメーターは、まとめて計算の場合も分けて計算します。
   const buckets = new Map<string, MeterShare[]>();
-  for (const target of own) { const key = mode === 'perMeter' ? target.id : String(priceOf(target)); buckets.set(key, [...(buckets.get(key) ?? []), target]); }
+  // 中間検針で区間に分かれたメーターも、メーターごとに計算する場合は同じメーターを1つにまとめます。
+  for (const target of own) { const key = mode === 'perMeter' ? target.meterId ?? target.id : String(priceOf(target)); buckets.set(key, [...(buckets.get(key) ?? []), target]); }
   const groups = [...buckets.entries()].map(([key, rows]) => {
     const groupUsage = roundUsage(rows.reduce((sum, target) => sum + target.usage, 0));
     return { key, label: mode === 'perMeter' ? rows[0].code : buckets.size > 1 ? `単価${priceOf(rows[0])}円` : 'まとめて計算', usage: groupUsage, unitPrice: priceOf(rows[0]), amount: roundAmount(groupUsage * priceOf(rows[0])) };

@@ -69,6 +69,7 @@ const snapshot = (over: Partial<MeterReadingSnapshot> = {}): MeterReadingSnapsho
   meters: [assetMeter('M1', '223-607-805', { label: '2F', usage: 564.5 })],
   meterDate: '2026-09-02', previousMeterDate: '', status: 'draft',
   units: [{ id: 'U1', code: '201', name: '201', floor: '2F', type: 'office' }], occupancy: occupied(), previousMonthReadings: {},
+  savedContracts: {}, invoiceSplitTenantIds: [], persistedContractIds: ['C1'],
   ...over,
 });
 
@@ -116,15 +117,17 @@ test('メーター交換の月は、旧・新メーターの使用量を足し�
   assert.equal(entry?.exchange_installed_reading, 0);
 });
 
-test('中間検針は、この月の分を消してから入れ直す', async () => {
+test('中間検針は先に書き込み、消えた区切りだけを後で消す', async () => {
   reset();
+  const base = snapshot({ meters: [assetMeter('M1', 'A-1', { breaks: [{ date: '2026-08-25', reading: null, usage: 10 }, { date: '2026-09-01', reading: null, usage: 30 }] })] });
   const next = snapshot({ meters: [assetMeter('M1', 'A-1', { usage: 100, breaks: [{ date: '2026-09-01', reading: 5, usage: 40 }] })] });
-  await saveMeterReading(client, 'A1', 2026, 9, next, next);
-  assert.deepEqual(filtersOf('meter_reading_break', 'delete'), [['asset_id', 'A1'], ['billing_month', '2026-09-01']]);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
   // 使用量入力の小分類なので、指針は残しません。
-  assert.deepEqual(rowsOf('meter_reading_break', 'insert'), [{ asset_id: 'A1', billing_month: '2026-09-01', asset_meter_id: 'M1', break_date: '2026-09-01', reading: null, usage_amount: 40 }]);
+  assert.deepEqual(rowsOf('meter_reading_break', 'upsert'), [{ asset_id: 'A1', billing_month: '2026-09-01', asset_meter_id: 'M1', break_date: '2026-09-01', reading: null, usage_amount: 40 }]);
+  assert.deepEqual(filtersOf('meter_reading_break', 'delete'), [['asset_id', 'A1'], ['billing_month', '2026-09-01'], ['asset_meter_id', 'M1'], ['break_date', '2026-08-25']]);
   const order = calls.map((entry) => `${entry.table}:${entry.op}`);
-  assert.ok(order.indexOf('meter_reading_month:upsert') < order.indexOf('meter_reading_break:insert'));
+  assert.ok(order.indexOf('meter_reading_month:upsert') < order.indexOf('meter_reading_break:upsert'));
+  assert.ok(order.indexOf('meter_reading_break:upsert') < order.indexOf('meter_reading_break:delete'));
 });
 
 test('同じメーターで中間検針の日付が重複していると、何も書き込まずに止まる', async () => {
@@ -178,18 +181,34 @@ test('区画を選び直して消えた紐づけは、入れ直す前に削除�
   assert.ok(order.indexOf('asset_meter_unit_assignment:delete') < order.indexOf('asset_meter_unit_assignment:upsert'));
 });
 
-test('分割したテナントだけ、分割行の区画を入れ直す', async () => {
+test('分割したテナントだけ分割行の区画を書き込み、外れた区画は後で消す', async () => {
   reset();
   const next = snapshot({ tenants: [
     { id: 'T1', name: 'テナント1', splitEnabled: true, rows: [{ ...contractRow('C1'), unitIds: ['U1'] }, { ...contractRow('C2'), unitIds: ['U2', 'U2'] }], invoiceSplitByUnit: false, expected: 0 },
+    // 分割をやめたテナントの区画は、残っていても消します。
     { id: 'T2', name: 'テナント2', splitEnabled: false, rows: [{ ...contractRow('C3'), unitIds: ['U9'] }], invoiceSplitByUnit: false, expected: 0 },
   ] });
   await saveMeterReading(client, 'A1', 2026, 9, next, next);
-  assert.deepEqual(filtersOf('meter_reading_contract_unit', 'delete'), [['meter_reading_contract_id', ['C1', 'C2', 'C3']]]);
-  assert.deepEqual(rowsOf('meter_reading_contract_unit', 'insert'), [
+  assert.deepEqual(rowsOf('meter_reading_contract_unit', 'upsert'), [
     { meter_reading_contract_id: 'C1', unit_id: 'U1' },
     { meter_reading_contract_id: 'C2', unit_id: 'U2' },
   ]);
+  assert.deepEqual(filtersOf('meter_reading_contract_unit', 'delete'), [['meter_reading_contract_id', 'C3'], ['unit_id', 'U9']]);
+});
+
+test('一覧に居ないテナントが中間検針で出てきたら、保存済みの契約行の設定で加える', () => {
+  const occupancy = new Map([...occupied('2026-08-01', '2026-08-20'), ...occupied('2026-08-21', '2026-10-31', { U1: ['T2', 'テナント2'] })]);
+  const saved = { ...contractRow('C-T2'), unitPrices: { light: 40 } };
+  const next = snapshot({
+    meterDate: '2026-09-05', previousMeterDate: '2026-08-05', occupancy, savedContracts: { T2: [saved] }, invoiceSplitTenantIds: ['T2'],
+    meters: [assetMeter('M1', 'A-1', { usage: 100, breaks: [{ date: '2026-08-20', reading: null, usage: 60 }] })],
+  });
+  const month = computeMonth(next, 2026, 9);
+  const added = month.tenants.find((row) => row.id === 'T2');
+  assert.equal(added?.rows[0].id, 'C-T2');
+  assert.equal(added?.invoiceSplitByUnit, true);
+  // 40kWh×40円＝1,600円
+  assert.equal(month.results.find((row) => row.tenant.id === 'T2')?.rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light')?.amount, 1600);
 });
 
 const meter = (id: string, code: string, subItemId = 'light') => assetMeter(id, code, { subItemId });
