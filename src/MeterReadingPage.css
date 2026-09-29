@@ -285,3 +285,28 @@ input.meter-number-input { text-align: right; font-variant-numeric: tabular-nums
 .meter-price-period { display: flex; align-items: center; gap: 6px; }
 .meter-price-grid > span.numeric { text-align: left; font-variant-numeric: tabular-nums; }
 .meter-price-note { margin-left: 6px; color: #8595a8; font-size: 11px; }
+
+/* 区画での紐づけ・指針入力・中間検針 */
+.meter-center { text-align: center; }
+.meter-problem-list b { color: #b0603f; }
+.meter-problem-list ul { margin: 6px 0 0; padding-left: 18px; }
+.meter-reading-manual .meter-number-input { background: #fff8e6; }
+.meter-segment-period { display: block; color: #8b99ab; font-size: 10px; }
+.meter-vacant-row td { color: #8b99ab; background: #f7f9fb; }
+.meter-change-list p { margin: 0; }
+.meter-change-list p + p { margin-top: 4px; }
+.meter-change-list .text-button { margin-left: 8px; color: #2f6fb0; font-weight: 700; }
+.meter-break-panel { display: grid; gap: 10px; margin-top: 16px; }
+.meter-break-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.meter-break-actions select { min-width: 280px; }
+.meter-break-card { display: grid; gap: 8px; padding: 12px; border: 1px solid #e6edf4; border-radius: 9px; background: #fbfdff; }
+.meter-break-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; color: #35516f; font-size: 12px; }
+.meter-break-total { margin-left: auto; font-weight: 700; }
+.meter-break-table th { width: 120px; text-align: left; white-space: nowrap; }
+.meter-break-exchange { display: flex; flex-wrap: wrap; gap: 12px; }
+.meter-break-exchange label { display: inline-flex; align-items: center; gap: 6px; color: #56708c; font-size: 11px; }
+.meter-segment-table { max-width: 760px; }
+.meter-problem { color: #b0603f; background: #fdf3ee; }
+.meter-assign-since { display: block; margin-top: 2px; font-size: 10px; }
+.meter-row-units { min-width: 160px; }
+.meter-row-units .meter-check { display: flex; margin: 2px 0; }

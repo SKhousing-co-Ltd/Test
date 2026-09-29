@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   billedAmounts, calculateAll, calculateSubItem, meterInvoiceLines, calculateSurchargePrice, emptySurchargePurchase, emptyVariablePrice, subItemDefaults, variableUnitPrice,
-  type BuildingConfig, type Category, type ContractRow, type Meter, type SubItem, type TenantConfig, type VariablePriceInput,
+  type BuildingConfig, type Category, type ContractRow, type MeterShare, type SubItem, type TenantConfig, type VariablePriceInput,
 } from './meterReading.ts';
 
 const input = (over: Partial<VariablePriceInput>): VariablePriceInput => ({ ...emptyVariablePrice(), ...over });
@@ -62,9 +62,9 @@ const category: Category = { id: 'water', name: '水道', unit: '㎥', billable:
 const row: ContractRow = {
   id: 'C1', invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true },
   billable: { water_usage: true }, unitPrices: { water_usage: 400 }, fixedCharges: {},
-  sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '',
+  sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds: [],
 };
-const meters: Meter[] = [
+const meters: MeterShare[] = [
   { id: 'M1', subItemId: 'water_usage', code: 'W-1', label: '1F', tenantId: 'T1', rowIndex: 0, usage: 20 },
   { id: 'M2', subItemId: 'water_usage', code: 'W-2', label: '1F', tenantId: 'T1', rowIndex: 0, usage: 14.3, unitPrice: 999 },
 ];
@@ -133,13 +133,13 @@ const electricBuilding = (amountInclusive: number | null, unitPrice = 5): Buildi
 const electricRow = (id: string, basic: number): ContractRow => ({
   id, invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true },
   billable: { basic: true, light: true }, unitPrices: {}, fixedCharges: { basic },
-  sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '',
+  sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds: [],
 });
 const electricTenants: TenantConfig[] = [
   { id: 'T1', name: 'A', splitEnabled: false, rows: [electricRow('C1', 10000)], invoiceSplitByUnit: false, expected: 0 },
   { id: 'T2', name: 'B', splitEnabled: false, rows: [electricRow('C2', 0)], invoiceSplitByUnit: false, expected: 0 },
 ];
-const electricMeters: Meter[] = [
+const electricMeters: MeterShare[] = [
   { id: 'E1', subItemId: 'light', code: 'E-1', label: '2F', tenantId: 'T1', rowIndex: 0, usage: 600 },
   { id: 'E2', subItemId: 'light', code: 'E-2', label: '3F', tenantId: 'T2', rowIndex: 0, usage: 400 },
 ];

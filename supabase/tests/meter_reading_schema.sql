@@ -18,7 +18,8 @@ begin
     'asset_meter_category_setting', 'asset_meter_sub_item', 'asset_meter_surcharge',
     'meter_reading_contract', 'meter_reading_contract_item', 'asset_meter',
     'meter_reading_month', 'meter_reading_month_surcharge', 'meter_reading_entry',
-    'meter_reading_confirmed_amount'
+    'meter_reading_confirmed_amount',
+    'asset_meter_unit_assignment', 'meter_reading_contract_unit', 'meter_reading_break'
   ] loop
     if to_regclass('public.' || table_name) is null then
       raise exception '% is missing', table_name;
