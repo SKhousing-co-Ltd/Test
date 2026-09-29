@@ -204,13 +204,14 @@ function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
 
   return <main className="auth-screen">
     <section className="auth-showcase">
-      <div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div>
-      <div className="auth-message"><p className="eyebrow">PROPERTY OPERATIONS</p><h1>契約業務を、<br />もっと見通しよく。</h1><p>契約の進捗、対応期限、チームの動きを一つのポータルで管理します。</p></div>
-      <div className="auth-preview"><span>業務データを一元管理</span><strong>LIVE</strong><p>契約・レントロール・発注支払・収支を最新状態で確認</p></div>
+      <div className="brand auth-brand"><span className="brand-mark">要</span><span>KANAME</span></div>
+      <div className="auth-architecture" aria-hidden="true"><span /><span /><span /></div>
+      <div className="auth-message"><p className="eyebrow">PROPERTY OPERATIONS</p><p className="auth-tagline">A MORE EFFICIENT<br />PROPERTY TOMORROW</p></div>
+      <div className="auth-preview"><span>Knowledge, Assets, Navigation</span><strong>KANAME</strong><p>Administration・Management・Efficiency</p></div>
     </section>
     <section className="auth-form-area">
       <div className="auth-form-wrap">
-        <div className="mobile-brand brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div>
+        <div className="mobile-brand brand"><span className="brand-mark">要</span><span>KANAME</span></div>
         <p className="eyebrow">WELCOME</p><h2>{isSignUp ? 'アカウントを作成' : 'おかえりなさい'}</h2><p className="muted">{isSignUp ? '必要事項を入力して利用を開始してください。' : 'ログインして業務をはじめましょう。'}</p>
         <form onSubmit={submit} noValidate>
           {isSignUp && <label>氏名<input value={name} onChange={(e) => setName(e.target.value)} placeholder="例）山田 太郎" autoComplete="name" /></label>}
@@ -236,7 +237,7 @@ function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut:
   const userName = profile.employee?.employee_name ?? profile.email;
   const updateSidebarPinned = (next: boolean) => { setSidebarPinned(next); localStorage.setItem('sidebar-pinned', String(next)); };
   return <div className={`portal-shell ${sidebarPinned ? 'sidebar-pinned' : 'sidebar-unpinned'}`}><NavLink to="/appsuite-sync" className="appsuite-sync-shortcut">AppSuite同期</NavLink>
-    <aside className="sidebar"><button type="button" className={`sidebar-pin ${sidebarPinned ? 'is-pinned' : 'is-unpinned'}`} aria-pressed={sidebarPinned} aria-label={sidebarPinned ? 'サイドバーのピン留めを解除' : 'サイドバーをピン留め'} title={sidebarPinned ? 'ピン留め中（クリックで解除）' : 'ピン留めする'} onClick={() => updateSidebarPinned(!sidebarPinned)}><span aria-hidden="true">📌</span></button><div className="brand"><span className="brand-mark">S</span><span>SHARE PORTAL</span></div><p className="workspace-label">WORKSPACE</p>
+    <aside className="sidebar"><button type="button" className={`sidebar-pin ${sidebarPinned ? 'is-pinned' : 'is-unpinned'}`} aria-pressed={sidebarPinned} aria-label={sidebarPinned ? 'サイドバーのピン留めを解除' : 'サイドバーをピン留め'} title={sidebarPinned ? 'ピン留め中（クリックで解除）' : 'ピン留めする'} onClick={() => updateSidebarPinned(!sidebarPinned)}><span aria-hidden="true">📌</span></button><div className="brand"><span className="brand-mark">要</span><span>KANAME</span></div><p className="workspace-label">WORKSPACE</p>
       <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/change-requests" className="nav-item"><span>✓</span>対応依頼</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/procurement" className="nav-item"><span>◫</span>発注・請求・支払</NavLink><NavLink to="/billing-codes" className="nav-item"><span>＃</span>テナント請求</NavLink><NavLink to="/contract-information" className="nav-item"><span>◈</span>契約情報</NavLink><NavLink to="/rent-roll" className="nav-item"><span>▤</span>レントロール</NavLink><NavLink to="/parking" className="nav-item"><span>Ⓟ</span>駐車場台帳</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/contract-documents" className={({ isActive }) => isActive || location.pathname.endsWith('/document') ? 'nav-item active' : 'nav-item'}><span>▤</span>契約書作成</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{(profile.role === 'admin' || profile.role === 'manager') && <NavLink to="/admin/parking-fee-cleanup" className="nav-item"><span>¥</span>駐車料金一括整備</NavLink>}{profile.role === 'admin' && <><NavLink to="/admin/case-progress-migration" className="nav-item"><span>⇄</span>案件移行検証</NavLink><NavLink to="/admin/schema-explorer" className="nav-item"><span>◎</span>スキーマ探索</NavLink><NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink></>}</nav>
       {profile.role === 'admin' && <><p className="workspace-label">設定</p><nav><NavLink to="/settings/assets" className="nav-item"><span>▤</span>アセット設定</NavLink><NavLink to="/settings/tenant-billing" className="nav-item"><span>⚙</span>テナント請求設定</NavLink></nav></>}
       <p className="workspace-label">COMING SOON</p><nav className="disabled-nav"><span><i>▤</i>物件管理</span><span><i>◫</i>収支管理</span><span><i>♙</i>マスタ管理</span></nav>
