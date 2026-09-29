@@ -168,7 +168,7 @@ export function allocateMeters(
     });
     const warnings: string[] = [];
     if (!meter.breaks.length) {
-      const changes = occupantChanges(meter, occupancy, period);
+      const changes = occupantChanges(meter, occupancy, period, billingFirst);
       if (changes.length) warnings.push(`検針期間中に入居テナントが替わっています（${changes.join('、')}）。中間検針を入力してください`);
     }
     if (segments.some((segment) => !segment.unitId)) warnings.push('区画が未割当です');
@@ -178,13 +178,16 @@ export function allocateMeters(
 }
 
 // 中間検針を入れていないメーターで、検針期間中に区画の入居者が替わった日です。
-export function occupantChanges(meter: AssetMeter, occupancy: Occupancy, period: Period): string[] {
+// 入退去はレントロール（契約）だけで判断します。請求する区画（請求月の1日時点の区画）の入居者の移り変わりを見て、
+// メーターの区画を選び直したこと（紐づけの切り替わり）は入退去として扱いません。
+export function occupantChanges(meter: AssetMeter, occupancy: Occupancy, period: Period, billingFirst = period.end): string[] {
   const changes: string[] = [];
+  const unitId = unitAt(meter, billingFirst);
+  if (!unitId) return changes;
   let previous: string | null = null;
   for (const date of eachDay(period)) {
     if (!occupancy.has(date)) continue;
-    const unitId = unitAt(meter, date);
-    const current = unitId ? occupancy.get(date)?.get(unitId)?.tenantId ?? '' : '';
+    const current = occupancy.get(date)?.get(unitId)?.tenantId ?? '';
     if (previous !== null && current !== previous) changes.push(`${slashDate(date)}から${current ? occupancy.get(date)?.get(unitId)?.tenantName ?? '' : '空室'}`);
     previous = current;
   }

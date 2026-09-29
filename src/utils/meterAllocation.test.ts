@@ -98,6 +98,19 @@ test('中間検針を入れていないのに期間中に入居者が替わっ�
   assert.deepEqual(occupantChanges(meter(), occupancy, period), ['2026/8/21から空室', '2026/9/1から名前T2']);
 });
 
+test('メーターの区画を選び直しただけなら、入退去として扱わない（入退去はレントロールで判断する）', () => {
+  // U1・U2 とも期間中ずっと同じテナントが入居。メーターを 9/1 から U1 → U2 に付け替えた。
+  const occupancy = occupancyOf([['2026-08-01', '2026-10-31', { U1: 'T1', U2: 'T2' }]]);
+  const moved = meter({ assignments: [
+    { id: 'A1', unitId: 'U1', from: '1900-01-01', to: '2026-08-31' },
+    { id: 'A2', unitId: 'U2', from: '2026-09-01', to: null },
+  ] });
+  assert.deepEqual(occupantChanges(moved, occupancy, period, '2026-09-01'), []);
+  const { allocations, shares } = allocateMeters([{ ...moved, usage: 10 }], () => 'usage', [tenant('T1'), tenant('T2')], occupancy, period, '2026-09-01');
+  assert.deepEqual(allocations[0].warnings, []);
+  assert.deepEqual(shares.map((share) => [share.tenantId, share.usage]), [['T2', 10]]);
+});
+
 test('入力の不備：期間外・重複・未入力の中間検針、マイナスの使用量', () => {
   assert.deepEqual(meterProblems(meter({ breaks: [{ date: '2026-09-05', reading: null, usage: 1 }] }), 'usage', period), ['中間検針の日付は検針期間（2026/8/6～2026/9/5）の途中にしてください']);
   assert.deepEqual(meterProblems(meter({ breaks: [{ date: '2026-08-20', reading: null, usage: 1 }, { date: '2026-08-20', reading: null, usage: 1 }] }), 'usage', period), ['中間検針の日付が重複しています']);
