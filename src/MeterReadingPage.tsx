@@ -9,8 +9,8 @@ import {
 } from './utils/meterReading';
 import { computeMonth, confirmMeterReading, loadConfirmedAmounts, loadMeterReading, newId, releaseMeterReading, saveMeterReading, type ConfirmedAmount, type MeterReadingSnapshot } from './utils/meterReadingStore';
 import {
-  addDays, inputModeLabel, monthFirst, reassignUnit, slashDate, totalUsage, unitAt,
-  type AllocatedSegment, type AssetMeter, type InputMode, type MeterBreak, type Occupancy, type UnitOption,
+  addDays, monthFirst, reassignUnit, slashDate, unitAt,
+  type AllocatedSegment, type AssetMeter, type MeterBreak, type Occupancy, type UnitOption,
 } from './utils/meterAllocation';
 import { periodRange } from './utils/billingDates';
 import { supabase } from './lib/supabase';
@@ -80,7 +80,6 @@ const sumModes: SumMode[] = ['aggregate', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 const taxModes: TaxMode[] = ['exclusive', 'inclusive'];
 const priceModes: PriceMode[] = ['fixed', 'variable'];
-const inputModes: InputMode[] = ['usage', 'reading'];
 const unitLabel = (unit: UnitOption | undefined) => unit ? [unit.floor, unit.name || unit.code].filter(Boolean).join(' ') : '';
 const shortDate = (value: string) => slashDate(value).replace(/^\d{4}\//, '');
 const utilityKindOf: Record<CategoryId, string> = { electric: 'electricity', water: 'water', gas: 'gas' };
@@ -392,9 +391,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     const unit = unitById.get(unitId);
     updateMeter(meter.id, { assignments: reassignUnit(meter.assignments, unitId, billingFirst, newId), ...(unit && !meter.label ? { label: floorLabel(unit.floor) } : {}) });
   };
-  // 前月指針を書き換えると手入力扱いにし、前月の当月指針では上書きしません。
-  const setPreviousReading = (meter: AssetMeter, value: number | null) => updateMeter(meter.id, { previousReading: value, previousReadingManual: true });
-  const resetPreviousReading = (meter: AssetMeter) => updateMeter(meter.id, { previousReading: baseline?.previousMonthReadings[meter.id] ?? null, previousReadingManual: false });
   const updateBreak = (meter: AssetMeter, index: number, patch: Partial<MeterBreak>) => updateMeter(meter.id, { breaks: meter.breaks.map((row, position) => position === index ? { ...row, ...patch } : row) });
   const addBreak = (meter: AssetMeter, date = '') => updateMeter(meter.id, { breaks: [...meter.breaks, { date, reading: null, usage: null }] });
   const removeBreak = (meter: AssetMeter, index: number) => updateMeter(meter.id, { breaks: meter.breaks.filter((_, position) => position !== index) });
@@ -648,7 +644,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       })()}
 
       {subItem && subItem.kind === 'custom' && currentMode === 'input' && (() => {
-        const reading = subItem.inputMode === 'reading';
         const unit = category.unit;
         const usageRows = usageTable(subItem, category);
         const allShares = usageRows.flatMap((group) => group.meters);
@@ -657,35 +652,26 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         const totalAmount = usageRows.reduce((sum, group) => sum + (group.result?.amount ?? 0), 0);
         const totalGroupUsage = usageRows.reduce((sum, group) => sum + (group.result?.usage ?? 0), 0);
         const subMeters = meters.filter((row) => row.subItemId === subItem.id);
-        const detailMeters = subMeters.filter((row) => row.breaks.length || row.exchange);
+        const detailMeters = subMeters.filter((row) => row.breaks.length);
         const changed = calculated.allocations.filter((row) => row.meter.subItemId === subItem.id && row.warnings.length);
         const usageText = (value: number) => `${formatUsage(value, subItem.usageDisplayDigits)} ${unit}`;
         const payer = (segment: AllocatedSegment) => segment.tenantName || (segment.unitId ? '空室（請求しません）' : '区画が未割当（請求しません）');
-        const readingInput = (value: number | null, onChange: (value: number | null) => void, placeholder = '—') =>
-          <OptionalNumberInput value={value} digits={3} placeholder={placeholder} onChange={onChange} />;
         return <>
         <div className="meter-table-wrap">
         <table className="meter-table meter-input-table">
-          <colgroup><col className="meter-input-col-floor" /><col className="meter-input-col-tenant" /><col className="meter-input-col-price" /><col className="meter-input-col-code" />{reading && <><col className="meter-input-col-usage" /><col className="meter-input-col-usage" /></>}<col className="meter-input-col-usage" /><col className="meter-input-col-sum" /><col className="meter-input-col-amount" /><col className="meter-input-col-amount" /></colgroup>
-          <thead><tr><th>階数</th><th>テナント名</th><th>単価</th><th>メーター番号</th>{reading && <><th>前月指針</th><th>当月指針</th></>}<th>使用量</th><th>使用合計</th><th>使用料</th><th>テナント使用料合計</th></tr></thead>
+          <colgroup><col className="meter-input-col-floor" /><col className="meter-input-col-tenant" /><col className="meter-input-col-price" /><col className="meter-input-col-code" /><col className="meter-input-col-usage" /><col className="meter-input-col-sum" /><col className="meter-input-col-amount" /><col className="meter-input-col-amount" /></colgroup>
+          <thead><tr><th>階数</th><th>テナント名</th><th>単価</th><th>メーター番号</th><th>使用量</th><th>使用合計</th><th>使用料</th><th>テナント使用料合計</th></tr></thead>
           <tbody>{usageRows.map((group) => group.meters.map((item, position) => {
             const info = segmentOfShare(item);
             const meter = info?.meter;
+            // 中間検針のあるメーターは、使用量を下の欄で入力します。
             const split = Boolean(meter && allocationByMeter.get(meter.id)!.segments.length > 1);
-            // 中間検針・メーター交換のあるメーターは、指針・使用量を下の欄で入力します。
-            const detail = split || Boolean(meter?.exchange);
             return <tr key={item.id} className={position > 0 ? undefined : group.floorSpan ? 'meter-input-floor-first' : 'meter-input-first'}>
               {position === 0 && group.floorSpan > 0 && <td rowSpan={group.floorSpan} className="meter-input-floor">{group.floor || '—'}</td>}
               {position === 0 && <td rowSpan={group.meters.length} className="meter-col-name">{group.name ? <strong>{group.name}</strong> : <span className="meter-muted">{group.vacancy === 'vacant' ? '空室' : '区画が未割当'}</span>}</td>}
               <td className="numeric">{group.priceOf(item) === null ? '' : `${group.priceOf(item)} 円`}</td>
               <td className="meter-input-code">{item.code}</td>
-              {reading && (detail || !meter
-                ? <td colSpan={2} className="meter-muted meter-center">{split ? '中間検針（下の欄で入力）' : 'メーター交換（下の欄で入力）'}</td>
-                : <>
-                  <td className={meter.previousReadingManual ? 'meter-reading-manual' : undefined}>{readingInput(meter.previousReading, (value) => setPreviousReading(meter, value), '未入力')}</td>
-                  <td>{readingInput(meter.currentReading, (value) => updateMeter(meter.id, { currentReading: value }), '未入力')}</td>
-                </>)}
-              <td>{reading || detail || !meter
+              <td>{split || !meter
                 ? <span className="numeric">{usageText(item.usage)}{split && info ? <small className="meter-segment-period">{shortDate(info.segment.from)}～{shortDate(info.segment.to)}</small> : null}</span>
                 : <><NumberInput group="usage" value={meter.usage} digits={subItem.usageDisplayDigits} onChange={(usage) => updateMeter(meter.id, { usage })} /><span className="meter-unit">{unit}</span></>}</td>
               {position === 0 && <td rowSpan={group.meters.length} className="numeric">{group.result ? `${formatUsage(group.result.usage, subItem.usageRoundingDigits)} ${unit}` : ''}</td>}
@@ -697,14 +683,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
           }))}</tbody>
           <tfoot>
             <tr>
-              <td colSpan={reading ? 6 : 4} className="meter-input-total-label">合計</td>
+              <td colSpan={4} className="meter-input-total-label">合計</td>
               <td className="numeric">{usageText(totalUsageAll)}</td>
               <td className="numeric">{formatUsage(totalGroupUsage, subItem.usageRoundingDigits)} {unit}</td>
               <td className="numeric">{yen.format(totalAmount)} 円</td>
               <td className="numeric meter-total">{yen.format(totalAmount)} 円</td>
             </tr>
             {vacantUsage !== 0 && <tr className="meter-vacant-row">
-              <td colSpan={reading ? 6 : 4} className="meter-input-total-label">うち空室・区画未割当（請求しません）</td>
+              <td colSpan={4} className="meter-input-total-label">うち空室・区画未割当（請求しません）</td>
               <td className="numeric">{usageText(vacantUsage)}</td>
               <td colSpan={3} className="meter-muted">テナントへの請求分 {usageText(totalUsageAll - vacantUsage)}</td>
             </tr>}
@@ -720,18 +706,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
 
         <div className="meter-break-panel">
           <div className="meter-settings-heading">
-            <h4>中間検針{reading ? '・メーター交換' : ''}</h4>
-            <p>月の途中で入退去があったメーターは、区切りの日{reading ? 'の指針' : 'までの使用量'}を入力します。区切りの日までを前の区間、翌日からを次の区間とし、各区間の入居テナントに請求します（入居者のいない区間は空室分として請求しません）。</p>
+            <h4>中間検針</h4>
+            <p>月の途中で入退去があったメーターは、区切りの日までの使用量を入力します。区切りの日までを前の区間、翌日からを次の区間とし、各区間の入居テナントに請求します（入居者のいない区間は空室分として請求しません）。</p>
           </div>
           <div className="meter-break-actions">
             <select value="" onChange={(event) => { const target = subMeters.find((row) => row.id === event.target.value); if (target) addBreak(target); }}>
               <option value="">中間検針を追加するメーター…</option>
               {subMeters.map((row) => <option key={row.id} value={row.id}>{row.code || '番号なし'}　{unitLabel(unitById.get(unitAt(row, billingFirst)))}</option>)}
             </select>
-            {reading && <select value="" onChange={(event) => { const target = subMeters.find((row) => row.id === event.target.value); if (target) updateMeter(target.id, { exchange: { removedReading: null, installedReading: null } }); }}>
-              <option value="">メーター交換を入力するメーター…</option>
-              {subMeters.filter((row) => !row.exchange).map((row) => <option key={row.id} value={row.id}>{row.code || '番号なし'}　{unitLabel(unitById.get(unitAt(row, billingFirst)))}</option>)}
-            </select>}
           </div>
           {detailMeters.map((meter) => {
             const allocation = allocationByMeter.get(meter.id);
@@ -741,45 +723,23 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <b>{meter.code || '番号なし'}</b>
                 <span>{unitLabel(unitById.get(unitAt(meter, billingFirst))) || '区画が未割当'}</span>
                 <span className="meter-muted">検針期間 {readingPeriodText}</span>
-                <span className="meter-break-total">使用量（全体）{usageText(totalUsage(meter, subItem.inputMode))}</span>
               </div>
               <table className="meter-table meter-break-table">
                 <tbody>
-                  {reading && <tr>
-                    <th>前月指針</th>
-                    <td className={meter.previousReadingManual ? 'meter-reading-manual' : undefined}>{readingInput(meter.previousReading, (value) => setPreviousReading(meter, value), '未入力')}</td>
-                    <td colSpan={2} className="meter-muted">{meter.previousReadingManual ? <>手入力 <button type="button" className="text-button" onClick={() => resetPreviousReading(meter)}>前月の当月指針に戻す</button></> : '前月の当月指針'}</td>
-                  </tr>}
-                  {!reading && <tr>
+                  <tr>
                     <th>使用量（全体）</th>
                     <td><NumberInput group="break" value={meter.usage} digits={subItem.usageDisplayDigits} onChange={(usage) => updateMeter(meter.id, { usage })} /><span className="meter-unit">{unit}</span></td>
                     <td colSpan={2} />
-                  </tr>}
-                  {reading && meter.exchange && <tr>
-                    <th>メーター交換</th>
-                    <td className="meter-break-exchange">
-                      <label>旧メーター撤去時指針{readingInput(meter.exchange.removedReading, (value) => updateMeter(meter.id, { exchange: { ...meter.exchange!, removedReading: value } }))}</label>
-                      <label>新メーター設置時指針{readingInput(meter.exchange.installedReading, (value) => updateMeter(meter.id, { exchange: { ...meter.exchange!, installedReading: value } }))}</label>
-                    </td>
-                    <td className="meter-muted">使用量＝（撤去時−前月）＋（当月−設置時）</td>
-                    <td><button type="button" className="meter-delete" onClick={() => updateMeter(meter.id, { exchange: null })}>取消</button></td>
-                  </tr>}
+                  </tr>
                   {meter.breaks.map((row, index) => <tr key={index}>
                     <th>中間検針 {index + 1}</th>
                     <td className="meter-break-exchange">
                       <label>区切りの日<input type="date" value={row.date} min={calculated.period.start} max={addDays(calculated.period.end, -1)} onChange={(event) => updateBreak(meter, index, { date: event.target.value })} /></label>
-                      {reading
-                        ? <label>その日の指針{readingInput(row.reading, (value) => updateBreak(meter, index, { reading: value }))}</label>
-                        : <label>区切りまでの使用量{readingInput(row.usage, (value) => updateBreak(meter, index, { usage: value }))}</label>}
+                      <label>区切りまでの使用量<OptionalNumberInput value={row.usage} digits={3} placeholder="—" onChange={(value) => updateBreak(meter, index, { usage: value })} /></label>
                     </td>
                     <td className="meter-muted">{row.date ? `${slashDate(row.date)}までの入居：${occupantName(unitAt(meter, row.date), row.date) || '空室'}` : '退去日など、前の区間の最後の日を入れます'}</td>
                     <td><button type="button" className="meter-delete" onClick={() => removeBreak(meter, index)}>削除</button></td>
                   </tr>)}
-                  {reading && <tr>
-                    <th>当月指針</th>
-                    <td>{readingInput(meter.currentReading, (value) => updateMeter(meter.id, { currentReading: value }), '未入力')}</td>
-                    <td colSpan={2} />
-                  </tr>}
                 </tbody>
               </table>
               {segments.length > 1 && <table className="meter-table meter-segment-table">
@@ -846,8 +806,8 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
           </div>
           <table className="meter-table meter-settings-table meter-subitem-table">
-            <colgroup><col style={{ width: 132 }} /><col style={{ width: 260 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 96 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 128 }} /><col style={{ width: 150 }} /><col style={{ width: 118 }} /><col style={{ width: 56 }} /></colgroup>
-            <thead><tr><th>小分類</th><th>請求明細の項目</th><th>単価計算方法</th><th>既定単価</th><th>請求書に<br />単価を表示</th><th>税区分</th><th>税抜換算の丸め<small>小数点以下</small></th><th>使用量の丸め</th><th>入力使用量の表示桁数</th><th>既定の請求期間</th><th>検針値の入力</th><th /></tr></thead>
+            <colgroup><col style={{ width: 132 }} /><col style={{ width: 260 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 96 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 128 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
+            <thead><tr><th>小分類</th><th>請求明細の項目</th><th>単価計算方法</th><th>既定単価</th><th>請求書に<br />単価を表示</th><th>税区分</th><th>税抜換算の丸め<small>小数点以下</small></th><th>使用量の丸め</th><th>入力使用量の表示桁数</th><th>既定の請求期間</th><th /></tr></thead>
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id && (item.kind !== 'basic' || row.fixedBillable)).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
@@ -864,7 +824,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               </span> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <select value={item.usageDisplayDigits} onChange={(event) => updateSubItem(item.id, { usageDisplayDigits: Number(event.target.value) })}>{displayDigitOptions}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <select value={item.periodPatternId} onChange={(event) => updateSubItem(item.id, { periodPatternId: event.target.value })}><option value="">未設定</option>{periodPatterns.map((pattern, index) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{patternMark(index)} {pattern.pattern_name}</option>)}</select> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' ? <select value={item.inputMode} aria-label={`${item.name}の検針値の入力方式`} onChange={(event) => updateSubItem(item.id, { inputMode: event.target.value as InputMode })}>{inputModes.map((value) => <option key={value} value={value}>{inputModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}
             {building.surcharges.filter((item) => item.categoryId === row.id && item.billable).map((item) => <tr key={item.id} className="meter-surcharge-row">
@@ -872,7 +831,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               <td><select value={item.lineItemId} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, lineItemId: event.target.value } : target) })}><option value="">未設定</option>{lineItemsFor(item.categoryId).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td><td className="meter-muted">—</td>
               <td><select value={item.periodPatternId} onChange={(event) => setBuilding({ ...building, surcharges: building.surcharges.map((target) => target.id === item.id ? { ...target, periodPatternId: event.target.value } : target) })}><option value="">未設定</option>{periodPatterns.map((pattern, index) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{patternMark(index)} {pattern.pattern_name}</option>)}</select></td>
-              <td className="meter-muted">—</td>
               <td />
             </tr>)}</tbody>
           </table>

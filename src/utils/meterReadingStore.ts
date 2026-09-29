@@ -192,7 +192,8 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
         variablePriceMethod: row.variable_price_method, unitPriceRoundingDigits: row.unit_price_rounding_digits, unitPriceRoundingMode: row.unit_price_rounding_mode,
         monthly: monthlyBySubItem.get(row.asset_meter_sub_item_id) ?? emptyVariablePrice(),
         showUnitPriceOnInvoice: row.show_unit_price_on_invoice,
-        inputMode: row.input_mode ?? 'usage',
+        // 検針値は使用量で入力します（指針入力は使いません。以前に指針入力へ切り替えた小分類も使用量に戻します）。
+        inputMode: 'usage',
       });
     }
   }
