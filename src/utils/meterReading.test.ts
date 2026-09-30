@@ -179,6 +179,17 @@ test('請求書作成へは、小分類・増額分ごとに使用量・単価�
   assert.deepEqual(lines.filter((line) => line.tenantId === 'T2').map((line) => line.sourceName), ['電灯', '電気増額分']);
 });
 
+test('請求書作成へは、電気→水道→ガスの順に小分類の並び順で渡し、増額分は分類の最後に置く', () => {
+  const building = electricBuilding(null, 5);
+  building.categories.push({ id: 'water', name: '水道', unit: '㎥', billable: true, fixedBillable: false });
+  // 並び順の確認のため、水道の小分類を電気より前に登録しておきます。
+  building.subItems.unshift({ ...building.subItems[1], id: 'water_usage', categoryId: 'water', name: '水道', defaultUnitPrice: 100 });
+  const meters: MeterShare[] = [...electricMeters, { id: 'W1', subItemId: 'water_usage', code: 'W-1', label: '1F', tenantId: 'T1', rowIndex: 0, usage: 10 }];
+  const tenants = [{ ...electricTenants[0], rows: [{ ...electricRow('C1', 10000), billable: { basic: true, light: true, water_usage: true } }] }];
+  const { results, building: effective } = calculateAll(tenants, building, meters);
+  assert.deepEqual(meterInvoiceLines(results, effective).map((line) => line.sourceName), ['基本料', '電灯', '電気増額分', '水道']);
+});
+
 test('請求書に単価を出さない小分類は、単価を空欄にして渡す（数量・金額は出す）', () => {
   const building = electricBuilding(null);
   building.subItems[1] = { ...building.subItems[1], showUnitPriceOnInvoice: false };

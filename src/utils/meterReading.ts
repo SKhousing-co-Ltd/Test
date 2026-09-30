@@ -349,24 +349,42 @@ export type MeterInvoiceLine = {
   tenantId: string; tenantName: string; invoiceNo: number; lineItemId: string | null; sourceName: string;
   usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string;
 };
+// 請求書に載せる順番です。分類（電気→水道→ガス）ごとに、小分類の並び順、その後に増額分を並べます。
+export function meterSourceOrder(building: BuildingConfig): Map<string, number> {
+  const categoryOrder: CategoryId[] = ['electric', 'water', 'gas'];
+  const ids = categoryOrder.flatMap((categoryId) => [
+    ...building.subItems.filter((row) => row.categoryId === categoryId).map((row) => row.id),
+    ...building.surcharges.filter((row) => row.categoryId === categoryId).map((row) => row.id),
+  ]);
+  return new Map(ids.map((id, index) => [id, index]));
+}
 export function meterInvoiceLines(results: TenantResult[], building: BuildingConfig): MeterInvoiceLine[] {
+  const order = meterSourceOrder(building);
+  // テナントの中では、分割行をまたいでも小分類の順に並べます（同じ小分類は分割行の順）。
+  return results.flatMap((result) => {
+    const lines = tenantInvoiceLines(result, building).map((line, index) => ({ line, index }));
+    return lines.sort((left, right) => (order.get(left.line.sourceId) ?? 9999) - (order.get(right.line.sourceId) ?? 9999) || left.index - right.index)
+      .map(({ line: { sourceId: _sourceId, ...line } }) => line);
+  });
+}
+function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Array<MeterInvoiceLine & { sourceId: string }> {
   const unitOf = (id: CategoryId) => building.categories.find((row) => row.id === id)?.unit ?? '';
-  return results.flatMap((result) => result.rows.flatMap((row) => {
+  return result.rows.flatMap((row) => {
     const shared = { tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
-    const subItems = row.categories.flatMap((category) => category.subItems.filter((item) => item.amount).map((item): MeterInvoiceLine => ({
-      ...shared, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
+    const subItems = row.categories.flatMap((category) => category.subItems.filter((item) => item.amount).map((item) => ({
+      ...shared, sourceId: item.subItem.id, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
       // 基本料は固定額なので、数量・単価は出しません。単価が違うメーターが混ざる行と、
       // 請求書に単価を出さない設定の小分類も、単価は空欄にします。
       usage: item.subItem.kind === 'basic' ? null : item.usage, unit: item.subItem.kind === 'basic' ? '' : unitOf(category.category.id),
       unitPrice: item.subItem.kind !== 'basic' && item.subItem.showUnitPriceOnInvoice && item.groups.length === 1 ? item.groups[0].unitPrice : null,
       amount: item.amount, periodPatternId: item.subItem.periodPatternId,
     })));
-    const surcharges = row.surcharges.filter((item) => item.amount).map((item): MeterInvoiceLine => ({
-      ...shared, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
+    const surcharges = row.surcharges.filter((item) => item.amount).map((item) => ({
+      ...shared, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
       usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: item.surcharge.unitPrice, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,
     }));
     return [...subItems, ...surcharges];
-  }));
+  });
 }
 
 // 増額分の単価計算です。

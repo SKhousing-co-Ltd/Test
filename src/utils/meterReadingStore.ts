@@ -8,7 +8,7 @@ import type {
   BuildingConfig, Category, CategoryId, ContractRow, PriceMode, RoundingMode, SubItem, SumMode, Surcharge, TaxMode, TenantConfig, TenantResult,
   SurchargePurchase, VariablePriceInput, VariablePriceMethod,
 } from './meterReading';
-import { calculateAll, emptySurchargePurchase, emptyVariablePrice, meterInvoiceLines, subItemDefaults, type MeterInvoiceLine } from './meterReading.ts';
+import { calculateAll, emptySurchargePurchase, emptyVariablePrice, meterInvoiceLines, meterSourceOrder, subItemDefaults, type MeterInvoiceLine } from './meterReading.ts';
 import type { AssetMeter, InputMode, MeterBreak, Occupancy, Period, UnitAssignment, UnitOption } from './meterAllocation';
 import { allocateMeters, basicRatios, meteredUnitIds, monthFirst, occupancyRange, occupantsIn, readingPeriod, totalUsage } from './meterAllocation.ts';
 import { loadSavedTenantOrder, orderTenants } from './tenantOrder.ts';
@@ -571,9 +571,12 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
   }
   const confirmed = await loadConfirmedAmounts(client, assetId, year, month);
   // 確定した金額は、画面と同じテナント・契約行の順に並べます。
+  // テナントの中は、分類（電気→水道→ガス）・小分類の順（増額分は分類の最後）、同じ小分類は契約行の順です。
   const tenantOrder = new Map(snapshot.tenants.map((tenant, index) => [tenant.id, index]));
+  const sourceOrder = meterSourceOrder(snapshot.building);
   const lines: MeterInvoiceLine[] = [...confirmed]
-    .sort((left, right) => (tenantOrder.get(left.tenantId) ?? 9999) - (tenantOrder.get(right.tenantId) ?? 9999) || left.rowNo - right.rowNo)
+    .sort((left, right) => (tenantOrder.get(left.tenantId) ?? 9999) - (tenantOrder.get(right.tenantId) ?? 9999)
+      || (sourceOrder.get(left.sourceId) ?? 9999) - (sourceOrder.get(right.sourceId) ?? 9999) || left.rowNo - right.rowNo)
     .filter((row) => row.amount)
     .map((row) => {
       const subItem = row.sourceKind === 'subItem' ? snapshot.building.subItems.find((item) => item.id === row.sourceId) : undefined;

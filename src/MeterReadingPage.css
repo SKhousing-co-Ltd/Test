@@ -310,3 +310,7 @@ input.meter-number-input { text-align: right; font-variant-numeric: tabular-nums
 .meter-assign-since { display: block; margin-top: 2px; font-size: 10px; }
 .meter-row-units { min-width: 160px; }
 .meter-row-units .meter-check { display: flex; margin: 2px 0; }
+
+/* 設定タブのチェックボックスは小さめにします。 */
+.meter-settings-panel input[type='checkbox'] { width: 14px; height: 14px; min-width: 0; margin: 0; padding: 0; vertical-align: middle; }
+.meter-settings-panel .meter-check input[type='checkbox'] { margin-right: 4px; }
