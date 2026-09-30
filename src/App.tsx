@@ -28,6 +28,7 @@ import { AssetManagementPage } from './AssetManagementPage';
 import { TenantBillingSettingsPage } from './TenantBillingSettingsPage';
 import { ContractInformationPage } from './ContractInformationPage';
 import { CaseProgressMigrationPage } from './CaseProgressMigrationPage';
+import { ContractAdminPage } from './ContractAdminPage';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
@@ -140,6 +141,7 @@ function App() {
             <Route path="/procurement" element={<ProcurementPage canEdit={profile?.role !== 'viewer'} canManageVendors={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/rent-roll" element={<RentRollPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} />} />
             <Route path="/contract-information" element={<ContractInformationPage canEditBillingTerms={canEditContractBillingTerms} />} />
+            <Route path="/admin/contracts" element={<AdminContractPage role={profile?.role ?? 'viewer'} />} />
             <Route path="/billing-codes" element={<TenantBillingPage canEdit={profile?.role !== 'viewer'} canManageSettings={profile?.role === 'admin'} />} />
             <Route path="/parking" element={<ParkingPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/change-requests" element={<ChangeRequestWorkbenchPage role={profile?.role ?? 'viewer'} />} />
@@ -174,6 +176,10 @@ function ProtectedRoute({ session, profile, isLoading }: { session: Session | nu
 
 function AdminOnly({ role, children }: { role: AccountRole; children: ReactNode }) {
   return role === 'admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
+}
+
+function AdminContractPage({ role }: { role: AccountRole }) {
+  return role === 'admin' || role === 'manager' ? <ContractAdminPage /> : <Navigate to="/dashboard" replace />;
 }
 
 function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
@@ -239,6 +245,7 @@ function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut:
   return <div className={`portal-shell ${sidebarPinned ? 'sidebar-pinned' : 'sidebar-unpinned'}`}><NavLink to="/appsuite-sync" className="appsuite-sync-shortcut">AppSuite同期</NavLink>
     <aside className="sidebar"><button type="button" className={`sidebar-pin ${sidebarPinned ? 'is-pinned' : 'is-unpinned'}`} aria-pressed={sidebarPinned} aria-label={sidebarPinned ? 'サイドバーのピン留めを解除' : 'サイドバーをピン留め'} title={sidebarPinned ? 'ピン留め中（クリックで解除）' : 'ピン留めする'} onClick={() => updateSidebarPinned(!sidebarPinned)}><span aria-hidden="true">📌</span></button><div className="brand"><span className="brand-mark">要</span><span>KANAME</span></div><p className="workspace-label">WORKSPACE</p>
       <nav><NavLink to="/dashboard" className="nav-item"><span>▦</span>ダッシュボード</NavLink><NavLink to="/change-requests" className="nav-item"><span>✓</span>対応依頼</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink><NavLink to="/procurement" className="nav-item"><span>◫</span>発注・請求・支払</NavLink><NavLink to="/billing-codes" className="nav-item"><span>＃</span>テナント請求</NavLink><NavLink to="/contract-information" className="nav-item"><span>◈</span>契約情報</NavLink><NavLink to="/rent-roll" className="nav-item"><span>▤</span>レントロール</NavLink><NavLink to="/parking" className="nav-item"><span>Ⓟ</span>駐車場台帳</NavLink><NavLink to="/contracts" className="nav-item"><span>◇</span>契約業務フロー</NavLink><NavLink to="/contract-documents" className={({ isActive }) => isActive || location.pathname.endsWith('/document') ? 'nav-item active' : 'nav-item'}><span>▤</span>契約書作成</NavLink><NavLink to="/leasing-map" className="nav-item"><span>▱</span>リーシング図面</NavLink>{(profile.role === 'admin' || profile.role === 'manager') && <NavLink to="/admin/parking-fee-cleanup" className="nav-item"><span>¥</span>駐車料金一括整備</NavLink>}{profile.role === 'admin' && <><NavLink to="/admin/case-progress-migration" className="nav-item"><span>⇄</span>案件移行検証</NavLink><NavLink to="/admin/schema-explorer" className="nav-item"><span>◎</span>スキーマ探索</NavLink><NavLink to="/accounts" className="nav-item"><span>♙</span>アカウント管理</NavLink></>}</nav>
+      {(profile.role === 'admin' || profile.role === 'manager') && <><p className="workspace-label">契約管理</p><nav><NavLink to="/admin/contracts" className="nav-item"><span>◇</span>契約台帳管理</NavLink></nav></>}
       {profile.role === 'admin' && <><p className="workspace-label">設定</p><nav><NavLink to="/settings/assets" className="nav-item"><span>▤</span>アセット設定</NavLink><NavLink to="/settings/tenant-billing" className="nav-item"><span>⚙</span>テナント請求設定</NavLink></nav></>}
       <p className="workspace-label">COMING SOON</p><nav className="disabled-nav"><span><i>▤</i>物件管理</span><span><i>◫</i>収支管理</span><span><i>♙</i>マスタ管理</span></nav>
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ContractDetailModal } from './ContractDetailModal';
 import { RentRollReconciliationPanel } from './RentRollReconciliationPanel';
 import type { ContractCapabilities } from './lib/contract-capabilities';
@@ -85,6 +86,7 @@ type RentRollRow = {
   sourceSheetName?: string;
   sourceRowNumber?: number | null;
   terminationScheduled?: boolean;
+  snapshotAsOfDate?: string;
 };
 
 type SnapshotSource = {
@@ -206,7 +208,7 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
   };
 }
 
-function toSnapshotRow(source: SnapshotSource, sourceFileName: string): RentRollRow {
+function toSnapshotRow(source: SnapshotSource, sourceFileName: string, snapshotAsOfDate: string): RentRollRow {
   const terminationScheduled = (source.review_flags ?? '').includes('termination') || (source.source_status ?? '').includes('解約');
   const status: RentRollStatus = source.occupancy_status === 'vacant' ? 'vacant' : terminationScheduled ? 'scheduled' : 'occupied';
   const rent = Number(source.monthly_rent_amount ?? 0);
@@ -225,7 +227,7 @@ function toSnapshotRow(source: SnapshotSource, sourceFileName: string): RentRoll
     deposit: Number(source.deposit_amount ?? 0), securityDeposit: Number(source.security_deposit_amount ?? 0),
     keyMoney: Number(source.key_money_amount ?? 0), renewalFee: Number(source.renewal_fee_amount ?? 0), parkingScope: null,
     parkingSpaceNumber: '', parkingAccessCode: '', parkingVehicle: '', sourceFileName, sourceSheetName: source.source_sheet_name,
-    sourceRowNumber: source.source_row_number, terminationScheduled,
+    sourceRowNumber: source.source_row_number, terminationScheduled, snapshotAsOfDate,
   };
 }
 
@@ -234,6 +236,7 @@ function formatCurrency(value: number): string {
 }
 
 export function RentRollPage({ capabilities }: { capabilities: ContractCapabilities }) {
+  const navigate = useNavigate();
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [propertyId, setPropertyId] = useState('');
   const [rows, setRows] = useState<RentRollRow[]>([]);
@@ -318,7 +321,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
             .eq('rent_roll_snapshot_batch_id', batch.data.rent_roll_snapshot_batch_id)
             .eq('property_id', propertyId).order('floor_label').order('source_row_number');
           if (detail.error) loadError = detail.error;
-          else loadedRows = (detail.data as SnapshotSource[] ?? []).map((row) => toSnapshotRow(row, batch.data!.source_file_name));
+          else loadedRows = (detail.data as SnapshotSource[] ?? []).map((row) => toSnapshotRow(row, batch.data!.source_file_name, asOfDate));
         }
       } else {
         const result = await supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: asOfDate });
@@ -483,7 +486,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
               <td>{row.leaseTermLabel}</td><td>{row.contractPeriod}</td><td>{row.tenantName && row.leaseContractUnitId && capabilities.canViewContract ? <button type="button" className="rent-roll-tenant-link" onClick={() => setSelectedLeaseContractUnitId(row.leaseContractUnitId)}>{row.tenantName}</button> : row.tenantName || '—'}</td><td className="access-code">{row.parkingAccessCode || '—'}</td><td>{row.parkingVehicle || '—'}</td>
               <td className="numeric">{row.area == null ? '—' : numberFormatter.format(row.area)}</td>
               <td className="numeric emphasis">{formatCurrency(row.rent)}</td><td className="numeric">{formatCurrency(row.commonCharge)}</td><td className="numeric emphasis">{formatCurrency(row.rentCommonTotal)}</td><td className="numeric">{formatCurrency(row.parkingAmount)}</td><td className="numeric">{formatCurrency(row.otherMonthlyAmount)}</td>
-              <td className="numeric">{formatCurrency(row.deposit)}</td><td className="numeric">{formatCurrency(row.securityDeposit)}</td><td className="numeric">{formatCurrency(row.keyMoney)}</td><td className="numeric">{formatCurrency(row.renewalFee)}</td>
+              <td className="numeric">{formatCurrency(row.deposit)}</td><td className="numeric">{formatCurrency(row.securityDeposit)}</td><td className="numeric">{formatCurrency(row.keyMoney)}</td><td className="numeric">{formatCurrency(row.renewalFee)}</td>{viewMode === 'snapshot' && row.status !== 'vacant' && <td><button type="button" className="secondary-button snapshot-contractize-button" onClick={() => navigate('/admin/contracts', { state: { propertyId, snapshot: { tenant_name: row.tenantName, unit_code: row.unitCode, unit_name: row.unitName, unit_type: ['parking', 'office', 'retail', 'residential', 'storage', 'equipment', 'other'].includes(row.unitType) ? row.unitType : 'equipment', contract_type: row.productCategory, monthly_rent_amount: row.rent, monthly_common_charge_amount: row.commonCharge, deposit_amount: row.deposit, snapshot_as_of_date: row.snapshotAsOfDate, source_file_name: row.sourceFileName, source_sheet_name: row.sourceSheetName, source_row_number: row.sourceRowNumber } } })}>契約化</button></td>}
             </tr>)}
           </tbody>
         </table>
