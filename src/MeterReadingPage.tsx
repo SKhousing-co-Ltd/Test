@@ -9,7 +9,7 @@ import {
 } from './utils/meterReading';
 import { computeMonth, confirmMeterReading, loadConfirmedAmounts, loadMeterReading, newId, releaseMeterReading, saveMeterReading, type ConfirmedAmount, type MeterReadingSnapshot } from './utils/meterReadingStore';
 import {
-  addDays, monthFirst, reassignUnit, slashDate, unitAt,
+  addDays, monthFirst, ORIGIN_DATE, reassignUnit, slashDate, unitAt,
   type AllocatedSegment, type AssetMeter, type MeterBreak, type Occupancy, type UnitOption,
 } from './utils/meterAllocation';
 import { periodRange } from './utils/billingDates';
@@ -389,7 +389,11 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   // 区画を選び直すと、対象月の1日からその区画にします（それより前の月は元の区画のまま）。
   const assignUnit = (meter: AssetMeter, unitId: string) => {
     const unit = unitById.get(unitId);
-    updateMeter(meter.id, { assignments: reassignUnit(meter.assignments, unitId, billingFirst, newId), ...(unit && !meter.label ? { label: floorLabel(unit.floor) } : {}) });
+    // 保存済みの区画が無いメーター（新しく追加した・未割当だった）は、選び直しても履歴を分けず当初からその区画にします。
+    const saved = baseline?.meters.find((row) => row.id === meter.id)?.assignments ?? [];
+    const assignments = saved.length ? reassignUnit(meter.assignments, unitId, billingFirst, newId)
+      : unitId ? [{ id: meter.assignments[0]?.id ?? newId(), unitId, from: ORIGIN_DATE, to: null }] : [];
+    updateMeter(meter.id, { assignments, ...(unit && !meter.label ? { label: floorLabel(unit.floor) } : {}) });
   };
   const updateBreak = (meter: AssetMeter, index: number, patch: Partial<MeterBreak>) => updateMeter(meter.id, { breaks: meter.breaks.map((row, position) => position === index ? { ...row, ...patch } : row) });
   const addBreak = (meter: AssetMeter, date = '') => updateMeter(meter.id, { breaks: [...meter.breaks, { date, reading: null, usage: null }] });
@@ -769,7 +773,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <thead><tr><th>メーター番号</th><th>階数</th><th>区画</th><th>入居テナント（{slashDate(billingFirst)}時点）</th><th>単価の上書き</th><th /></tr></thead>
             <tbody>{meters.filter((row) => row.subItemId === subItem.id).map((row) => {
               const unitId = unitAt(row, billingFirst);
-              const current = row.assignments.find((item) => item.unitId === unitId && item.from <= billingFirst && (item.to === null || billingFirst <= item.to));
               const later = row.assignments.filter((item) => item.from > billingFirst);
               return <tr key={row.id}>
                 <td><input value={row.code} placeholder="メーター番号" onChange={(event) => updateMeter(row.id, { code: event.target.value })} /></td>
@@ -779,7 +782,6 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                     <option value="">未割当</option>
                     {units.map((item) => <option key={item.id} value={item.id}>{unitLabel(item)}</option>)}
                   </select>
-                  {current && current.from > '1900-01-01' && <small className="meter-muted meter-assign-since">{slashDate(current.from)}から</small>}
                   {later.length > 0 && <small className="meter-warn meter-assign-since">{later.map((item) => `${slashDate(item.from)}から${unitLabel(unitById.get(item.unitId))}`).join('、')}（選び直すと置き換わります）</small>}
                 </td>
                 <td>{unitId ? occupantName(unitId) || <span className="meter-muted">空室</span> : <span className="meter-muted">—</span>}</td>
