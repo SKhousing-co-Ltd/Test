@@ -413,7 +413,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const subItem = categorySubItems.find((row) => row.id === currentSubTab);
   // 選んでいる小分類の請求期間です。小分類の設定で選んだ請求期間パターンから、検針日をもとに求めます。
   // 増額分タブでは、増額分で選んだ既定の請求期間を出します。
-  const tabPatternId = subItem?.kind === 'custom' ? subItem.periodPatternId : currentSubTab === 'surcharge' ? categorySurcharges[0]?.periodPatternId ?? '' : null;
+  const tabPatternId = subItem ? subItem.periodPatternId : currentSubTab === 'surcharge' ? categorySurcharges[0]?.periodPatternId ?? '' : null;
   const subItemPattern = tabPatternId ? periodPatterns.find((row) => row.billing_period_pattern_id === tabPatternId) : undefined;
   const subItemRange = subItemPattern ? periodRange(calendarYear, period.month, subItemPattern, { current: meterDate, previous: previousMeterDate }) : null;
   const updatePurchase = (id: string, patch: Partial<SurchargePurchase>) => setBuilding((current) => ({ ...current, surcharges: current.surcharges.map((row) => row.id === id ? { ...row, purchase: { ...row.purchase, ...patch } } : row) }));
@@ -823,7 +823,8 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <select value={item.usageRoundingMode} onChange={(event) => updateSubItem(item.id, { usageRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
               </span> : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <select value={item.usageDisplayDigits} onChange={(event) => updateSubItem(item.id, { usageDisplayDigits: Number(event.target.value) })}>{displayDigitOptions}</select> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' ? <select value={item.periodPatternId} onChange={(event) => updateSubItem(item.id, { periodPatternId: event.target.value })}><option value="">未設定</option>{periodPatterns.map((pattern, index) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{patternMark(index)} {pattern.pattern_name}</option>)}</select> : <span className="meter-muted">—</span>}</td>
+              {/* 基本料も、請求書の明細項目１に出す請求期間を選べます。 */}
+              <td><select value={item.periodPatternId} aria-label={`${item.name}の既定の請求期間`} onChange={(event) => updateSubItem(item.id, { periodPatternId: event.target.value })}><option value="">未設定</option>{periodPatterns.map((pattern, index) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{patternMark(index)} {pattern.pattern_name}</option>)}</select></td>
               <td>{item.kind === 'custom' && <button type="button" className="meter-delete" onClick={() => removeSubItem(item.id)}>削除</button>}</td>
             </tr>)}
             {building.surcharges.filter((item) => item.categoryId === row.id && item.billable).map((item) => <tr key={item.id} className="meter-surcharge-row">
