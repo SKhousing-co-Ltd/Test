@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
 import { periodText } from './utils/billingDates';
 import {
-  buildInvoiceSheet, csvHeaders, loadSavedInvoiceSheet, numberValue, recalcInvoices, saveInvoiceSheet, taxCategories,
+  buildInvoiceSheet, csvHeaders, invalidAmountRows, loadSavedInvoiceSheet, numberValue, recalcInvoices, saveInvoiceSheet, taxCategories,
   type DuePattern, type InvoiceRow, type InvoiceSheet, type PeriodPattern,
 } from './utils/invoiceSheet';
 import './InvoiceCreationPage.css';
@@ -66,15 +66,15 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const [savedAt, setSavedAt] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  // 最新データから作り直した内容です。「最新データで作り直す」で使い、保存した内容と金額が違うときはお知らせします。
-  const [fresh, setFresh] = useState<InvoiceSheet | null>(null);
   // 合計行の高さは内容で変わるため、見出し行の吸着位置を実測値に合わせて2行をまとめて固定します。
   const totalRowRef = useRef<HTMLTableRowElement>(null);
   const [totalRowHeight, setTotalRowHeight] = useState(42);
   const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
 
   // 明細を変えたら、請求書ごとの金額（税抜・消費税・税込）と税率を出し直します。
-  const setRows = (update: (current: InvoiceRow[]) => InvoiceRow[]) => { setRowsState((current) => recalcInvoices(update(current))); setDirty(true); };
+  // 保存中に直した内容を保存済み扱いにしないよう、編集のたびに版を進めます。
+  const revision = useRef(0);
+  const setRows = (update: (current: InvoiceRow[]) => InvoiceRow[]) => { setRowsState((current) => recalcInvoices(update(current))); revision.current += 1; setDirty(true); };
   const applySheet = (sheet: InvoiceSheet) => {
     setRowsState(recalcInvoices(sheet.rows)); setDuePatternByInvoice(sheet.duePatternByInvoice); setDueDateByPattern(sheet.dueDateByPattern);
     setPeriodPatternByRow(sheet.periodPatternByRow); setPeriodRangeByPattern(sheet.periodRangeByPattern);
@@ -90,17 +90,23 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       if (!supabase || !propertyId) { setRowsState([]); setLoading(false); return; }
       setLoading(true); setError(''); setNotice('');
       try {
-        const [built, saved] = await Promise.all([
+        // 最新データから作れなくても（レントロールの読み込み失敗など）、保存した内容は開けるようにします。
+        const [builtResult, savedResult] = await Promise.allSettled([
           buildInvoiceSheet(supabase, propertyId, propertyName, calendarYear, period.month),
           loadSavedInvoiceSheet(supabase, propertyId, calendarYear, period.month),
         ]);
         if (cancelled) return;
-        setDuePatterns(built.duePatterns); setPeriodPatterns(built.periodPatterns); setMeterNotice(built.meterNotice);
-        setFresh(built.sheet);
-        applySheet(saved?.sheet ?? built.sheet);
+        if (savedResult.status === 'rejected') throw savedResult.reason;
+        const saved = savedResult.value;
+        const built = builtResult.status === 'fulfilled' ? builtResult.value : null;
+        if (!built && !saved) throw builtResult.status === 'rejected' ? builtResult.reason : new Error('請求データを読み込めませんでした');
+        if (!built && builtResult.status === 'rejected') setError(`最新データから作れなかったため、保存した内容を表示しています: ${builtResult.reason instanceof Error ? builtResult.reason.message : ''}`);
+        setDuePatterns(built?.duePatterns ?? []); setPeriodPatterns(built?.periodPatterns ?? []); setMeterNotice(built?.meterNotice ?? '');
+
+        applySheet(saved?.sheet ?? built!.sheet);
         setSavedAt(saved?.savedAt ?? '');
         setDirty(false);
-        if (saved && sheetTotal(saved.sheet.rows) !== sheetTotal(built.sheet.rows)) {
+        if (saved && built && sheetTotal(saved.sheet.rows) !== sheetTotal(built.sheet.rows)) {
           setNotice(`保存した後に、レントロール・検針データの金額が変わっています（保存した内容 ${yen.format(sheetTotal(saved.sheet.rows))}円／最新 ${yen.format(sheetTotal(built.sheet.rows))}円）。最新の内容にするには「最新データで作り直す」を押してください。`);
         }
       } catch (loadError) {
@@ -117,10 +123,15 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
 
   const save = async () => {
     if (!supabase || !propertyId) return;
+    // 数値として読めない金額があると請求額が狂うため、保存させません。
+    const invalid = invalidAmountRows(rows);
+    if (invalid.length) { setError(`金額が数値として読めない明細があります（請求書番号 ${[...new Set(invalid.map((row) => rows.find((item) => item.invoiceKey === row.invoiceKey)?.values[0] ?? ''))].join('・')}）。直してから保存してください。`); return; }
     setSaving(true); setError('');
+    const savingRevision = revision.current;
     try {
       const at = await saveInvoiceSheet(supabase, propertyId, calendarYear, period.month, currentSheet());
-      setSavedAt(at); setDirty(false); setNotice('保存しました。入金明細・請求明細にこの内容を表示します。');
+      setSavedAt(at); setDirty(revision.current !== savingRevision);
+      setNotice(revision.current !== savingRevision ? '保存しました。保存中に直した内容はまだ保存されていません。もう一度保存してください。' : '保存しました。入金明細・請求明細にこの内容を表示します。');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存できませんでした');
     } finally {
@@ -128,10 +139,20 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
     }
   };
   // 手で直した内容を捨てて、最新のレントロール・検針データから作り直します（保存するまでDBは変わりません）。
-  const rebuild = () => {
-    if (!fresh) return;
+  // 押した時点のデータで作り直します。
+  const rebuild = async () => {
+    if (!supabase || !propertyId) return;
     if (!window.confirm('手で直した内容を捨てて、最新のレントロール・検針データから作り直します。よろしいですか（保存するまで確定しません）。')) return;
-    applySheet(fresh); setDirty(true); setNotice('最新データで作り直しました。内容を確認して保存してください。');
+    setLoading(true); setError('');
+    try {
+      const built = await buildInvoiceSheet(supabase, propertyId, propertyName, calendarYear, period.month);
+      setDuePatterns(built.duePatterns); setPeriodPatterns(built.periodPatterns); setMeterNotice(built.meterNotice);
+      applySheet(built.sheet); revision.current += 1; setDirty(true); setNotice('最新データで作り直しました。内容を確認して保存してください。');
+    } catch (buildError) {
+      setError(buildError instanceof Error ? buildError.message : '最新データから作り直せませんでした');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { localStorage.setItem(columnWidthStorageKey, JSON.stringify(columnWidths)); }, [columnWidths]);
@@ -198,7 +219,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       <section><h4>入金期限</h4>{duePatterns.length ? <ul>{duePatterns.map((pattern) => <li key={pattern.billing_due_date_pattern_id}><span title={duePatternLabel(pattern)}>{duePatternMark(pattern)}</span><input value={dueDateByPattern[pattern.billing_due_date_pattern_id] ?? ''} placeholder="YYYY/M/D" aria-label={`入金期限 ${duePatternLabel(pattern)}`} onChange={(event) => changeDueDate(pattern.billing_due_date_pattern_id, event.target.value)} /></li>)}</ul> : <p>請求設定で登録してください</p>}</section>
       <section><h4>請求期間</h4>{periodPatterns.length ? <ul>{periodPatterns.map((pattern) => <li key={pattern.billing_period_pattern_id}><span>{pattern.pattern_name}</span><input value={periodRangeByPattern[pattern.billing_period_pattern_id]?.start ?? ''} placeholder="YYYY/M/D" aria-label={`請求期間 ${pattern.pattern_name} 開始日`} onChange={(event) => changePeriodRange(pattern.billing_period_pattern_id, 'start', event.target.value)} /><em>～</em><input value={periodRangeByPattern[pattern.billing_period_pattern_id]?.end ?? ''} placeholder="YYYY/M/D" aria-label={`請求期間 ${pattern.pattern_name} 終了日`} onChange={(event) => changePeriodRange(pattern.billing_period_pattern_id, 'end', event.target.value)} /><em>分</em></li>)}</ul> : <p>請求設定で登録してください</p>}</section>
     </div>
-    <div className="invoice-creation-actions"><div className="invoice-note-field"><label><input type="checkbox" checked={showInvoiceNote} onChange={(event) => setInvoiceNoteEnabled(event.target.checked)} />請求書備考を表示</label><input value={invoiceNote} disabled={!showInvoiceNote} onChange={(event) => updateInvoiceNote(event.target.value)} placeholder="全請求書共通の備考" /></div><button type="button" className="secondary-button" disabled={loading || !fresh} onClick={rebuild}>最新データで作り直す</button><button type="button" className="primary-button" disabled={loading || saving || !dirty || !propertyId} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button><button className="primary-button" disabled>CSVを出力</button></div></header>
+    <div className="invoice-creation-actions"><div className="invoice-note-field"><label><input type="checkbox" checked={showInvoiceNote} onChange={(event) => setInvoiceNoteEnabled(event.target.checked)} />請求書備考を表示</label><input value={invoiceNote} disabled={!showInvoiceNote} onChange={(event) => updateInvoiceNote(event.target.value)} placeholder="全請求書共通の備考" /></div><button type="button" className="secondary-button" disabled={loading || saving || !propertyId} onClick={() => void rebuild()}>最新データで作り直す</button><button type="button" className="primary-button" disabled={loading || saving || !dirty || !propertyId} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button><button className="primary-button" disabled>CSVを出力</button></div></header>
     {error && <p className="invoice-creation-notice invoice-creation-error">{error}</p>}
     {notice && <p className="invoice-creation-notice">{notice}</p>}
     {meterNotice && <p className="invoice-creation-notice invoice-creation-error">{meterNotice}</p>}

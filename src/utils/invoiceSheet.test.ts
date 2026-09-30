@@ -1,7 +1,7 @@
 // 請求書作成の金額の出し直しと、入金明細・請求明細への集計を確かめます。
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyValues, recalcInvoices, statementRows, taxRateOf, type InvoiceRow } from './invoiceSheet.ts';
+import { emptyValues, invalidAmountRows, parseAmount, recalcInvoices, statementRows, taxRateOf, type InvoiceRow } from './invoiceSheet.ts';
 
 const line = (invoiceKey: string, index: number, amount: string, category: string, chargeType: string, first: Partial<Record<number, string>> = {}): InvoiceRow => {
   const values = emptyValues();
@@ -33,6 +33,19 @@ test('税区分を変えると、消費税と税率が変わる', () => {
   const changed = recalcInvoices(rows.map((row, index) => index === 1 ? { ...row, values: row.values.map((value, column) => column === 18 ? '非課税' : value) } : row));
   assert.deepEqual([changed[0].values[5], changed[0].values[6], changed[0].values[7], changed[1].values[19]], ['2,000', '100', '2,100', '']);
   assert.equal(taxRateOf('不課税'), '');
+});
+
+test('金額は全角数字・マイナス記号も読み、数値として読めない値は保存前に止める', () => {
+  assert.equal(parseAmount('１２，０００'), 12000);
+  assert.equal(parseAmount('－500'), -500);
+  assert.equal(parseAmount('△1,000'), -1000);
+  assert.equal(parseAmount('1,000円'), 1000);
+  assert.equal(parseAmount(''), 0);
+  assert.equal(parseAmount('1-2'), null);
+  const rows = recalcInvoices([line('T1:C1', 0, '1-2', '課税', '賃料'), line('T1:C1', 1, '－500', '課税', '値引')]);
+  // 読めない金額は0として計算し（NaN にはしない）、保存前のチェックで見つけます。
+  assert.deepEqual([rows[0].values[5], rows[0].values[6], rows[0].values[7]], ['-500', '-50', '-550']);
+  assert.deepEqual(invalidAmountRows(rows).map((row) => row.id), ['T1:C1:0']);
 });
 
 test('入金明細・請求明細は、請求書1通を1行にして請求種別ごとに合計する', () => {

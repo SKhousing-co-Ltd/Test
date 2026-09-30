@@ -39,7 +39,17 @@ const taxRate = 0.1;
 const yen = new Intl.NumberFormat('ja-JP');
 const usageText = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 3 });
 const unitPriceText = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 4 });
-export const numberValue = (value: string) => Number(String(value ?? '').split(',').join('').replace(/[^\d.-]/g, '') || 0);
+// 金額の文字列を数値にします。全角数字・全角カンマ・マイナス記号（－ − △）・円記号も受け付けます。
+// 数値として読めないとき（1-2 など）は null を返します。空欄は0です。
+export const parseAmount = (value: string): number | null => {
+  const text = String(value ?? '').normalize('NFKC').replace(/[−–—△▲]/g, '-').replace(/[,\s円¥￥]/g, '');
+  if (!text) return 0;
+  if (!/^-?\d+(\.\d+)?$/.test(text)) return null;
+  return Number(text);
+};
+export const numberValue = (value: string) => parseAmount(value) ?? 0;
+// 金額・数量・単価の列に、数値として読めない値が入っている明細です（保存の前に直してもらいます）。
+export const invalidAmountRows = (rows: InvoiceRow[]) => rows.filter((row) => parseAmount(row.values[15]) === null);
 const fixedItems: Array<{ name: string; field: keyof Pick<RentRollSource, 'monthly_rent_amount' | 'monthly_common_charge_amount' | 'monthly_parking_amount' | 'other_monthly_amount'> }> = [
   { name: '賃料', field: 'monthly_rent_amount' }, { name: '共益費', field: 'monthly_common_charge_amount' }, { name: '駐車料', field: 'monthly_parking_amount' }, { name: 'その他', field: 'other_monthly_amount' },
 ];
@@ -231,7 +241,8 @@ export function statementRows(rows: InvoiceRow[]): StatementRow[] {
       };
       result.set(row.invoiceKey, statement);
     }
-    statement.amounts[row.chargeType] = (statement.amounts[row.chargeType] ?? 0) + numberValue(row.values[15]);
+    const chargeType = row.chargeType ?? '';
+    statement.amounts[chargeType] = (statement.amounts[chargeType] ?? 0) + numberValue(row.values[15]);
   }
   return [...result.values()];
 }
