@@ -115,6 +115,19 @@ begin
     raise exception '契約期限依頼が重複生成されました';
   end if;
 
+  if to_regprocedure('private.auto_renew_ordinary_contracts(date)') is null
+     or to_regprocedure('private.sync_contract_deadlines_monthly()') is null then
+    raise exception '普通賃貸借の自動更新関数が登録されていません';
+  end if;
+
+  perform private.auto_renew_ordinary_contracts(date '2026-10-01');
+  if (select renewal_due_date from public.lease_contract where lease_contract_id = ordinary_contract) <> date '2027-09-30' then
+    raise exception '普通賃貸借の次回更新予定日が1年後へ自動更新されていません';
+  end if;
+  if (select status from public.change_request where request_type = 'contract_renewal_due' and lease_contract_id = ordinary_contract) <> 'applied' then
+    raise exception '自動更新済みの対応依頼がappliedになっていません';
+  end if;
+
   insert into public.lease_contract(
     tenant_id, contract_status, contract_type, lease_term_type,
     contract_start_date, contract_end_date, renewed_from_contract_id
