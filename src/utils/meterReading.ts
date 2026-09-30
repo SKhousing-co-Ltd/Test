@@ -381,7 +381,8 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
     })));
     const surcharges = row.surcharges.filter((item) => item.amount).map((item) => ({
       ...shared, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
-      usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: item.surcharge.unitPrice, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,
+      // 増額分は請求しますが、単価は請求書に載せません（数量・金額だけ出します）。
+      usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: null, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,
     }));
     return [...subItems, ...surcharges];
   });

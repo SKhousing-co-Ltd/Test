@@ -586,7 +586,8 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
         tenantId: row.tenantId, tenantName: row.tenantName, invoiceNo: row.invoiceNo, lineItemId: row.lineItemId, sourceName: row.sourceName,
         usage: basic ? null : row.usage, unit: basic ? '' : row.usageUnit,
         // 請求書に単価を出すかどうかは、確定後も今の小分類の設定に従います。
-        unitPrice: subItem && !subItem.showUnitPriceOnInvoice ? null : row.unitPrice, amount: row.amount,
+        // 増額分の単価は請求書に載せません。
+        unitPrice: row.sourceKind === 'surcharge' || (subItem && !subItem.showUnitPriceOnInvoice) ? null : row.unitPrice, amount: row.amount,
         periodPatternId: subItem?.periodPatternId ?? surcharge?.periodPatternId ?? '',
       };
     });

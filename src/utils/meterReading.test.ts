@@ -173,7 +173,7 @@ test('請求書作成へは、小分類・増額分ごとに使用量・単価�
   assert.deepEqual(lines.filter((line) => line.tenantId === 'T1').map((line) => [line.sourceName, line.lineItemId, line.invoiceNo, line.usage, line.unit, line.unitPrice, line.amount, line.periodPatternId]), [
     ['基本料', 'L-basic', 2, null, '', null, 10000, ''],
     ['電灯', 'L-light', 2, 600, 'kWh', 30, 18000, 'P1'],
-    ['電気増額分', 'L-up', 2, 600, 'kWh', 10, 6000, 'P2'],
+    ['電気増額分', 'L-up', 2, 600, 'kWh', null, 6000, 'P2'],
   ]);
   // 金額0の小分類（T2の基本料）は載せません。
   assert.deepEqual(lines.filter((line) => line.tenantId === 'T2').map((line) => line.sourceName), ['電灯', '電気増額分']);
