@@ -37,6 +37,7 @@ type WorkflowContractCandidate = {
 };
 type ContractUnitOption = {
   lease_contract_unit_id: string;
+  lease_contract_id?: string;
   lease_start_date: string | null;
   lease_end_date: string | null;
   leased_area_sqm: number | null;
@@ -334,7 +335,6 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
   const [termType, setTermType] = useState<'ordinary' | 'fixed_term' | ''>(contract?.lease_term_type ?? '');
   const [renewalDueDate, setRenewalDueDate] = useState(contract?.renewal_due_date ?? '');
   const [contractEndDate, setContractEndDate] = useState(contract?.contract_end_date ?? '');
-  const [nextRenewalDate, setNextRenewalDate] = useState('');
   const [fixedAction, setFixedAction] = useState<'recontract' | 'move_out'>('recontract');
   const [newStartDate, setNewStartDate] = useState(nextDay(contract?.contract_end_date ?? null));
   const [newEndDate, setNewEndDate] = useState('');
@@ -353,7 +353,20 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
       key_money_amount: unit.key_money_amount == null ? '' : String(unit.key_money_amount),
       renewal_fee_amount: unit.renewal_fee_amount == null ? '' : String(unit.renewal_fee_amount),
     })));
+  const [confirmationUnits, setConfirmationUnits] = useState<ContractUnitOption[]>([]);
   const canManage = role === 'admin' || role === 'manager';
+
+  useEffect(() => {
+    if (!supabase || request.request_type !== 'contract_term_type_confirmation' || !contract?.lease_contract_id) return;
+    let cancelled = false;
+    void supabase.from('lease_contract_unit')
+      .select('lease_contract_unit_id, lease_contract_id, lease_start_date, lease_end_date, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, asset:asset_master(asset_name)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))')
+      .eq('lease_contract_id', contract.lease_contract_id)
+      .then(({ data, error }) => {
+        if (!cancelled && !error) setConfirmationUnits((data ?? []) as unknown as ContractUnitOption[]);
+      });
+    return () => { cancelled = true; };
+  }, [contract?.lease_contract_id, request.request_type]);
 
   useEffect(() => {
     if (!supabase || request.request_type !== 'fixed_term_contract_end' || !contract?.lease_contract_id) return;
@@ -381,6 +394,14 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
 
   if (!contract) return <section className="change-card"><p className="notice">対象契約が見つかりません。</p></section>;
 
+  const relationOne = <T,>(value: T | T[] | null | undefined): T | null => Array.isArray(value) ? value[0] ?? null : value ?? null;
+  const fallbackConfirmationUnits = contractUnits.filter((unit) => unit.lease_contract_id === contract?.lease_contract_id || relationOne(unit.contract)?.lease_contract_id === contract?.lease_contract_id);
+  const displayedConfirmationUnits = confirmationUnits.length ? confirmationUnits : fallbackConfirmationUnits;
+  const confirmationUnitValue = (unit: ContractUnitOption) => {
+    const unitMaster = relationOne(unit.unit);
+    return [unitMaster?.floor_label, unitMaster?.unit_code, unitMaster?.unit_name].filter(Boolean).join(' ') || '—';
+  };
+
   const confirmTerm = async () => {
     if (!supabase || !canManage || !termType) return;
     if (termType === 'fixed_term' && !contractEndDate) { onError('定期賃貸借の契約終了日は必須です。'); return; }
@@ -396,20 +417,6 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
     onWorking(false);
     if (error) { onError(`契約形態を確定できませんでした: ${error.message}`); return; }
     await onSaved('契約形態を確定しました。');
-  };
-
-  const updateRenewal = async () => {
-    if (!supabase || !canManage || !nextRenewalDate) return;
-    onWorking(true); onError('');
-    const { error } = await supabase.rpc('set_next_ordinary_renewal_due_date', {
-      p_change_request_id: request.change_request_id,
-      p_expected_request_row_version: request.row_version,
-      p_expected_contract_row_version: contract.row_version,
-      p_next_renewal_due_date: nextRenewalDate,
-    });
-    onWorking(false);
-    if (error) { onError(`次回更新予定日を設定できませんでした: ${error.message}`); return; }
-    await onSaved('次回更新予定日を設定し、契約を継続しました。');
   };
 
   const resolveFixed = async () => {
@@ -437,7 +444,19 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
     await onSaved(fixedAction === 'recontract' ? '旧契約を保持して再契約を作成しました。' : '退去の実終了日を確定しました。');
   };
 
-  if (request.request_type === 'contract_term_type_confirmation') return <section className="change-card">
+  if (request.request_type === 'contract_term_type_confirmation') return <>
+    <section className="change-card">
+      <h4>対象契約</h4>
+      <div className="change-diff-table contract-confirmation-table">
+        <div className="change-diff-head"><span>項目</span><span>内容</span></div>
+        <div><strong>物件</strong><span>{relationOne(relationOne(displayedConfirmationUnits[0]?.unit)?.asset)?.asset_name ?? '—'}</span></div>
+        <div><strong>種別</strong><span>{displayedConfirmationUnits.length ? [...new Set(displayedConfirmationUnits.map((unit) => relationOne(unit.unit)?.unit_type).filter(Boolean))].join('、') : '—'}</span></div>
+        <div><strong>区画</strong><span>{displayedConfirmationUnits.length ? displayedConfirmationUnits.map(confirmationUnitValue).join('、') : '—'}</span></div>
+        <div><strong>契約者名</strong><span>{contract?.tenant?.tenant_name ?? '—'}</span></div>
+        <div><strong>契約開始日</strong><span>{contract?.contract_start_date ?? '—'}</span></div>
+      </div>
+    </section>
+    <section className="change-card">
     <h4>契約書で契約形態を確認</h4><p>既存日付から推測せず、契約書の記載を確認して確定します。</p>
     <ChecklistBox items={['契約書で普通賃貸借か定期賃貸借かを確認します。', '定期賃貸借の場合は契約終了日も確認します。']} />
     <div className="change-item-editor">
@@ -453,13 +472,13 @@ function ContractDeadlineRequestEditor({ request, contract, contractUnits, role,
     <ActionButton className="primary-button" onClick={() => void confirmTerm()} disabled={working || !canManage || !termType} label="契約形態を確定" hint="内容を正本データへ反映します。" />
   </section>;
 
-  if (request.request_type === 'contract_renewal_due') return <section className="change-card">
-    <h4>次回更新予定日を設定</h4><p>契約は終了させず、同じ契約を継続します。現在: {String(request.source_payload.target_date ?? '—')}</p>
-    <ChecklistBox items={['契約書・更新通知で次回更新予定日を確認します。']} />
-    <label>次回更新予定日<input type="date" value={nextRenewalDate} onChange={(event) => setNextRenewalDate(event.target.value)} /></label>
-    <ChangeSummary rows={[{ label: '次回更新予定日', before: contract.renewal_due_date || '—', after: nextRenewalDate || '未入力' }]} />
-    <ActionButton className="primary-button" onClick={() => void updateRenewal()} disabled={working || !canManage || !nextRenewalDate} label="次回更新予定日を設定" hint="内容を正本データへ反映します。" />
-  </section>;
+  const isOrdinaryContract = contract.lease_term_type === 'ordinary' || Boolean(contract.renewal_due_date);
+  if (request.request_type === 'contract_renewal_due' || (request.request_type !== 'contract_term_type_confirmation' && isOrdinaryContract)) return <section className="change-card">
+    <h4>普通賃貸借の自動更新</h4><p>初回登録時に設定した次回更新予定日を基準に、月次処理で1年間自動更新します。解約・終了予定の契約は自動更新されません。</p>
+    <ChecklistBox items={['この対応依頼は月次の自動更新処理で処理されます。', '自動更新が完了すると対応依頼は「確定済み（applied）」になります。']} />
+    <ChangeSummary rows={[{ label: '現在の次回更新予定日', before: contract.renewal_due_date || '—', after: '自動更新待ち' }]} />
+  </section>
+  </>;
 
   return <section className="change-card">
     <h4>定期賃貸借の終了対応</h4><p>旧契約は変更・削除せず、再契約時は新しい契約を作成します。</p>
@@ -705,7 +724,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     setLoading(true); setError('');
     const { data, error: loadError } = await supabase.from('change_request')
       .select('change_request_id, request_type, status, source_type, title, summary, source_payload, proposed_payload, source_appsuite_record_id, target_appsuite_record_id, lease_contract_id, row_version, updated_at, source_record:appsuite_record!source_appsuite_record_id(app_id, data_id, ringi_number), items:change_request_item(change_request_item_id, entity_type, entity_id, field_name, current_value, proposed_value, validation_status, validation_message, import_issue:rent_roll_import_issue(source_file_name, source_sheet_name, source_row_number)), comments:change_request_comment(change_request_comment_id, body, created_at)')
-      .order('updated_at', { ascending: false });
+      .order('updated_at', { ascending: false }).range(0, 9999);
     setLoading(false);
     if (loadError) { setError(`対応依頼を読み込めませんでした: ${loadError.message}`); return; }
     const result = (data ?? []) as unknown as ChangeRequest[];
@@ -718,11 +737,11 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   useEffect(() => {
     if (!supabase) return;
     void Promise.all([
-      supabase.from('lease_contract_unit').select('lease_contract_unit_id, lease_start_date, lease_end_date, leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))'),
+      supabase.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, lease_start_date, lease_end_date, leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))').range(0, 9999),
       supabase.from('asset_master').select('asset_id, asset_name').order('asset_name'),
       supabase.from('tenant_master').select('tenant_id, tenant_name, external_tenant_code').order('tenant_name'),
       supabase.from('unit_master').select('unit_id, property_id, unit_code, unit_name, floor_label, is_active').order('unit_code'),
-      supabase.from('lease_contract').select('lease_contract_id, tenant_id, row_version, contract_status, contract_type, lease_term_type, contract_start_date, contract_end_date, renewal_due_date, actual_end_date, tenant:tenant_master(tenant_name)').neq('contract_status', 'draft').order('updated_at', { ascending: false }),
+      supabase.from('lease_contract').select('lease_contract_id, tenant_id, row_version, contract_status, contract_type, lease_term_type, contract_start_date, contract_end_date, renewal_due_date, actual_end_date, tenant:tenant_master(tenant_name)').neq('contract_status', 'draft').order('updated_at', { ascending: false }).range(0, 9999),
     ]).then(([contractUnitResult, propertyResult, tenantResult, unitResult, contractResult]) => {
       const firstError = contractUnitResult.error ?? propertyResult.error ?? tenantResult.error ?? unitResult.error ?? contractResult.error;
       if (firstError) { setError(`契約候補を読み込めませんでした: ${firstError.message}`); return; }
@@ -973,7 +992,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}</p>}
     <div className="change-queue-summary"><button className={filter === 'open' ? 'active' : ''} onClick={() => setFilter('open')}><strong>{openCount}</strong><span>未対応</span></button><button className={filter === 'on_hold' ? 'active' : ''} onClick={() => setFilter('on_hold')}><strong>{holdCount}</strong><span>保留</span></button><button className={filter === 'resolved' ? 'active' : ''} onClick={() => setFilter('resolved')}><strong>{resolvedCount}</strong><span>反映待ち</span></button><span className="change-queue-summary-note">表示中 {filtered.length}件 / 全{requests.length}件</span></div>
     <div className="change-global-filters"><select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">すべての種別</option>{Object.entries(requestTypeGroupLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">すべての発生元</option>{sourceTypes.map((source) => <option key={source} value={source}>{source === 'initial_import' ? 'Excel取込' : source === 'desknets' ? 'AppSuite' : source}</option>)}</select></div>
-    <div className="change-workbench-layout">
+     <div className="change-workbench-layout">
       <aside className="change-request-list"><header><div><h3>対応依頼</h3><p>未対応のものから順に確認します</p></div><button className="secondary-button" onClick={() => void recheckAll()} disabled={loading || rechecking}>{rechecking ? '再チェック中…' : '更新'}</button></header>
         <div className="change-filters"><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="open">要確認</option><option value="on_hold">保留</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option><option value="all">すべて</option></select><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="区画・テナント名・コードで検索" /></div>
         <div className="change-request-rows">{loading ? <p className="change-empty">読み込み中…</p> : filtered.length === 0 ? <p className="change-empty">{filter === 'open' && !search.trim() ? 'すべての要確認案件を処理しました。' : '該当する対応依頼はありません。'}</p> : filtered.map((request) => <button key={request.change_request_id} onClick={() => setSelectedId(request.change_request_id)} className={request.change_request_id === selectedId ? 'selected' : ''}><span className={`change-status ${request.status}`}>{statusLabel[request.status] ?? request.status}</span><strong>{request.title}</strong><small>{request.summary || '確認待ち'}</small></button>)}</div>
