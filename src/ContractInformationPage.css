@@ -33,6 +33,17 @@
 .contract-information-detail .contract-detail-grid { border-bottom: 1px solid #e8edf3; }
 .contract-information-detail .contract-information-notice { margin: 13px 17px 0; }
 .contract-information-detail .contract-information-table-wrap { margin: 0; }
+.dialog-backdrop { overflow: hidden; overscroll-behavior: contain; }
+.dialog.contract-information-dialog { width: min(1120px, calc(100vw - 48px)); max-width: none; max-height: calc(100vh - 48px); display: flex; flex-direction: column; overflow: hidden; }
+.contract-information-dialog-body { min-height: 0; overflow: auto; padding: 0 16px 28px; background: #f4f7fa; overscroll-behavior: contain; }
+.contract-information-dialog-body > .contract-information-section-heading,
+.contract-information-dialog-body > .contract-detail-grid,
+.contract-information-dialog-body > .contract-information-table-wrap,
+.contract-information-dialog-body > .contract-information-notice { background: #fff; }
+.contract-information-dialog .contract-detail-grid { border-bottom: 1px solid #e8edf3; }
+.contract-information-dialog .contract-information-notice { margin: 13px 17px 0; }
+.contract-information-dialog .contract-information-table-wrap { overflow-x: auto; }
+.contract-information-dialog .contract-information-table { min-width: 820px; }
 
 @media (max-width: 760px) {
   .contract-information-toolbar { align-items: stretch; flex-direction: column; }

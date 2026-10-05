@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Field, contractPeriod, date, leaseTermLabel, money, statusLabels, type ContractDetail, type ContractDetailResponse } from './ContractDetailModal';
 import { supabase } from './lib/supabase';
+import { Dialog } from './components/Dialog';
 import './ContractInformationPage.css';
 
 type PropertyOption = {
@@ -113,7 +114,7 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
       const { data, error: loadError } = await supabase
         .from('asset_master')
         .select('asset_id, asset_name, short_name')
-        .eq('is_tenant_billing_enabled', true)
+        .eq('is_rent_roll_visible', true)
         .order('asset_code');
       if (cancelled) return;
       if (loadError) {
@@ -315,7 +316,8 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
       </div>
     </div>
 
-    {selectedLeaseContractUnitId && <section className="contract-information-detail">
+    {selectedLeaseContractUnitId && <Dialog title="契約詳細" onClose={() => setSelectedLeaseContractUnitId(null)} className="contract-information-dialog">
+      <div className="contract-information-dialog-body">
       {detailLoading && <p className="contract-information-empty">契約情報を読み込んでいます。</p>}
       {detailError && <p className="contract-information-notice">{detailError}</p>}
       {!detailLoading && contract && <>
@@ -374,6 +376,7 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
           </table>
         </div>
       </>}
-    </section>}
+      </div>
+    </Dialog>}
   </section>;
 }
