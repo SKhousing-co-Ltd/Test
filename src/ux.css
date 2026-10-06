@@ -14,6 +14,19 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 .row-action { min-height: 30px; }
 .filter-panel select, .filter-panel .clear-button { min-height: 36px; }
 .document-message, .leasing-notice, .account-message { line-height: 1.55; }
+.monthly-year-summary { display: grid; grid-template-columns: 92px 62px repeat(4, minmax(170px, 1fr)); align-items: center; gap: 10px; width: 100%; white-space: nowrap; }
+.analysis-grid { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 14px; max-width: 980px; margin: 0 auto; padding: 6px 12px; }
+.analysis-grid > div { display: grid; gap: 7px; min-height: 68px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.analysis-grid span { color: #68788e; font-size: 12px; }
+.analysis-grid strong { color: #243b53; font-size: 18px; text-align: right; font-variant-numeric: tabular-nums; }
+.monthly-year-summary > span { display: grid; grid-template-columns: 68px minmax(96px, 1fr); align-items: baseline; gap: 6px; }
+.monthly-year-summary em { color: #718096; font-size: 11px; font-style: normal; }
+.monthly-year-summary strong, .monthly-year-summary > span:not(:first-of-type) { font-variant-numeric: tabular-nums; }
+.yearly-monthly-trend details { border-bottom: 1px solid #e7edf4; padding: 8px 0; }
+.yearly-monthly-trend summary { overflow-x: auto; padding: 4px 0; list-style-position: inside; }
+.yearly-monthly-trend .table-scroll { margin: 10px 0 4px 22px; }
+@media (max-width: 1100px) { .monthly-year-summary { grid-template-columns: 82px 52px repeat(4, minmax(145px, 1fr)); gap: 7px; } .monthly-year-summary > span { grid-template-columns: 58px minmax(86px, 1fr); } }
+@media (max-width: 760px) { .analysis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px; } }
 .map-tools button, .status-editor button { min-height: 32px; }
 
 @media (prefers-reduced-motion: reduce) {
