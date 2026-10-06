@@ -1,63 +1,91 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from './lib/supabase';
-import { loadSavedTenantOrder, orderTenants, tenantComparator } from './utils/tenantOrder';
+import { buildInvoiceSheet, loadSavedInvoiceSheet, statementRows, type StatementRow } from './utils/invoiceSheet';
 import type { BillingPeriod } from './TenantBillingControls';
 import './BillingStatementPage.css';
 
+// 入金明細表・請求明細表です。中身はすべて請求書作成の内容から作ります。
+//   請求書作成を保存していれば、その保存内容（手で直した金額・税区分なども含む）を、
+//   保存していなければ、請求書作成と同じくレントロール・検針データから作った内容を表示します。
+// 行は請求書1通ごとで、請求種別の列には明細の金額を請求種別ごとに合計して出し、
+// 小計・消費税・合計は請求書の金額（消費税は課税の明細の合計×10%、切り捨て）を使います。
 type StatementKind = 'payment' | 'invoice';
-type RentRollSource = { unit_id: string | null; unit_code: string; unit_name: string | null; floor_label: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number; monthly_common_charge_amount: number; monthly_parking_amount: number; other_monthly_amount: number };
-type BillingCode = { billing_code_id: string; tenant_id: string | null; issue_code: string; is_primary: boolean; match_status: string };
-type ContractAllocation = { lease_contract_unit_id: string; billing_code_id: string };
-type ContractUnit = { lease_contract_unit_id: string; lease_contract_id: string };
-type LineItemAllocation = { billing_code_id: string; line_item: { billing_charge_type_id: string } | null; group: { tenant_id: string | null } | null };
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string; sort_order?: number };
 type EnabledChargeType = { billing_charge_type_id: string };
-type StatementRow = { key: string; tenantId: string; code: string; floor: string; unitName: string; tenantName: string; rent: number; commonCharge: number; parking: number; other: number };
+type Column = { key: string; label: string };
 const currency = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 0 });
-const collator = new Intl.Collator('ja-JP', { numeric: true, sensitivity: 'base' });
-const floorOrder = (label: string) => { const normalized = label.normalize('NFKC').trim().toUpperCase(); const basement = normalized.match(/^B(\d+)/); if (basement) return -Number(basement[1]); const numeric = normalized.match(/-?\d+(?:\.\d+)?/); if (numeric) return Number(numeric[0]); if (normalized.includes('PH') || normalized.includes('屋上')) return 10000; return 5000; };
 const amount = (value: number) => value ? currency.format(value) : '—';
 const monthKey = (period: BillingPeriod) => `${period.fiscalYear + (period.month <= 3 ? 1 : 0)}${String(period.month).padStart(2, '0')}`;
-const referenceDate = (period: BillingPeriod) => `${period.fiscalYear + (period.month <= 3 ? 1 : 0)}-${String(period.month).padStart(2, '0')}-01`;
-const chargeAmount = (row: StatementRow, name: string) => name === '賃料' ? row.rent : name === '共益費' ? row.commonCharge : name === '駐車料' ? row.parking : name === 'その他' ? row.other : 0;
+const savedAtText = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`; };
 
 export function BillingStatementPage({ kind, propertyId, propertyName, period }: { kind: StatementKind; propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [rows, setRows] = useState<StatementRow[]>([]);
   const [chargeTypes, setChargeTypes] = useState<ChargeType[]>([]);
+  const [savedAt, setSavedAt] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  useEffect(() => { const load = async () => {
-    if (!supabase || !propertyId) { setRows([]); setChargeTypes([]); setLoading(false); return; }
-    setLoading(true); setError('');
-    const [rentRollResult, codeResult, settingResult, typeResult, allocationResult, unitResult, lineAllocationResult, savedOrder] = await Promise.all([
-      supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: referenceDate(period) }),
-      supabase.from('billing_code').select('billing_code_id, tenant_id, issue_code, is_primary, match_status').eq('property_id', propertyId).eq('is_active', true),
-      supabase.from('asset_billing_charge_type_setting').select('billing_charge_type_id').eq('asset_id', propertyId).eq('is_enabled', true),
-      supabase.from('billing_charge_type').select('billing_charge_type_id, charge_type_name, sort_order').eq('is_active', true).order('sort_order'),
-      supabase.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
-      supabase.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, unit:unit_master!inner(property_id)').eq('unit.property_id', propertyId),
-      supabase.from('billing_code_line_item_allocation').select('billing_code_id, line_item:asset_billing_line_item(billing_charge_type_id), group:billing_code_allocation_group(tenant_id)'),
-      loadSavedTenantOrder(supabase, propertyId),
-    ]);
-    if (rentRollResult.error || codeResult.error) { setError(`明細を読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`); setRows([]); setLoading(false); return; }
-    if (settingResult.error || typeResult.error) { setError(`請求種別設定を読み込めませんでした: ${settingResult.error?.message ?? typeResult.error?.message}`); setChargeTypes([]); setLoading(false); return; }
-    const configuredItems = (settingResult.data ?? []) as EnabledChargeType[];
-    const allTypes = (typeResult.data ?? []) as ChargeType[];
-    const enabledIds = new Set(configuredItems.map((item) => item.billing_charge_type_id));
-    setChargeTypes(allTypes.filter((type) => enabledIds.has(type.billing_charge_type_id)));
-    const billingCodes = (codeResult.data ?? []) as BillingCode[]; const primaryCodes = new Map<string, BillingCode>(); const codeById = new Map(billingCodes.map((code) => [code.billing_code_id, code])); for (const code of billingCodes) if (code.tenant_id && code.is_primary && code.match_status === 'matched') primaryCodes.set(code.tenant_id, code);
-    const contractByUnit = new Map(((unitResult.data ?? []) as unknown as ContractUnit[]).map((unit) => [unit.lease_contract_unit_id, unit.lease_contract_id])); const allocatedCodeByContract = new Map<string, BillingCode>(); for (const allocation of (allocationResult.data ?? []) as ContractAllocation[]) { const contractId = contractByUnit.get(allocation.lease_contract_unit_id); const code = codeById.get(allocation.billing_code_id); if (contractId && code) allocatedCodeByContract.set(contractId, code); }
-    const allocatedCodeByTenantChargeType = new Map<string, BillingCode>(); for (const allocation of (lineAllocationResult.data ?? []) as unknown as LineItemAllocation[]) { const code = codeById.get(allocation.billing_code_id); const name = allTypes.find((type) => type.billing_charge_type_id === allocation.line_item?.billing_charge_type_id)?.charge_type_name; if (code && name && allocation.group?.tenant_id) allocatedCodeByTenantChargeType.set(`${allocation.group.tenant_id}:${name}`, code); }
-    const grouped = new Map<string, StatementRow>(); const tenantInfo = new Map<string, Omit<StatementRow, 'key' | 'tenantId' | 'code' | 'rent' | 'commonCharge' | 'parking' | 'other'>>();
-    for (const source of (rentRollResult.data ?? []) as RentRollSource[]) { if (!source.lease_contract_id || !source.tenant_id || !source.tenant_name) continue; if (!tenantInfo.has(source.tenant_id)) tenantInfo.set(source.tenant_id, { floor: source.floor_label ?? '', unitName: source.unit_name ?? source.unit_code, tenantName: source.tenant_name }); const fallback = allocatedCodeByContract.get(source.lease_contract_id) ?? primaryCodes.get(source.tenant_id); for (const [name, value, field] of [['賃料', Number(source.monthly_rent_amount ?? 0), 'rent'], ['共益費', Number(source.monthly_common_charge_amount ?? 0), 'commonCharge'], ['駐車料', Number(source.monthly_parking_amount ?? 0), 'parking'], ['その他', Number(source.other_monthly_amount ?? 0), 'other']] as const) { if (!value) continue; const target = allocatedCodeByTenantChargeType.get(`${source.tenant_id}:${name}`) ?? fallback; const key = `${source.tenant_id}:${target?.billing_code_id ?? 'unassigned'}`; const row = grouped.get(key) ?? { key, tenantId: source.tenant_id, code: target?.issue_code ?? '—', floor: source.floor_label ?? '', unitName: source.unit_name ?? source.unit_code, tenantName: source.tenant_name, rent: 0, commonCharge: 0, parking: 0, other: 0 }; row[field] += value; grouped.set(key, row); } }
-    for (const code of billingCodes) { if (!code.tenant_id || code.match_status !== 'matched') continue; const info = tenantInfo.get(code.tenant_id); if (!info) continue; const key = `${code.tenant_id}:${code.billing_code_id}`; if (!grouped.has(key)) grouped.set(key, { key, tenantId: code.tenant_id, code: code.issue_code, ...info, rent: 0, commonCharge: 0, parking: 0, other: 0 }); }
-    // テナントは請求設定のテナント並び順で並べ、同じテナントの行（複数コード）は階順で並べます。
-    const compareTenant = tenantComparator(orderTenants((rentRollResult.data ?? []) as RentRollSource[], savedOrder));
-    setRows([...grouped.values()].sort((left, right) => compareTenant(left.tenantId, right.tenantId) || floorOrder(left.floor) - floorOrder(right.floor) || collator.compare(left.floor, right.floor) || collator.compare(left.unitName, right.unitName))); setLoading(false);
-  }; void load(); }, [propertyId, period.fiscalYear, period.month]);
+  const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (!supabase || !propertyId) { setRows([]); setChargeTypes([]); setLoading(false); return; }
+      setLoading(true); setError('');
+      try {
+        const [settingResult, typeResult, saved] = await Promise.all([
+          supabase.from('asset_billing_charge_type_setting').select('billing_charge_type_id').eq('asset_id', propertyId).eq('is_enabled', true),
+          supabase.from('billing_charge_type').select('billing_charge_type_id, charge_type_name, sort_order').eq('is_active', true).order('sort_order'),
+          loadSavedInvoiceSheet(supabase, propertyId, calendarYear, period.month),
+        ]);
+        if (settingResult.error || typeResult.error) throw new Error(`請求種別設定を読み込めませんでした: ${settingResult.error?.message ?? typeResult.error?.message}`);
+        const sheet = saved?.sheet ?? (await buildInvoiceSheet(supabase, propertyId, propertyName, calendarYear, period.month)).sheet;
+        if (cancelled) return;
+        const enabledIds = new Set(((settingResult.data ?? []) as EnabledChargeType[]).map((item) => item.billing_charge_type_id));
+        setChargeTypes(((typeResult.data ?? []) as ChargeType[]).filter((type) => enabledIds.has(type.billing_charge_type_id)));
+        setRows(statementRows(sheet.rows));
+        setSavedAt(saved?.savedAt ?? '');
+      } catch (loadError) {
+        if (cancelled) return;
+        setError(loadError instanceof Error ? loadError.message : '明細を読み込めませんでした'); setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load(); return () => { cancelled = true; };
+  }, [propertyId, propertyName, calendarYear, period.month]);
+
+  // 列は請求設定で使う請求種別の順に並べ、請求書に載っているのに設定に無い請求種別は後ろに足します（金額を落とさないため）。
+  const columns = useMemo<Column[]>(() => {
+    const result: Column[] = chargeTypes.map((type) => ({ key: type.charge_type_name, label: type.charge_type_name }));
+    const known = new Set(result.map((column) => column.key));
+    for (const row of rows) for (const key of Object.keys(row.amounts)) if (!known.has(key) && row.amounts[key]) { known.add(key); result.push({ key, label: key || '請求種別なし' }); }
+    return result;
+  }, [chargeTypes, rows]);
   const title = kind === 'payment' ? '入金明細表' : '請求明細表';
-  const chargeTotals = useMemo(() => chargeTypes.map((type) => rows.reduce((sum, row) => sum + chargeAmount(row, type.charge_type_name), 0)), [rows, chargeTypes]);
-  const total = useMemo(() => chargeTotals.reduce((sum, value) => sum + value, 0), [chargeTotals]);
-  const columnCount = 3 + chargeTypes.length + 3 + (kind === 'payment' ? 3 : 0);
-  return <section className="billing-statement-page"><header className="billing-statement-heading"><div><p className="section-kicker">{monthKey(period)}</p><h3>{title}（{propertyName || '物件未選択'}）</h3></div>{kind === 'invoice' && <div className="billing-statement-dates"><span>発行予定日：未設定</span><span>支払期日：未設定</span></div>}</header>{error && <p className="billing-statement-notice">{error}</p>}{!loading && !chargeTypes.length && <p className="billing-statement-notice">請求設定で使用する請求種別を選択してください。</p>}<div className="billing-statement-table-wrap"><table><colgroup><col className="statement-code" /><col className="statement-floor" /><col className="statement-tenant" />{chargeTypes.map((type) => <col className="statement-money" key={type.billing_charge_type_id} />)}<col className="statement-money" /><col className="statement-money" /><col className="statement-money" />{kind === 'payment' && <><col className="statement-money" /><col className="statement-money" /><col className="statement-date" /></>}</colgroup><thead><tr><th>コード</th><th>階</th><th>テナント名</th>{chargeTypes.map((type) => <th key={type.billing_charge_type_id}>{type.charge_type_name}</th>)}<th>小計</th><th>消費税</th><th>合計</th>{kind === 'payment' && <><th>未入金額</th><th>入金額</th><th>入金日</th></>}</tr></thead><tbody>{loading ? <tr><td colSpan={columnCount}>読み込み中…</td></tr> : rows.map((row) => { const subtotal = chargeTypes.reduce((sum, type) => sum + chargeAmount(row, type.charge_type_name), 0); const tax = Math.floor(subtotal * 0.1); const billed = subtotal + tax; return <tr key={row.key}><td><strong>{row.code}</strong></td><td>{row.floor || '—'}</td><td>{row.tenantName}</td>{chargeTypes.map((type) => <td className="numeric" key={type.billing_charge_type_id}>{amount(chargeAmount(row, type.charge_type_name))}</td>)}<td className="numeric">{amount(subtotal)}</td><td className="numeric">{amount(tax)}</td><td className="numeric total">{amount(billed)}</td>{kind === 'payment' && <><td className="numeric">{amount(billed)}</td><td className="numeric">—</td><td>—</td></>}</tr>; })}{!loading && !rows.length && <tr><td colSpan={columnCount} className="billing-statement-empty">入居中のテナントがありません。</td></tr>}</tbody><tfoot>{rows.length > 0 && <tr><th colSpan={3}>合計</th>{chargeTotals.map((value, index) => <th className="numeric" key={chargeTypes[index].billing_charge_type_id}>{amount(value)}</th>)}<th className="numeric">{amount(total)}</th><th className="numeric">{amount(Math.floor(total * 0.1))}</th><th className="numeric total">{amount(total + Math.floor(total * 0.1))}</th>{kind === 'payment' && <><th className="numeric">{amount(total + Math.floor(total * 0.1))}</th><th>—</th><th>—</th></>}</tr>}</tfoot></table></div></section>;
+  const columnTotals = useMemo(() => columns.map((column) => rows.reduce((sum, row) => sum + (row.amounts[column.key] ?? 0), 0)), [rows, columns]);
+  const subtotal = rows.reduce((sum, row) => sum + row.subtotal, 0);
+  const tax = rows.reduce((sum, row) => sum + row.tax, 0);
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const dueDates = [...new Set(rows.map((row) => row.dueDate).filter(Boolean))];
+  const columnCount = 3 + columns.length + 3 + (kind === 'payment' ? 3 : 0);
+  return <section className="billing-statement-page">
+    <header className="billing-statement-heading">
+      <div><p className="section-kicker">{monthKey(period)}</p><h3>{title}（{propertyName || '物件未選択'}）</h3></div>
+      <div className="billing-statement-dates">
+        <span>{savedAt ? `請求書作成の保存内容（${savedAtText(savedAt)}）` : '請求書作成は未保存のため、最新データから作成した内容です'}</span>
+        {kind === 'invoice' && <span>支払期日：{dueDates.length ? dueDates.join('・') : '未設定'}</span>}
+      </div>
+    </header>
+    {error && <p className="billing-statement-notice">{error}</p>}
+    <div className="billing-statement-table-wrap"><table>
+      <colgroup><col className="statement-code" /><col className="statement-floor" /><col className="statement-tenant" />{columns.map((column) => <col className="statement-money" key={column.key} />)}<col className="statement-money" /><col className="statement-money" /><col className="statement-money" />{kind === 'payment' && <><col className="statement-money" /><col className="statement-money" /><col className="statement-date" /></>}</colgroup>
+      <thead><tr><th>コード</th><th>階</th><th>テナント名</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>小計</th><th>消費税</th><th>合計</th>{kind === 'payment' && <><th>未入金額</th><th>入金額</th><th>入金日</th></>}</tr></thead>
+      <tbody>{loading ? <tr><td colSpan={columnCount}>読み込み中…</td></tr> : rows.map((row) => <tr key={row.key}>
+        <td><strong>{row.code || '—'}</strong></td><td>{row.floor || '—'}</td><td>{row.tenantName}</td>
+        {columns.map((column) => <td className="numeric" key={column.key}>{amount(row.amounts[column.key] ?? 0)}</td>)}
+        <td className="numeric">{amount(row.subtotal)}</td><td className="numeric">{amount(row.tax)}</td><td className="numeric total">{amount(row.total)}</td>
+        {kind === 'payment' && <><td className="numeric">{amount(row.total)}</td><td className="numeric">—</td><td>—</td></>}
+      </tr>)}{!loading && !rows.length && <tr><td colSpan={columnCount} className="billing-statement-empty">請求書がありません。</td></tr>}</tbody>
+      <tfoot>{rows.length > 0 && <tr><th colSpan={3}>合計</th>{columnTotals.map((value, index) => <th className="numeric" key={columns[index].key}>{amount(value)}</th>)}<th className="numeric">{amount(subtotal)}</th><th className="numeric">{amount(tax)}</th><th className="numeric total">{amount(total)}</th>{kind === 'payment' && <><th className="numeric">{amount(total)}</th><th>—</th><th>—</th></>}</tr>}</tfoot>
+    </table></div>
+  </section>;
 }

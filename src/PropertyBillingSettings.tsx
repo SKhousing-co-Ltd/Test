@@ -499,7 +499,7 @@ export function PropertyBillingSettings({
           <div>
             <h4>請求期間パターン</h4>
             <p>
-              請求書に表示する「YYYY/MM/DD～YYYY/MM/DD分」の期間を設定します。
+              請求書に表示する「YYYY/M/D～YYYY/M/D分」の期間を設定します。
             </p>
           </div>
           <form onSubmit={addPattern}>
