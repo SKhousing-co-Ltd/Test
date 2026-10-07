@@ -25,6 +25,8 @@
 
 4. GitHub Pages で契約書作成画面を開き、プレビューを更新して新ひな型が表示されることを確認します。
 
+現在のDB構成を確認するときは、古いMigrationを仕様書として読み進めず、まず [DB現行構成の確認ガイド](docs/database-current-schema.md) を参照してください。
+
 ## Lease-management initial import
 
 Apply `supabase/migrations/20260716000000_create_lease_management.sql` to add property, wing, unit, tenant, and contract-history management.
