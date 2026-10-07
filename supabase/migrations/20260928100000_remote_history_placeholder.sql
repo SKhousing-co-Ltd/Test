@@ -1,1 +1,0 @@
--- Remote history placeholder: already applied on the linked database.
