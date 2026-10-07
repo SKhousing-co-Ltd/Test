@@ -1,0 +1,12 @@
+grant select, insert, update, delete on public.property_acquisition_plan, public.property_acquisition_plan_year, public.property_acquisition_plan_cost_item to anon;
+create policy "anonymous users can read acquisition plans" on public.property_acquisition_plan for select to anon using (true);
+create policy "anonymous users can insert acquisition plans" on public.property_acquisition_plan for insert to anon with check (true);
+create policy "anonymous users can update acquisition plans" on public.property_acquisition_plan for update to anon using (true) with check (true);
+create policy "anonymous users can read acquisition plan years" on public.property_acquisition_plan_year for select to anon using (true);
+create policy "anonymous users can insert acquisition plan years" on public.property_acquisition_plan_year for insert to anon with check (true);
+create policy "anonymous users can update acquisition plan years" on public.property_acquisition_plan_year for update to anon using (true) with check (true);
+create policy "anonymous users can delete acquisition plan years" on public.property_acquisition_plan_year for delete to anon using (true);
+create policy "anonymous users can read acquisition plan cost items" on public.property_acquisition_plan_cost_item for select to anon using (true);
+create policy "anonymous users can insert acquisition plan cost items" on public.property_acquisition_plan_cost_item for insert to anon with check (true);
+create policy "anonymous users can update acquisition plan cost items" on public.property_acquisition_plan_cost_item for update to anon using (true) with check (true);
+create policy "anonymous users can delete acquisition plan cost items" on public.property_acquisition_plan_cost_item for delete to anon using (true);

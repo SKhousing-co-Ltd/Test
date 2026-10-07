@@ -31,6 +31,7 @@ import { ContractInformationPage } from './ContractInformationPage';
 import { CaseProgressMigrationPage } from './CaseProgressMigrationPage';
 import { ContractAdminPage } from './ContractAdminPage';
 import { PropertyProfitabilityPage } from './PropertyProfitabilityPage';
+import { PropertyAcquisitionPlanPage } from './PropertyAcquisitionPlanPage';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
@@ -141,6 +142,7 @@ function App() {
             <Route path="/dashboard" element={<OperationsDashboard userName={profile?.employee?.employee_name ?? profile?.email ?? 'ユーザー'} />} />
             <Route path="/financial" element={<FinancialPage canManage={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/property-profitability" element={<PropertyProfitabilityPage />} />
+            <Route path="/property-profitability/plan" element={<PropertyAcquisitionPlanPage />} />
             <Route path="/procurement" element={<ProcurementPage canEdit={profile?.role !== 'viewer'} canManageVendors={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/rent-roll" element={<RentRollPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} />} />
             <Route path="/contract-information" element={<ContractInformationPage canEditBillingTerms={canEditContractBillingTerms} />} />
