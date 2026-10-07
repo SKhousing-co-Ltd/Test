@@ -5,6 +5,16 @@
 .contract-information-toolbar { display: flex; align-items: end; gap: 12px; padding: 13px 15px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; }
 .contract-information-toolbar label { display: grid; gap: 5px; color: #65748a; font-size: 11px; font-weight: 700; }
 .contract-information-toolbar select, .contract-information-toolbar input { min-width: 180px; border: 1px solid #d7e0eb; border-radius: 6px; padding: 9px 10px; color: #3f5069; background: #fff; font: inherit; font-size: 12px; }
+.contract-information-product-filter { display: grid; gap: 12px; padding: 14px 16px; border: 1px solid #dfe7f0; border-radius: 9px; background: #fff; }
+.contract-information-product-filter-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.contract-information-product-filter-heading h3 { margin: 0 0 3px; color: #33465f; font-size: 13px; }
+.contract-information-product-filter-heading p { margin: 0; color: #8290a3; font-size: 10px; }
+.contract-information-product-filter-actions { display: flex; gap: 6px; }
+.contract-information-product-filter-actions button { border: 0; border-radius: 6px; padding: 7px 10px; color: #3d5c7c; background: #edf3f8; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.contract-information-product-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.contract-information-product-options label { display: flex; align-items: center; gap: 7px; border: 1px solid #dfe6ee; border-radius: 7px; padding: 9px 10px; color: #607087; background: #fafbfd; font-size: 11px; font-weight: 700; cursor: pointer; }
+.contract-information-product-options label.selected { border-color: #8db9e8; color: #245c98; background: #eef6ff; }
+.contract-information-product-options input { width: 14px; height: 14px; margin: 0; accent-color: #2675d9; }
 
 .contract-information-notice { margin: 0; padding: 10px 13px; border: 1px solid #f0d2c5; border-radius: 8px; color: #914b36; background: #fff4ee; font-size: 12px; }
 .contract-information-notice.muted { border-color: #dfe6ee; color: #62738a; background: #f7f9fb; }
