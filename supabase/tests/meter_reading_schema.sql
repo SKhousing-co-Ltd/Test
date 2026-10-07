@@ -69,8 +69,8 @@ begin
 
   -- 税抜換算は小数点以下しか扱わないので、桁数の列は持ちません。
   if exists (
-    select 1 from information_schema.columns
-     where table_schema = 'public' and table_name = 'asset_meter_sub_item' and column_name = 'tax_rounding_digits'
+    select 1 from information_schema.columns as c
+     where c.table_schema = 'public' and c.table_name = 'asset_meter_sub_item' and c.column_name = 'tax_rounding_digits'
   ) then
     raise exception 'tax_rounding_digits must be dropped';
   end if;
