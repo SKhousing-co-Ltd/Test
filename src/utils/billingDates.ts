@@ -7,6 +7,13 @@ const parseDate = (value: string | undefined) => { if (!value) return null; cons
 const shiftDays = (date: Date, days: number) => { const next = new Date(date); next.setDate(next.getDate() + days); return next; };
 
 export const formatDate = (date: Date) => `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+// 請求期間は YYYY/M/D の形（月日はゼロ埋めしない）で出します。
+export const formatPeriodDate = formatDate;
+// 手入力された請求期間（YYYY/MM/DD や YYYY-MM-DD）を YYYY/M/D にそろえます。日付として読めない値はそのまま返します。
+export const normalizePeriodDate = (value: string) => {
+  const matched = value.trim().match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  return matched ? `${matched[1]}/${Number(matched[2])}/${Number(matched[3])}` : value;
+};
 
 // 請求期間パターンの片側（開始／終了）を実日付へ変換します。検針日基準は実績値が必要なため、ここでは確定できません。
 export function periodEdge(year: number, month: number, monthOffset: number, dayType: string, meterDates?: MeterDates, meterDayOffset = 0): Date | null {
@@ -27,11 +34,11 @@ export function periodRange(year: number, month: number, pattern: BillingPeriodP
   if (!pattern) return { start: '', end: '' };
   const start = periodEdge(year, month, pattern.start_month_offset, pattern.start_day_type, meterDates, pattern.start_meter_day_offset ?? 0);
   const end = periodEdge(year, month, pattern.end_month_offset, pattern.end_day_type, meterDates, pattern.end_meter_day_offset ?? 0);
-  return { start: start ? formatDate(start) : '', end: end ? formatDate(end) : '' };
+  return { start: start ? formatPeriodDate(start) : '', end: end ? formatPeriodDate(end) : '' };
 }
 
 // 明細項目１としてCSVへ出す「YYYY/M/D～YYYY/M/D分」を組み立てます。
-export const periodText = (start: string, end: string) => start && end ? `${start}～${end}分` : '';
+export const periodText = (start: string, end: string) => start && end ? `${normalizePeriodDate(start)}～${normalizePeriodDate(end)}分` : '';
 
 export function dueDate(year: number, month: number, pattern: DueDatePattern | undefined): string {
   if (!pattern) return '';

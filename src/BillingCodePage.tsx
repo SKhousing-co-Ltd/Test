@@ -223,6 +223,7 @@ export function BillingCodePage({
       setError(
         `テナントコード一覧を読み込めませんでした: ${codeResult.error?.message ?? unitResult.error?.message}`,
       );
+    // テナントコード一覧は、請求設定のテナント並び順ではなく発行コード順で並べます。
     setCodes((codeResult.data ?? []) as unknown as BillingCode[]);
     setUnits((unitResult.data ?? []) as unknown as Unit[]);
     setAssetCode(String(assetResult.data?.asset_code ?? ""));
