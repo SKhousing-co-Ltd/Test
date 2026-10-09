@@ -57,3 +57,14 @@ test('1通の請求書に条件の違う契約が混ざると、一番早い入�
   assert.equal(sheet.rows[0].values[4], '2026/10/30');
   assert.match(termsNotice, /1001/);
 });
+
+test('期日の違う契約が混在する物件では、入金期限が期日の早い順に並び、請求書ごとに対応する期日を使う', async () => {
+  const tables = {
+    billing_code: [code('A', '1001'), code('B', '1002'), code('C', '1003')],
+    lease_contract: [terms('c1', { due_month_offset: 1, due_day_of_month: 5 }), terms('c2'), terms('c3', { due_day_of_month: 25 })],
+  };
+  const { sheet, duePatterns } = await buildInvoiceSheet(fakeClient(tables, [source('c1', 'A', 1), source('c2', 'B', 1), source('c3', 'C', 1)]), 'p', '物件', 2026, 10);
+  assert.deepEqual(duePatterns.map((pattern) => sheet.dueDateByPattern[pattern.billing_due_date_pattern_id]), ['2026/10/23', '2026/10/30', '2026/11/5']);
+  assert.deepEqual(sheet.rows.map((row) => row.values[4]), ['2026/11/5', '2026/10/30', '2026/10/23']);
+  assert.deepEqual(sheet.rows.map((row) => sheet.dueDateByPattern[sheet.duePatternByInvoice[row.invoiceKey]]), ['2026/11/5', '2026/10/30', '2026/10/23']);
+});

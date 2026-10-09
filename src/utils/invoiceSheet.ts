@@ -226,6 +226,9 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
       rows.push({ id: rowId, invoiceKey, values, chargeType: line.chargeType, tenantId: tenantOfKey(invoiceKey), tenantName: invoice.tenantName, floor: invoice.floor });
     });
   }
+  // 入金期限の欄は期日の早い順に並べます。
+  duePatterns.sort((left, right) => dueTime({ due_month_offset: left.month_offset, due_day_of_month: left.day_of_month, due_holiday_adjustment: left.holiday_adjustment } as BillingTerms) - dueTime({ due_month_offset: right.month_offset, due_day_of_month: right.day_of_month, due_holiday_adjustment: right.holiday_adjustment } as BillingTerms));
+  duePatterns.forEach((pattern, index) => { pattern.pattern_number = index + 1; });
   return {
     sheet: {
       rows: recalcInvoices(rows), duePatternByInvoice,

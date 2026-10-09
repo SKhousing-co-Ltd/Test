@@ -40,7 +40,8 @@ const loadColumnWidths = (): Record<number, number> => {
 };
 const yen = new Intl.NumberFormat('ja-JP');
 const patternMark = (number: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(number - 1) || String(number);
-const duePatternMark = (pattern: DuePattern) => patternMark(pattern.pattern_number);
+// 入金期限の見出しです。末日・25日・翌5日のように期日で表し、土日祝が翌日送りの条件だけ書き添えます。
+const duePatternMark = (pattern: DuePattern) => `${pattern.month_offset ? '翌' : ''}${pattern.day_of_month === 0 ? '末日' : `${pattern.day_of_month}日`}${pattern.holiday_adjustment === 'next' ? '（休日は翌日）' : ''}`;
 const duePatternLabel = (pattern: DuePattern) => `${patternMark(pattern.pattern_number)} ${pattern.month_offset ? '翌月' : '当月'}${pattern.day_of_month === 0 ? '末日' : `${pattern.day_of_month}日`}（休日は${pattern.holiday_adjustment === 'previous' ? '前日' : '翌日'}）`;
 const savedAtText = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`; };
 const sheetTotal = (rows: InvoiceRow[]) => { const seen = new Set<string>(); let total = 0; for (const row of recalcInvoices(rows)) if (!seen.has(row.invoiceKey)) { seen.add(row.invoiceKey); total += numberValue(row.values[7]); } return total; };
