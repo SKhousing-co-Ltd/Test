@@ -64,3 +64,6 @@
 .billing-terms-controls label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .billing-terms-check input { width: auto; }
 .billing-terms-preview { display: block; margin-top: 4px; color: #64748b; font-size: 12px; }
+.billing-terms-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.billing-terms-field { padding: 12px 14px; }
+.billing-terms-label { display: block; margin-bottom: 6px; color: #64748b; font-size: 11px; }

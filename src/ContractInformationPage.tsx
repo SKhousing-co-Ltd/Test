@@ -30,12 +30,6 @@ type ContractListRow = {
   monthly_total_amount: number | null;
 };
 
-type BillingCodeRow = BillingTerms & {
-  billing_code_id: string;
-  issue_code: string;
-  recipient_name: string;
-};
-
 const today = new Date().toISOString().slice(0, 10);
 
 
@@ -55,10 +49,10 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
 
-  const [billingCodes, setBillingCodes] = useState<BillingCodeRow[]>([]);
+  const [billingTerms, setBillingTerms] = useState<BillingTerms | null>(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingError, setBillingError] = useState('');
-  const [savingBillingCodeId, setSavingBillingCodeId] = useState('');
+  const [savingBillingTerms, setSavingBillingTerms] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,10 +161,11 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
     return () => { cancelled = true; };
   }, [selectedLeaseContractUnitId, asOfDate]);
 
+  // 請求条件（入金期日・請求期間）は契約が持ちます。請求コードはテナント請求で作成し、契約を乗せます。
   useEffect(() => {
-    const tenantId = detail?.contract.tenant_id;
-    if (!tenantId || !propertyId) {
-      setBillingCodes([]);
+    const leaseContractId = detail?.contract.lease_contract_id;
+    if (!leaseContractId) {
+      setBillingTerms(null);
       return;
     }
     let cancelled = false;
@@ -182,25 +177,24 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
         setBillingLoading(false);
         return;
       }
-      const codeResult = await supabase
-        .from('billing_code')
-        .select('billing_code_id, issue_code, recipient_name, due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset')
-        .eq('property_id', propertyId)
-        .eq('tenant_id', tenantId)
-        .eq('is_active', true)
-        .order('issue_code');
+      const { data, error: loadError } = await supabase
+        .from('lease_contract')
+        .select('due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset')
+        .eq('lease_contract_id', leaseContractId)
+        .maybeSingle();
       if (cancelled) return;
-      if (codeResult.error) setBillingError(`請求条件を読み込めませんでした: ${codeResult.error.message}`);
-      setBillingCodes((codeResult.data ?? []) as BillingCodeRow[]);
+      if (loadError) setBillingError(`請求条件を読み込めませんでした: ${loadError.message}`);
+      setBillingTerms((data as BillingTerms | null) ?? null);
       setBillingLoading(false);
     };
     void loadBilling();
     return () => { cancelled = true; };
-  }, [detail?.contract.tenant_id, propertyId]);
+  }, [detail?.contract.lease_contract_id]);
 
-  const updateBillingTerms = async (code: BillingCodeRow, patch: Partial<BillingTerms>) => {
-    if (!supabase || !canEditBillingTerms) return;
-    const next = { ...code, ...patch };
+  const updateBillingTerms = async (patch: Partial<BillingTerms>) => {
+    const leaseContractId = detail?.contract.lease_contract_id;
+    if (!supabase || !canEditBillingTerms || !billingTerms || !leaseContractId) return;
+    const next = { ...billingTerms, ...patch };
     // 年払いに切り替えたときは、請求月（既定は今月）と翌月～1年分を初期値にします。
     if (next.is_annual_billing) {
       next.annual_billing_month = next.annual_billing_month ?? new Date().getMonth() + 1;
@@ -209,10 +203,10 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
       next.annual_billing_month = null;
       next.annual_start_offset = null;
     }
-    setSavingBillingCodeId(code.billing_code_id);
+    setSavingBillingTerms(true);
     setBillingError('');
-    const { error: saveError } = await supabase.rpc('update_billing_code_terms', {
-      p_billing_code_id: code.billing_code_id,
+    const { error: saveError } = await supabase.rpc('update_lease_contract_billing_terms', {
+      p_lease_contract_id: leaseContractId,
       p_due_month_offset: next.due_month_offset,
       p_due_day_of_month: next.due_day_of_month,
       p_due_holiday_adjustment: next.due_holiday_adjustment,
@@ -221,12 +215,12 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
       p_annual_billing_month: next.annual_billing_month,
       p_annual_start_offset: next.annual_start_offset,
     });
-    setSavingBillingCodeId('');
+    setSavingBillingTerms(false);
     if (saveError) {
       setBillingError(`請求条件を更新できませんでした: ${saveError.message}`);
       return;
     }
-    setBillingCodes((current) => current.map((item) => item.billing_code_id === code.billing_code_id ? next : item));
+    setBillingTerms(next);
   };
 
   const selectedProperty = properties.find((property) => property.propertyId === propertyId);
@@ -313,62 +307,55 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
           <Field label="最終更新" value={date(contract.updated_at.slice(0, 10))} />
         </div>
 
-        <div className="contract-information-section-heading"><div><h3>請求条件（入金期日・請求期間）</h3><p>請求コードごとに、入金期日と請求書に記載する請求期間を設定します。</p></div></div>
+        <div className="contract-information-section-heading"><div><h3>請求条件（入金期日・請求期間）</h3><p>この契約の入金期日と、請求書に記載する請求期間を設定します。</p></div></div>
         {!canEditBillingTerms && <p className="contract-information-notice muted">編集は総務経理部の担当者のみ行えます。</p>}
         {billingError && <p className="contract-information-notice">{billingError}</p>}
-        <div className="contract-information-table-wrap">
-          <table className="contract-information-table billing-terms-table">
-            <thead><tr><th>請求コード</th><th>請求先</th><th>入金期日</th><th>請求期間</th></tr></thead>
-            <tbody>
-              {billingLoading && <tr><td colSpan={4} className="contract-information-empty">読み込み中…</td></tr>}
-              {!billingLoading && billingCodes.length === 0 && <tr><td colSpan={4} className="contract-information-empty">この契約に紐づく請求コードがありません。</td></tr>}
-              {!billingLoading && billingCodes.map((code) => {
-                const disabled = !canEditBillingTerms || savingBillingCodeId === code.billing_code_id;
-                const now = new Date();
-                return <tr key={code.billing_code_id}>
-                  <td><strong>{code.issue_code}</strong></td>
-                  <td>{code.recipient_name}</td>
-                  <td>
-                    <div className="billing-terms-controls">
-                      <select aria-label="入金期日の月" value={code.due_month_offset} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { due_month_offset: Number(event.target.value) })}>
-                        <option value={0}>当月</option><option value={1}>翌月</option>
-                      </select>
-                      <select aria-label="入金期日の日" value={code.due_day_of_month} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { due_day_of_month: Number(event.target.value) })}>
-                        {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}日</option>)}
-                        <option value={0}>末日</option>
-                      </select>
-                      <label>土日祝の場合
-                        <select value={code.due_holiday_adjustment} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { due_holiday_adjustment: event.target.value as 'previous' | 'next' })}>
-                          <option value="previous">前日</option><option value="next">翌日</option>
-                        </select>
-                      </label>
-                    </div>
-                    <small className="billing-terms-preview">今月の場合：{termsDueDate(now.getFullYear(), now.getMonth() + 1, code)}</small>
-                  </td>
-                  <td>
-                    <div className="billing-terms-controls">
-                      <select aria-label="請求期間" value={code.period_month_offset} disabled={disabled || code.is_annual_billing} onChange={(event) => void updateBillingTerms(code, { period_month_offset: Number(event.target.value) })}>
-                        <option value={-1}>前月分</option><option value={0}>当月分</option><option value={1}>翌月分</option>
-                      </select>
-                      <label className="billing-terms-check"><input type="checkbox" checked={code.is_annual_billing} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { is_annual_billing: event.target.checked })} />年払い</label>
-                      {code.is_annual_billing && <>
-                        <label>請求月
-                          <select value={code.annual_billing_month ?? ''} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { annual_billing_month: Number(event.target.value) })}>
-                            {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}月</option>)}
-                          </select>
-                        </label>
-                        <select aria-label="年払いの請求期間" value={code.annual_start_offset ?? 1} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { annual_start_offset: Number(event.target.value) })}>
-                          <option value={1}>翌月～1年分</option><option value={2}>翌々月～1年分</option>
-                        </select>
-                      </>}
-                    </div>
-                    {code.is_annual_billing && <small className="billing-terms-preview">請求月以外は0円で請求します（明細項目1は空白）。</small>}
-                  </td>
-                </tr>;
-              })}
-            </tbody>
-          </table>
-        </div>
+        {billingLoading && <p className="contract-information-empty">読み込み中…</p>}
+        {!billingLoading && billingTerms && (() => {
+          const terms = billingTerms;
+          const disabled = !canEditBillingTerms || savingBillingTerms;
+          const now = new Date();
+          return <div className="contract-detail-grid billing-terms-grid">
+            <div className="billing-terms-field">
+              <span className="billing-terms-label">入金期日</span>
+              <div className="billing-terms-controls">
+                <select aria-label="入金期日の月" value={terms.due_month_offset} disabled={disabled} onChange={(event) => void updateBillingTerms({ due_month_offset: Number(event.target.value) })}>
+                  <option value={0}>当月</option><option value={1}>翌月</option>
+                </select>
+                <select aria-label="入金期日の日" value={terms.due_day_of_month} disabled={disabled} onChange={(event) => void updateBillingTerms({ due_day_of_month: Number(event.target.value) })}>
+                  {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}日</option>)}
+                  <option value={0}>末日</option>
+                </select>
+                <label>土日祝の場合
+                  <select value={terms.due_holiday_adjustment} disabled={disabled} onChange={(event) => void updateBillingTerms({ due_holiday_adjustment: event.target.value as 'previous' | 'next' })}>
+                    <option value="previous">前日</option><option value="next">翌日</option>
+                  </select>
+                </label>
+              </div>
+              <small className="billing-terms-preview">今月の場合：{termsDueDate(now.getFullYear(), now.getMonth() + 1, terms)}</small>
+            </div>
+            <div className="billing-terms-field">
+              <span className="billing-terms-label">請求期間</span>
+              <div className="billing-terms-controls">
+                <select aria-label="請求期間" value={terms.period_month_offset} disabled={disabled || terms.is_annual_billing} onChange={(event) => void updateBillingTerms({ period_month_offset: Number(event.target.value) })}>
+                  <option value={-1}>前月分</option><option value={0}>当月分</option><option value={1}>翌月分</option>
+                </select>
+                <label className="billing-terms-check"><input type="checkbox" checked={terms.is_annual_billing} disabled={disabled} onChange={(event) => void updateBillingTerms({ is_annual_billing: event.target.checked })} />年払い</label>
+                {terms.is_annual_billing && <>
+                  <label>請求月
+                    <select value={terms.annual_billing_month ?? ''} disabled={disabled} onChange={(event) => void updateBillingTerms({ annual_billing_month: Number(event.target.value) })}>
+                      {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}月</option>)}
+                    </select>
+                  </label>
+                  <select aria-label="年払いの請求期間" value={terms.annual_start_offset ?? 1} disabled={disabled} onChange={(event) => void updateBillingTerms({ annual_start_offset: Number(event.target.value) })}>
+                    <option value={1}>翌月～1年分</option><option value={2}>翌々月～1年分</option>
+                  </select>
+                </>}
+              </div>
+              {terms.is_annual_billing && <small className="billing-terms-preview">請求月に月額×12で請求し、それ以外の月は0円で請求します（明細項目1は空白）。</small>}
+            </div>
+          </div>;
+        })()}
       </>}
       </div>
     </Dialog>}
