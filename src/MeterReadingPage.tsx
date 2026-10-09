@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
   billedAmounts, calculateSubItem,
-  floorLabel, priceModeLabel, roundingModeLabel, splitName, sumModeLabel, taxModeLabel, toExclusive,
+  floorLabel, priceModeLabel, resolveUnitPrice, roundingModeLabel, splitName, sumModeLabel, taxModeLabel, toExclusive,
   subItemDefaults, variablePriceMethodLabel, variableUnitPrice,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type MeterShare,
   type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
@@ -305,12 +305,12 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     const rows = groups.map((group) => {
       const tenant = tenants.find((item) => item.id === group.tenantId);
       const row = tenant?.rows[group.rowIndex];
-      const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, calculated.shares, building.taxRate) : null;
-      // 単価は、メーターの割り当てで上書きした単価、契約行の単価、小分類の既定単価の順で決めます。
+      const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, calculated.shares, building.taxRate, undefined, building) : null;
+      // 単価は、メーターの割り当てで上書きした単価、区画の契約単価、契約行の単価、明細項目の既定単価の順で決めます。
       // 変動単価は、単価計算タブで決めたその月の単価を全メーター共通で出します。
       const priceOf = (meter: MeterShare) => !row ? null
         : target.priceMode === 'variable' ? variableUnitPrice(target, building.taxRate)
-          : meter.unitPrice ?? row.unitPrices[target.id] ?? target.defaultUnitPrice ?? 0;
+          : resolveUnitPrice(target, meter, row, building).price;
       // 使用料は、メーターごとに計算する行はメーターの行ごとに、まとめて計算する行は分割した行の合計を1つの欄に出します。
       // どちらも請求に使う計算結果（使用量の丸め・金額の丸めを通したもの）をそのまま出します。
       const perMeter = row?.sumMode[targetCategory.id] === 'perMeter';
@@ -808,16 +808,15 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
             <button type="button" className="text-button" onClick={() => addSubItem(row.id)}>小分類を追加</button>
           </div>
           <table className="meter-table meter-settings-table meter-subitem-table">
-            <colgroup><col style={{ width: 132 }} /><col style={{ width: 260 }} /><col style={{ width: 104 }} /><col style={{ width: 88 }} /><col style={{ width: 96 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 128 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
-            <thead><tr><th>小分類</th><th>請求明細の項目</th><th>単価計算方法</th><th>既定単価</th><th>請求書に<br />単価を表示</th><th>税区分</th><th>税抜換算の丸め<small>小数点以下</small></th><th>使用量の丸め</th><th>入力使用量の表示桁数</th><th>既定の請求期間</th><th /></tr></thead>
+            <colgroup><col style={{ width: 132 }} /><col style={{ width: 260 }} /><col style={{ width: 104 }} /><col style={{ width: 96 }} /><col style={{ width: 88 }} /><col style={{ width: 132 }} /><col style={{ width: 264 }} /><col style={{ width: 128 }} /><col style={{ width: 150 }} /><col style={{ width: 56 }} /></colgroup>
+            <thead><tr><th>小分類</th><th>請求明細の項目</th><th>単価計算方法</th><th>請求書に<br />単価を表示</th><th>税区分<small>変動単価</small></th><th>税込単価の<br />税抜換算の丸め</th><th>使用量の丸め</th><th>入力使用量の表示桁数</th><th>既定の請求期間</th><th /></tr></thead>
             <tbody>{building.subItems.filter((item) => item.categoryId === row.id && (item.kind !== 'basic' || row.fixedBillable)).map((item) => <tr key={item.id}>
               <td>{item.kind === 'basic' ? <span className="meter-fixed-name">{item.name}</span> : <input value={item.name} onChange={(event) => updateSubItem(item.id, { name: event.target.value })} />}</td>
               <td><select value={item.lineItemId} onChange={(event) => updateSubItem(item.id, { lineItemId: event.target.value })}><option value="">未設定</option>{lineItemsFor(row.id).map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></td>
               <td>{item.kind === 'custom' ? <select value={item.priceMode} onChange={(event) => updateSubItem(item.id, { priceMode: event.target.value as PriceMode })}>{priceModes.map((value) => <option key={value} value={value}>{priceModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' && item.priceMode === 'fixed' ? <input type="number" step="0.01" className="meter-narrow" value={item.defaultUnitPrice ?? ''} placeholder="—" onChange={(event) => updateSubItem(item.id, { defaultUnitPrice: event.target.value ? Number(event.target.value) : null })} /> : <span className="meter-muted">—</span>}</td>
               <td className="meter-center">{item.kind === 'custom' ? <input type="checkbox" checked={item.showUnitPriceOnInvoice} aria-label={`${item.name}の単価を請求書に表示`} onChange={(event) => updateSubItem(item.id, { showUnitPriceOnInvoice: event.target.checked })} /> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' ? <select value={item.taxMode} onChange={(event) => updateSubItem(item.id, { taxMode: event.target.value as TaxMode })}>{taxModes.map((value) => <option key={value} value={value}>{taxModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
-              <td>{item.kind === 'custom' && item.taxMode === 'inclusive'
+              <td>{item.kind === 'custom' && item.priceMode === 'variable' ? <select value={item.taxMode} onChange={(event) => updateSubItem(item.id, { taxMode: event.target.value as TaxMode })}>{taxModes.map((value) => <option key={value} value={value}>{taxModeLabel[value]}</option>)}</select> : <span className="meter-muted">—</span>}</td>
+              <td>{item.kind === 'custom'
                 ? <select value={item.taxRoundingMode} onChange={(event) => updateSubItem(item.id, { taxRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
                 : <span className="meter-muted">—</span>}</td>
               <td>{item.kind === 'custom' ? <span className="meter-settings-pair">
