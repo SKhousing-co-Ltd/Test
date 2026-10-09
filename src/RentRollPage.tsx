@@ -269,14 +269,15 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     let cancelled = false;
     const client = supabase;
     const loadUtility = async () => {
-      const [settingResult, lineItemResult, contractResult] = await Promise.all([
+      const [settingResult, lineItemResult, contractResult, priceSettingResult] = await Promise.all([
         client.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
         client.from('asset_billing_line_item').select('asset_billing_line_item_id, display_name, billing_content, default_unit_price, default_tax_mode, sort_order, charge:billing_charge_type(utility_kind)').eq('asset_id', propertyId).eq('is_active', true).eq('show_unit_price_in_rent_roll', true).order('sort_order'),
-        client.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(property_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
+        client.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(property_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
+        client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode').eq('asset_id', propertyId),
       ]);
       if (cancelled) return;
       // 読み込めないとき（未適用の環境など）は公共料金の列を出さないだけにします。
-      if (settingResult.error || lineItemResult.error || contractResult.error) { setUtilityColumns([]); setUtilityValues({}); return; }
+      if (settingResult.error || lineItemResult.error || contractResult.error || priceSettingResult.error) { setUtilityColumns([]); setUtilityValues({}); return; }
       const settings = (settingResult.data ?? []) as Array<{ category: string; is_billable: boolean; is_basic_billable: boolean }>;
       const basicColumns: UtilityColumn[] = ['electric', 'water', 'gas']
         .filter((category) => settings.some((row) => row.category === category && row.is_basic_billable && (category === 'electric' || row.is_billable)))
@@ -286,15 +287,21 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           const charge = Array.isArray(item.charge) ? item.charge[0] : item.charge;
           return { key: `price:${item.asset_billing_line_item_id}`, group: utilityKindCategory[charge?.utility_kind ?? ''] ?? 'other', label: `${item.billing_content || item.display_name}単価`, kind: 'price' as const, id: item.asset_billing_line_item_id, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.default_tax_mode } };
         });
+      // 単価を分類で共通にした分類は、明細項目ごとの列の代わりに分類の「単価」を1列出します。
+      const priceSettings = (priceSettingResult.data ?? []) as Array<{ category: string; price_scope: string; default_unit_price: number | null; default_tax_mode: string }>;
+      const sharedColumns: UtilityColumn[] = priceSettings.filter((row) => row.price_scope === 'category')
+        .map((row) => ({ key: `category:${row.category}`, group: row.category, label: '単価', kind: 'price' as const, id: row.category, fallback: row.default_unit_price === null ? null : { value: Number(row.default_unit_price), taxMode: row.default_tax_mode } }));
+      const sharedGroups = new Set(sharedColumns.map((column) => column.group));
       const values: Record<string, Record<string, { value: number; taxMode: string }>> = {};
-      for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null }>) {
+      for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; categoryPrices: Array<{ category: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null }>) {
         const target: Record<string, { value: number; taxMode: string }> = {};
+        for (const price of unit.categoryPrices ?? []) target[`category:${price.category}`] = { value: Number(price.unit_price), taxMode: price.tax_mode };
         for (const price of unit.prices ?? []) target[`price:${price.asset_billing_line_item_id}`] = { value: Number(price.unit_price), taxMode: price.tax_mode };
         for (const basic of unit.basics ?? []) target[`basic:${basic.category}`] = { value: Number(basic.amount), taxMode: basic.tax_mode };
         values[unit.lease_contract_unit_id] = target;
       }
       // 分類ごとに、基本料・単価（明細項目の並び順）の順に並べます。
-      const ordered = [...basicColumns, ...priceColumns].map((column, index) => ({ column, index }))
+      const ordered = [...basicColumns, ...sharedColumns, ...priceColumns.filter((column) => !sharedGroups.has(column.group))].map((column, index) => ({ column, index }))
         .sort((left, right) => utilityCategoryOrder.indexOf(left.column.group) - utilityCategoryOrder.indexOf(right.column.group) || left.index - right.index).map(({ column }) => column);
       setUtilityColumns(ordered);
       setUtilityValues(values);

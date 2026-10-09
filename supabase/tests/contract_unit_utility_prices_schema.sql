@@ -7,7 +7,7 @@ begin
       raise exception 'asset_billing_line_item.% column is missing', v_col;
     end if;
   end loop;
-  if to_regclass('public.lease_contract_unit_utility_price') is null or to_regclass('public.lease_contract_unit_basic_charge') is null then
+  if to_regclass('public.lease_contract_unit_utility_price') is null or to_regclass('public.lease_contract_unit_basic_charge') is null or to_regclass('public.lease_contract_unit_category_price') is null or to_regclass('public.asset_utility_price_setting') is null then
     raise exception 'contract unit utility price tables are missing';
   end if;
   if has_table_privilege('authenticated', 'public.lease_contract_unit_utility_price', 'INSERT') and exists (
@@ -15,13 +15,13 @@ begin
   ) then
     raise exception 'contract unit utility prices must be written through the RPC only';
   end if;
-  if to_regprocedure('public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb)') is null then
+  if to_regprocedure('public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb,jsonb)') is null then
     raise exception 'save_lease_contract_unit_utility_terms() function is missing';
   end if;
-  if has_function_privilege('anon', 'public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb)', 'EXECUTE') then
+  if has_function_privilege('anon', 'public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb,jsonb)', 'EXECUTE') then
     raise exception 'Anonymous users must not execute save_lease_contract_unit_utility_terms';
   end if;
-  if pg_get_functiondef('public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb)'::regprocedure) !~ 'current_account_is_accounting_department' then
+  if pg_get_functiondef('public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb,jsonb)'::regprocedure) !~ 'current_account_is_accounting_department' then
     raise exception 'save_lease_contract_unit_utility_terms must check accounting department membership';
   end if;
 end $$;

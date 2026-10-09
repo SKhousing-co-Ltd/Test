@@ -137,6 +137,12 @@ export type BuildingConfig = {
   contractPrices?: Record<string, Record<string, PriceSetting>>;
   // 明細項目の既定単価です。契約区画に単価が無いときに使います。キーは明細項目ID。
   lineItemDefaults?: Record<string, PriceSetting>;
+  // 単価を分類で共通にした分類です。この分類の固定単価の小分類は、明細項目ではなく分類の単価を使います。
+  categoryPriceScopes?: Partial<Record<CategoryId, 'line_item' | 'category'>>;
+  // 契約区画の分類共通の単価（その検針月の単価に解決済み）です。キーは「区画ID:テナントID」→ 分類。
+  contractCategoryPrices?: Record<string, Partial<Record<CategoryId, PriceSetting>>>;
+  // 分類共通の既定単価です。
+  categoryDefaults?: Partial<Record<CategoryId, PriceSetting>>;
   // 契約区画の基本料です。キーは「区画ID:テナントID」→ 分類。
   contractBasics?: Record<string, Partial<Record<CategoryId, { amount: number; taxMode: TaxMode }>>>;
 };
@@ -272,12 +278,22 @@ export function toExclusive(price: number, subItem: SubItem, taxRate: number, ta
 }
 
 // 固定単価の小分類の単価（税抜）です。次の順で決めます。
-//   メーターの割り当てで上書きした単価 → メーターの区画の契約単価（小分類の明細項目） → 契約行の単価（従来の設定）
-//   → 明細項目の既定単価 → 0
+//   メーターの割り当てで上書きした単価 → メーターの区画の契約単価 → 契約行の単価（従来の設定） → 既定単価 → 0
+// 契約単価・既定単価は、単価を分類で共通にした分類では分類の単価、それ以外は小分類の明細項目の単価です。
 // 単価の税区分は、契約単価・既定単価はそれぞれの設定、メーター・契約行の単価は小分類の設定に従います。
-export function resolveUnitPrice(subItem: SubItem, share: MeterShare, row: ContractRow, building: Pick<BuildingConfig, 'contractPrices' | 'lineItemDefaults' | 'taxRate'>): { price: number; taxMode: TaxMode } {
+export type PriceSources = Pick<BuildingConfig, 'contractPrices' | 'lineItemDefaults' | 'categoryPriceScopes' | 'contractCategoryPrices' | 'categoryDefaults'>;
+export function resolveUnitPrice(subItem: SubItem, share: MeterShare, row: ContractRow, building: PriceSources): { price: number; taxMode: TaxMode } {
   if (share.unitPrice !== undefined) return { price: share.unitPrice, taxMode: subItem.taxMode };
-  const contract = share.unitId && subItem.lineItemId ? building.contractPrices?.[contractPriceKey(share.unitId, share.tenantId)]?.[subItem.lineItemId] : undefined;
+  const key = share.unitId ? contractPriceKey(share.unitId, share.tenantId) : '';
+  if (building.categoryPriceScopes?.[subItem.categoryId] === 'category') {
+    const shared = key ? building.contractCategoryPrices?.[key]?.[subItem.categoryId] : undefined;
+    if (shared) return { price: shared.unitPrice, taxMode: shared.taxMode };
+    const legacyShared = row.unitPrices[subItem.id];
+    if (legacyShared !== null && legacyShared !== undefined) return { price: legacyShared, taxMode: subItem.taxMode };
+    const sharedDefault = building.categoryDefaults?.[subItem.categoryId];
+    return sharedDefault ? { price: sharedDefault.unitPrice, taxMode: sharedDefault.taxMode } : { price: 0, taxMode: 'exclusive' };
+  }
+  const contract = key && subItem.lineItemId ? building.contractPrices?.[key]?.[subItem.lineItemId] : undefined;
   if (contract) return { price: contract.unitPrice, taxMode: contract.taxMode };
   const legacy = row.unitPrices[subItem.id];
   if (legacy !== null && legacy !== undefined) return { price: legacy, taxMode: subItem.taxMode };
@@ -312,7 +328,7 @@ export function variableUnitPrice(subItem: SubItem, taxRate: number): number | n
 }
 
 // 基本料は、検針期間の途中で入居・退去したテナントだけ入居日数で日割りします（丸めは契約行の小数点の設定）。
-export function calculateSubItem(subItem: SubItem, category: Category, row: ContractRow, tenantId: string, rowIndex: number, meters: MeterShare[], taxRate: number, basicRatio?: BasicRatio, prices: Pick<BuildingConfig, 'contractPrices' | 'lineItemDefaults'> = {}): SubItemResult {
+export function calculateSubItem(subItem: SubItem, category: Category, row: ContractRow, tenantId: string, rowIndex: number, meters: MeterShare[], taxRate: number, basicRatio?: BasicRatio, prices: PriceSources = {}): SubItemResult {
   const roundUsage = (value: number) => roundDigits(value, subItem.usageRoundingDigits, subItem.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const empty = { subItem, meters: [], usage: 0, amount: 0, groups: [] as ChargeGroup[] };
@@ -331,7 +347,7 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   // 変動単価は単価計算タブで決めたその月の単価を、全メーター共通で使います（未決定なら0円）。
   const monthPrice = subItem.priceMode === 'variable' ? toExclusive(variableUnitPrice(subItem, taxRate) ?? 0, subItem, taxRate) : 0;
   const priceOf = (target: MeterShare) => subItem.priceMode === 'variable' ? monthPrice
-    : (() => { const resolved = resolveUnitPrice(subItem, target, row, { ...prices, taxRate }); return toExclusive(resolved.price, subItem, taxRate, resolved.taxMode); })();
+    : (() => { const resolved = resolveUnitPrice(subItem, target, row, prices); return toExclusive(resolved.price, subItem, taxRate, resolved.taxMode); })();
   const usage = roundUsage(own.reduce((sum, target) => sum + target.usage, 0));
 
   // 単価が違うメーターは、まとめて計算の場合も分けて計算します。

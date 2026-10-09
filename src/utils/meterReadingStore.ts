@@ -116,7 +116,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 
   const tenantList = await loadTenantList(client, assetId, billingMonth);
 
-  const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult] = await Promise.all([
+  const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult, priceSettingResult] = await Promise.all([
     client.from('asset_meter_category_setting').select('asset_id, category, usage_unit, is_billable, is_basic_billable').eq('asset_id', assetId),
     client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, usage_display_digits, billing_period_pattern_id, sort_order, variable_price_method, unit_price_rounding_digits, unit_price_rounding_mode, show_unit_price_on_invoice, input_mode').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable, billing_period_pattern_id').eq('asset_id', assetId).order('surcharge_name'),
@@ -134,10 +134,11 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('unit_master').select('unit_id, unit_code, unit_name, floor_label, unit_type').eq('property_id', assetId).eq('is_active', true).order('floor_label').order('unit_code'),
     // 公共料金の単価・基本料は契約区画で持ちます。明細項目の既定単価は、契約区画に単価が無いときに使います。
     client.from('asset_billing_line_item').select('asset_billing_line_item_id, default_unit_price, default_tax_mode').eq('asset_id', assetId),
-    client.from('lease_contract_unit').select('unit_id, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, monthly_unit_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', assetId),
+    client.from('lease_contract_unit').select('unit_id, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, monthly_unit_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, monthly_unit_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', assetId),
+    client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode').eq('asset_id', assetId),
   ]);
 
-  const failed = firstError(settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult);
+  const failed = firstError(settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult, priceSettingResult);
   if (failed) throw new Error(`検針データを読み込めませんでした: ${failed.message}`);
 
   const settingRows = (settingResult.data ?? []) as CategorySettingRow[];
@@ -309,7 +310,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     tenantConfig(id, name, savedContracts[id] ?? [emptyContractRow(subItems)], splitTenants.has(id)));
 
   return {
-    building: { categories, subItems, surcharges, taxRate, ...contractUtilityTerms((lineItemResult.data ?? []) as LineItemPriceRow[], (contractPriceResult.data ?? []) as unknown as ContractUnitPriceRow[], month) },
+    building: { categories, subItems, surcharges, taxRate, ...contractUtilityTerms((lineItemResult.data ?? []) as LineItemPriceRow[], (contractPriceResult.data ?? []) as unknown as ContractUnitPriceRow[], month, (priceSettingResult.data ?? []) as PriceSettingRow[]) },
     tenants, meters, meterDate, previousMeterDate,
     status: currentMonth?.status ?? 'draft',
     units, occupancy,
@@ -322,10 +323,19 @@ type LineItemPriceRow = { asset_billing_line_item_id: string; default_unit_price
 export type ContractUnitPriceRow = {
   unit_id: string; contract: { tenant_id: string } | { tenant_id: string }[] | null;
   prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: TaxMode; monthly_unit_prices: Record<string, number> | null }> | null;
+  categoryPrices?: Array<{ category: CategoryId; unit_price: number; tax_mode: TaxMode; monthly_unit_prices: Record<string, number> | null }> | null;
   basics: Array<{ category: CategoryId; amount: number; tax_mode: TaxMode }> | null;
 };
+type PriceSettingRow = { category: CategoryId; price_scope: 'line_item' | 'category'; default_unit_price: number | null; default_tax_mode: TaxMode };
 // 契約区画の単価（検針月の例外単価があればそれ）・基本料と、明細項目の既定単価を計算用の形にします。
-export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnits: ContractUnitPriceRow[], month: number): Pick<BuildingConfig, 'contractPrices' | 'contractBasics' | 'lineItemDefaults'> {
+export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnits: ContractUnitPriceRow[], month: number, settings: PriceSettingRow[] = []): Pick<BuildingConfig, 'contractPrices' | 'contractBasics' | 'lineItemDefaults' | 'categoryPriceScopes' | 'contractCategoryPrices' | 'categoryDefaults'> {
+  const categoryPriceScopes: NonNullable<BuildingConfig['categoryPriceScopes']> = {};
+  const categoryDefaults: NonNullable<BuildingConfig['categoryDefaults']> = {};
+  for (const setting of settings) {
+    categoryPriceScopes[setting.category] = setting.price_scope;
+    if (setting.price_scope === 'category' && setting.default_unit_price !== null) categoryDefaults[setting.category] = { unitPrice: Number(setting.default_unit_price), taxMode: setting.default_tax_mode };
+  }
+  const contractCategoryPrices: NonNullable<BuildingConfig['contractCategoryPrices']> = {};
   const lineItemDefaults: NonNullable<BuildingConfig['lineItemDefaults']> = {};
   for (const item of lineItems) if (item.default_unit_price !== null) lineItemDefaults[item.asset_billing_line_item_id] = { unitPrice: Number(item.default_unit_price), taxMode: item.default_tax_mode };
   const contractPrices: NonNullable<BuildingConfig['contractPrices']> = {};
@@ -338,9 +348,13 @@ export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnit
       const monthly = price.monthly_unit_prices?.[String(month)];
       (contractPrices[key] ??= {})[price.asset_billing_line_item_id] = { unitPrice: Number(monthly ?? price.unit_price), taxMode: price.tax_mode };
     }
+    for (const price of unit.categoryPrices ?? []) {
+      const monthly = price.monthly_unit_prices?.[String(month)];
+      (contractCategoryPrices[key] ??= {})[price.category] = { unitPrice: Number(monthly ?? price.unit_price), taxMode: price.tax_mode };
+    }
     for (const basic of unit.basics ?? []) (contractBasics[key] ??= {})[basic.category] = { amount: Number(basic.amount), taxMode: basic.tax_mode };
   }
-  return { contractPrices, contractBasics, lineItemDefaults };
+  return { contractPrices, contractBasics, lineItemDefaults, categoryPriceScopes, contractCategoryPrices, categoryDefaults };
 }
 
 // 契約区画に基本料があるテナントは、契約行の基本料を契約区画の基本料（検針期間に入居している区画の合計・税抜）に置き換えます。

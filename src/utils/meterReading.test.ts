@@ -214,3 +214,23 @@ test('固定単価は、メーターの区画の契約単価（税込は税抜�
   const noRowPrice = calculateAll(electricTenants, building, meters).results[1].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light');
   assert.equal(noRowPrice?.groups[0].unitPrice, 25);
 });
+
+test('単価を分類で共通にした分類は、明細項目が違う小分類でも区画の分類単価（なければ分類の既定単価）を使う', () => {
+  const building = electricBuilding(null);
+  building.subItems.push({ ...building.subItems[1], id: 'ac', name: '空調', lineItemId: 'L-ac' });
+  building.categoryPriceScopes = { electric: 'category' };
+  building.contractPrices = { 'U1:T1': { 'L-light': { unitPrice: 99, taxMode: 'exclusive' } } };
+  building.contractCategoryPrices = { 'U1:T1': { electric: { unitPrice: 22, taxMode: 'inclusive' } } };
+  building.categoryDefaults = { electric: { unitPrice: 18, taxMode: 'exclusive' } };
+  const meters: MeterShare[] = [
+    { ...electricMeters[0], unitId: 'U1' }, { id: 'A1', subItemId: 'ac', code: 'A-1', label: '2F', tenantId: 'T1', rowIndex: 0, usage: 100, unitId: 'U1' },
+    { ...electricMeters[1], unitId: 'U2' },
+  ];
+  const tenants = electricTenants.map((tenant) => ({ ...tenant, rows: tenant.rows.map((row) => ({ ...row, billable: { ...row.billable, ac: true } })) }));
+  const { results } = calculateAll(tenants, building, meters);
+  const priceOf = (index: number, id: string) => results[index].rows[0].categories[0].subItems.find((item) => item.subItem.id === id)?.groups[0]?.unitPrice;
+  // 税込22円 → 税抜20円。明細項目の契約単価（99円）は使わない。
+  assert.equal(priceOf(0, 'light'), 20);
+  assert.equal(priceOf(0, 'ac'), 20);
+  assert.equal(priceOf(1, 'light'), 18);
+});
