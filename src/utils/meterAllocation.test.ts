@@ -22,7 +22,7 @@ const occupancyOf = (days: Array<[string, string, Record<string, string>]>): Occ
   return map;
 };
 const row = (id: string, unitIds: string[] = []): ContractRow => ({
-  id, invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true }, billable: {}, unitPrices: {}, fixedCharges: {},
+  id, invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true }, billable: {}, fixedCharges: {},
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds,
 });
 const tenant = (id: string, rows: ContractRow[] = [row(`${id}-R1`)]): TenantConfig => ({ id, name: id, splitEnabled: rows.length > 1, rows, invoiceSplitByUnit: false, expected: 0 });

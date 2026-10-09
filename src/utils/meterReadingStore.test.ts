@@ -41,7 +41,6 @@ const contractRow = (id: string): ContractRow => ({
   id, invoiceNo: 1,
   categoryBillable: { electric: true, water: true, gas: true },
   billable: { basic: true, light: true },
-  unitPrices: { light: 31.65 },
   fixedCharges: { basic: 50379 },
   sumMode: { electric: 'aggregate' as SumMode, water: 'aggregate' as SumMode, gas: 'aggregate' as SumMode },
   amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '', unitIds: [],
@@ -64,6 +63,9 @@ const snapshot = (over: Partial<MeterReadingSnapshot> = {}): MeterReadingSnapsho
     categories: [{ id: 'electric', name: '電気', unit: 'kWh', billable: true, fixedBillable: true }],
     subItems: [subItem('basic', '基本料', 'basic'), subItem('light', '電灯', 'custom')],
     surcharges: [], taxRate: 0.1,
+    categoryDefaults: { electric: { unitPrice: 31.65, taxMode: 'exclusive' } },
+    contractRoundings: { 'U1:T1': 'round' },
+    contractBasics: { 'U1:T1': { electric: { amount: 50379, taxMode: 'exclusive' } } },
   },
   tenants: [{ id: 'T1', name: 'テナント1', splitEnabled: false, rows: [contractRow('C1')], invoiceSplitByUnit: false, expected: 0 }],
   meters: [assetMeter('M1', '223-607-805', { label: '2F', usage: 564.5 })],
@@ -142,7 +144,7 @@ test('基本料は固定額、それ以外は契約単価として保存され�
   await saveMeterReading(client, 'A1', 2026, 9, snapshot(), snapshot());
   const items = rowsOf('meter_reading_contract_item', 'upsert') ?? [];
   assert.deepEqual(items.find((item) => item.asset_meter_sub_item_id === 'basic'), { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'basic', is_billable: true, unit_price: null, fixed_amount: 50379 });
-  assert.deepEqual(items.find((item) => item.asset_meter_sub_item_id === 'light'), { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'light', is_billable: true, unit_price: 31.65, fixed_amount: null });
+  assert.deepEqual(items.find((item) => item.asset_meter_sub_item_id === 'light'), { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'light', is_billable: true, unit_price: null, fixed_amount: null });
 });
 
 test('消えた小分類・契約行だけが削除される', async () => {
@@ -198,11 +200,12 @@ test('分割したテナントだけ分割行の区画を書き込み、外れ�
 
 test('一覧に居ないテナントが中間検針で出てきたら、保存済みの契約行の設定で加える', () => {
   const occupancy = new Map([...occupied('2026-08-01', '2026-08-20'), ...occupied('2026-08-21', '2026-10-31', { U1: ['T2', 'テナント2'] })]);
-  const saved = { ...contractRow('C-T2'), unitPrices: { light: 40 } };
+  const saved = contractRow('C-T2');
   const next = snapshot({
     meterDate: '2026-09-05', previousMeterDate: '2026-08-05', occupancy, savedContracts: { T2: [saved] }, invoiceSplitTenantIds: ['T2'],
     meters: [assetMeter('M1', 'A-1', { usage: 100, breaks: [{ date: '2026-08-20', reading: null, usage: 60 }] })],
   });
+  next.building.contractCategoryPrices = { 'U1:T2': { electric: { unitPrice: 40, taxMode: 'exclusive' } } };
   const month = computeMonth(next, 2026, 9);
   const added = month.tenants.find((row) => row.id === 'T2');
   assert.equal(added?.rows[0].id, 'C-T2');
@@ -309,6 +312,18 @@ test('区画の入居テナントに請求する', () => {
   assert.equal(results[0].total, 17866 + 50379);
 });
 
+test('金額の小数点以下は、契約区画の処理で丸め、契約区画が無ければ切り捨てる', () => {
+  const total = (contractRoundings: Record<string, 'floor' | 'round' | 'ceil'>) => {
+    const next = snapshot();
+    next.building.contractRoundings = contractRoundings;
+    return computeMonth(next, 2026, 9).results[0].total;
+  };
+  // 564.5kWh×31.65＝17,866.425
+  assert.equal(total({ 'U1:T1': 'ceil' }), 17867 + 50379);
+  assert.equal(total({ 'U1:T1': 'floor' }), 17866 + 50379);
+  assert.equal(total({}), 17866 + 50379);
+});
+
 test('月途中の退去：中間検針までを前テナント、以降を次テナントに請求し、一覧に居ないテナントは加える', () => {
   // 検針期間 8/6～9/5。8/20に T1 が退去、8/21～8/31 は空室、9/1から T2 が入居。
   const occupancy = new Map([...occupied('2026-08-01', '2026-08-20'), ...occupied('2026-09-01', '2026-10-31', { U1: ['T2', 'テナント2'] })]);
@@ -342,4 +357,23 @@ test('基本料は検針期間のうち入居していた日数で日割りす�
   // 50,379×15/30＝25,189.5 → テナントの小数点（四捨五入）で25,190円
   assert.equal(basic?.amount, 25190);
   assert.equal(basic?.groups[0].label, '日割り（15／30日）');
+});
+
+test('基本料の日割りは、基本料の既定の請求期間（前月分なら前月1日～末日）の入居日数で数える', () => {
+  // 9月請求・前月分＝8/1～8/31（31日）。T1 は 8/1～8/20 の20日入居。
+  const next = snapshot({ meterDate: '2026-09-04', previousMeterDate: '2026-08-05', occupancy: occupied('2026-08-01', '2026-08-20') });
+  next.building.subItems[0] = { ...next.building.subItems[0], periodPatternId: 'P-prev' };
+  next.building.periodPatterns = { 'P-prev': { start_month_offset: -1, start_day_type: 'first', end_month_offset: -1, end_day_type: 'last' } };
+  const month = computeMonth(next, 2026, 9);
+  const basic = month.results[0].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'basic');
+  // 50,379×20/31＝32,502.5… → 四捨五入で32,503円
+  assert.equal(basic?.amount, 32503);
+  assert.equal(basic?.groups[0].label, '日割り（20／31日）');
+});
+
+test('契約情報に基本料が無いテナントには、基本料を請求しない', () => {
+  const next = snapshot();
+  next.building.contractBasics = {};
+  const basic = computeMonth(next, 2026, 9).results[0].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'basic');
+  assert.equal(basic?.amount, 0);
 });
