@@ -4,3 +4,8 @@
 - ステージングは `git add .` を使わず、実装対象のファイルを明示して行う。診断ログ・生成物は `.gitignore` の対象とする。
 - コミット前に `git diff --cached --check` を実行し、必要に応じてビルドを確認する。
 - 通常の手順は「変更を確認 → 対象ファイルのみステージング → コミット → 現在のブランチを origin へプッシュ」とする。
+
+## DB 構成確認
+
+- DB、Supabase、Migration、テーブル、カラム、RLS、関数、ビュー、インデックスなどに関係する調査・実装を開始する前に、必ず [`docs/database-current-schema.md`](docs/database-current-schema.md) を読む。
+- 現在のDB構成はリモートDBを正とし、`supabase/migrations/` は変更履歴として扱う。古いMigrationだけから現行の名称や構造を推測しない。

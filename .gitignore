@@ -12,6 +12,9 @@ rent_roll_import_report.json
 outputs/
 output/
 tmp/
+data/rent-roll-history/source-copy/
+data/rent-roll-history/normalized/
+data/rent-roll-history/reports/
 jpn.traineddata
 scripts/__pycache__/
 tools/__pycache__/

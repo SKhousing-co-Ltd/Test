@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase';
 import { Dialog } from './components/Dialog';
 import './ContractInformationPage.css';
 import { termsDueDate, type BillingTerms } from './utils/billingDates';
+import { allProductCategories, normalizeProductCategory, productCategories, type ProductCategory } from './lib/product-categories';
 
 type PropertyOption = {
   propertyId: string;
@@ -42,6 +43,8 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
   const [properties, setProperties] = useState<PropertyOption[]>([]);
   const [propertyId, setPropertyId] = useState('');
   const [asOfDate, setAsOfDate] = useState(today);
+  const [selectedProductCategories, setSelectedProductCategories] = useState<ProductCategory[]>(allProductCategories);
+  const [tenantFilter, setTenantFilter] = useState('');
   const [rows, setRows] = useState<ContractListRow[]>([]);
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -93,6 +96,7 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
 
   useEffect(() => {
     setSelectedLeaseContractUnitId(null);
+    setTenantFilter('');
     if (!propertyId) {
       setRows([]);
       return;
@@ -122,6 +126,15 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
     void loadRows();
     return () => { cancelled = true; };
   }, [propertyId, asOfDate]);
+
+  const tenantOptions = rows
+    .filter((row) => row.tenant_id && row.tenant_name)
+    .reduce<Array<{ id: string; name: string }>>((options, row) => {
+      if (!options.some((option) => option.id === row.tenant_id)) options.push({ id: row.tenant_id!, name: row.tenant_name! });
+      return options;
+    }, [])
+    .sort((left, right) => left.name.localeCompare(right.name, 'ja'));
+  const filteredRows = rows.filter((row) => selectedProductCategories.includes(normalizeProductCategory(row.unit_type)) && (!tenantFilter || row.tenant_id === tenantFilter));
 
   useEffect(() => {
     if (!selectedLeaseContractUnitId) {
@@ -237,20 +250,33 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
           {properties.map((property) => <option key={property.propertyId} value={property.propertyId}>{property.shortName || property.propertyName}</option>)}
         </select>
       </label>
+      <label>テナント名
+        <select value={tenantFilter} onChange={(event) => setTenantFilter(event.target.value)} disabled={!propertyId || loadingRows}>
+          <option value="">すべて</option>
+          {tenantOptions.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.name}</option>)}
+        </select>
+      </label>
     </div>
+
+    <section className="contract-information-product-filter" aria-label="商品区分">
+      <div className="contract-information-product-filter-heading"><div><h3>商品区分</h3><p>表示する商品区分を複数選択できます。</p></div><div className="contract-information-product-filter-actions"><button type="button" onClick={() => setSelectedProductCategories(allProductCategories)}>全選択</button><button type="button" onClick={() => setSelectedProductCategories([])}>全解除</button></div></div>
+      <div className="contract-information-product-options">
+        {productCategories.map(({ code, label }) => <label key={code} className={selectedProductCategories.includes(code) ? 'selected' : ''}><input type="checkbox" checked={selectedProductCategories.includes(code)} onChange={() => setSelectedProductCategories((current) => current.includes(code) ? current.filter((item) => item !== code) : [...current, code])} /><span>{label}</span></label>)}
+      </div>
+    </section>
 
     {error && <p className="contract-information-notice">{error}</p>}
     {!loadingProperties && properties.length === 0 && !error && <p className="contract-information-notice">対象の物件がありません。</p>}
 
     <div className="contract-information-panel">
-      <div className="contract-information-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${rows.length} 件の契約`}</p></div></div>
+      <div className="contract-information-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${filteredRows.length} / ${rows.length} 件の契約`}</p></div></div>
       <div className="contract-information-table-wrap">
         <table className="contract-information-table">
           <thead><tr><th>テナント名</th><th>区画</th><th>契約形態</th><th>契約期間</th><th>賃料</th><th>共益費</th><th>月額合計</th></tr></thead>
           <tbody>
             {loadingRows && <tr><td colSpan={7} className="contract-information-empty">契約情報を読み込んでいます。</td></tr>}
-            {!loadingRows && rows.length === 0 && <tr><td colSpan={7} className="contract-information-empty">条件に一致する契約はありません。</td></tr>}
-            {!loadingRows && rows.map((row) => <tr key={row.lease_contract_unit_id} className={row.lease_contract_unit_id === selectedLeaseContractUnitId ? 'current' : ''} onClick={() => setSelectedLeaseContractUnitId(row.lease_contract_unit_id)}>
+            {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={7} className="contract-information-empty">条件に一致する契約はありません。</td></tr>}
+            {!loadingRows && filteredRows.map((row) => <tr key={row.lease_contract_unit_id} className={row.lease_contract_unit_id === selectedLeaseContractUnitId ? 'current' : ''} onClick={() => setSelectedLeaseContractUnitId(row.lease_contract_unit_id)}>
               <td><strong>{row.tenant_name || '—'}</strong></td>
               <td>{[row.floor_label, row.unit_name || row.unit_code].filter(Boolean).join(' ')}</td>
               <td>{leaseTermLabel(row.lease_term_type)}</td>

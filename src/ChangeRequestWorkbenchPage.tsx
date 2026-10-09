@@ -17,7 +17,7 @@ type ChangeRequest = {
 type AccountRole = 'admin' | 'manager' | 'staff' | 'viewer';
 type PropertyOption = { asset_id: string; asset_name: string };
 type TenantOption = { tenant_id: string; tenant_name: string; external_tenant_code: string | null };
-type UnitOption = { unit_id: string; property_id: string; unit_code: string; unit_name: string | null; floor_label: string | null; is_active: boolean };
+type UnitOption = { unit_id: string; property_id: string; unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string | null; is_active: boolean };
 type ContractOption = {
   lease_contract_id: string; tenant_id: string; row_version: number; contract_status: string;
   contract_type: string | null; lease_term_type: 'ordinary' | 'fixed_term' | null;
@@ -26,13 +26,13 @@ type ContractOption = {
   tenant: { tenant_name: string } | null;
 };
 type CancellationCandidate = { appsuite_record_id: string; ringi_number: string | null; property_name: string | null; tenant_name: string | null; approval_status: string | null; is_cancelled: boolean; lease_contract_id: string | null };
-type ContractOperation = { action: 'set_field' | 'link_unit' | 'unlink_unit'; entity_type?: 'lease_contract' | 'lease_contract_unit'; entity_id?: string; unit_id?: string; field_name?: string; value: unknown };
+type ContractOperation = { action: 'set_field' | 'link_unit' | 'unlink_unit'; entity_type?: 'lease_contract' | 'lease_contract_unit'; entity_id?: string; unit_id?: string; field_name?: string; value: unknown; effective_date?: string };
 type ParkingScope = 'internal' | 'external';
 type RecheckResult = { outcome?: 'applied' | 'open' | 'skipped' | 'not_eligible'; evaluation_kind?: string };
 type RecheckBatchResult = { checked_count?: number; applied_count?: number; open_count?: number; skipped_count?: number };
 type WorkflowContractCandidate = {
   lease_contract_id: string; tenant_id: string; tenant_name: string; property_id: string; property_name: string;
-  lease_contract_unit_id: string; unit_id: string; unit_code: string; floor_label: string | null;
+  lease_contract_unit_id: string; unit_id: string; unit_code: string; floor_label: string | null; unit_type: string | null;
   contract_start_date: string | null; contract_end_date: string | null; suggestion_level: string; match_reasons: Array<{ rule: string; matched: boolean; message: string }>;
 };
 type ContractUnitOption = {
@@ -531,12 +531,38 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
   const [operationTarget, setOperationTarget] = useState('');
   const [operationField, setOperationField] = useState<string>('monthly_rent_amount');
   const [operationValue, setOperationValue] = useState('');
+  const [operationEffectiveDate, setOperationEffectiveDate] = useState('');
   const [operations, setOperations] = useState<ContractOperation[]>(Array.isArray(request.proposed_payload.operations) ? request.proposed_payload.operations as ContractOperation[] : []);
   const [noSystemReason, setNoSystemReason] = useState(String(request.proposed_payload.no_system_reason ?? ''));
   const [candidates, setCandidates] = useState<CancellationCandidate[]>([]);
   const [targetRecordId, setTargetRecordId] = useState(request.target_appsuite_record_id ?? '');
   const [cancelMode, setCancelMode] = useState<'source_only' | 'create_contract_follow_up'>((request.proposed_payload.mode as 'source_only' | 'create_contract_follow_up') ?? 'source_only');
   const [cancelNote, setCancelNote] = useState(String(request.proposed_payload.note ?? ''));
+  const [directTargetUnits, setDirectTargetUnits] = useState<ContractUnitOption[]>([]);
+
+  const targetContractUnits = (directTargetUnits.length ? directTargetUnits : contractUnits).filter((unit) =>
+    unit.lease_contract_id === targetContractId || unit.contract?.lease_contract_id === targetContractId,
+  );
+
+  useEffect(() => {
+    if (!supabase || !targetContractId || request.request_type !== 'contract_update') {
+      setDirectTargetUnits([]);
+      return;
+    }
+    let cancelled = false;
+    void supabase.from('lease_contract_unit')
+      .select('lease_contract_unit_id, lease_contract_id, lease_start_date, lease_end_date, leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))')
+      .eq('lease_contract_id', targetContractId)
+      .then(({ data, error }) => {
+        if (!cancelled && !error) setDirectTargetUnits((data ?? []) as unknown as ContractUnitOption[]);
+      });
+    return () => { cancelled = true; };
+  }, [request.request_type, supabase, targetContractId]);
+
+  useEffect(() => {
+    if (operationKind !== 'unit' || operationTarget || targetContractUnits.length !== 1) return;
+    setOperationTarget(targetContractUnits[0].lease_contract_unit_id);
+  }, [operationKind, operationTarget, targetContractUnits]);
 
   useEffect(() => {
     if (!propertyId && properties.length) setPropertyId(properties.find((item) => item.asset_name === sourceProperty)?.asset_id ?? '');
@@ -552,7 +578,13 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
       });
   }, [request.change_request_id, request.request_type, targetRecordId, onError]);
 
-  const propertyUnits = units.filter((unit) => unit.property_id === propertyId && unit.is_active);
+  const propertyUnits = useMemo(() => {
+    const typeOrder: Record<string, number> = { parking: 0, bicycle_parking: 1, signage: 2, antenna: 3, warehouse: 4, office: 5, residential: 6, retail: 7, other: 8 };
+    const contractUnitType = ({ parking: 'parking', bicycle_parking: 'bicycle_parking', warehouse: 'warehouse', signage: 'signage', antenna: 'antenna' } as Record<string, string | undefined>)[contractType];
+    return units
+      .filter((unit) => unit.property_id === propertyId && unit.is_active && (!contractUnitType || unit.unit_type === contractUnitType || (contractType === 'lease' || contractType === 'ordinary_lease' || contractType === 'fixed_term_lease') && ['office', 'residential', 'retail'].includes(unit.unit_type ?? '')))
+      .sort((a, b) => (typeOrder[a.unit_type ?? 'other'] ?? 99) - (typeOrder[b.unit_type ?? 'other'] ?? 99) || a.unit_code.localeCompare(b.unit_code, 'ja-JP'));
+  }, [contractType, propertyId, units]);
   const saveCreate = async () => {
     if (!supabase || !propertyId || (!tenantId && !newTenantName.trim()) || !selectedUnitIds.length) { onError('物件、テナント、1件以上の区画を入力してください。'); return; }
     onWorking(true); onError('');
@@ -566,15 +598,16 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
     await onSaved('契約内容とリーシング区画を保存しました。');
   };
   const addOperation = () => {
+    if (operationKind === 'unit' && operationField === 'monthly_rent_amount' && !operationEffectiveDate) { onError('賃料の適用開始日を入力してください。'); return; }
     if ((operationKind !== 'contract' && !operationTarget) || !operationValue.trim()) { onError('変更対象と値を入力してください。'); return; }
     const operation: ContractOperation = operationKind === 'contract'
       ? { action: 'set_field', entity_type: 'lease_contract', field_name: operationField, value: operationValue.trim() }
       : operationKind === 'unit'
-        ? { action: 'set_field', entity_type: 'lease_contract_unit', entity_id: operationTarget, field_name: operationField, value: operationValue.trim() }
+        ? { action: 'set_field', entity_type: 'lease_contract_unit', entity_id: operationTarget, field_name: operationField, value: operationValue.trim(), ...(operationField === 'monthly_rent_amount' ? { effective_date: operationEffectiveDate } : {}) }
         : operationKind === 'link'
           ? { action: 'link_unit', unit_id: operationTarget, value: { lease_start_date: operationValue.trim() } }
           : { action: 'unlink_unit', entity_id: operationTarget, value: { effective_date: operationValue.trim() } };
-    setOperations((current) => [...current, operation]); setOperationValue(''); onError('');
+    setOperations((current) => [...current, operation]); setOperationValue(''); setOperationEffectiveDate(''); onError('');
   };
   const saveUpdate = async () => {
     if (!supabase || !targetContractId) { onError('対象契約を選択してください。'); return; }
@@ -621,10 +654,10 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
         </select>
       </label>
       {!tenantId && <label>新規テナント名<input value={newTenantName} onChange={(e) => setNewTenantName(e.target.value)} /></label>}
-      <label>契約種別<input value={contractType} onChange={(e) => setContractType(e.target.value)} /></label>
+      <label>契約種別<select value={contractType} onChange={(e) => { setContractType(e.target.value); setSelectedUnitIds([]); setUnitDrafts({}); }}><option value="lease">lease（通常契約）</option><option value="ordinary_lease">普通賃貸借</option><option value="fixed_term_lease">定期賃貸借</option><option value="parking">駐車場</option><option value="bicycle_parking">駐輪場</option><option value="warehouse">倉庫</option><option value="signage">看板</option><option value="antenna">アンテナ</option><option value="other">その他</option></select></label>
       <label>開始日<input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></label><label>終了日<input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
     </div>
-    <div className="change-unit-picker"><strong>リーシング区画</strong>{propertyUnits.map((unit) => <label key={unit.unit_id} className="check"><input type="checkbox" checked={selectedUnitIds.includes(unit.unit_id)} onChange={(e) => setSelectedUnitIds((current) => e.target.checked ? [...current, unit.unit_id] : current.filter((id) => id !== unit.unit_id))} />{unit.floor_label ?? '階未設定'}｜{unit.unit_code} {unit.unit_name ?? ''}</label>)}</div>
+    <div className="change-unit-picker"><strong>リーシング区画（{propertyUnits.length}件）</strong><p className="muted">契約種別に合う区画だけを表示しています。契約種別を変更すると候補も切り替わります。</p>{propertyUnits.map((unit) => <label key={unit.unit_id} className="check"><input type="checkbox" checked={selectedUnitIds.includes(unit.unit_id)} onChange={(e) => setSelectedUnitIds((current) => e.target.checked ? [...current, unit.unit_id] : current.filter((id) => id !== unit.unit_id))} />{unit.floor_label ?? '階未設定'}｜{unit.unit_code} {unit.unit_name ?? ''}（{unit.unit_type === 'parking' ? '駐車場' : unit.unit_type === 'bicycle_parking' ? '駐輪場' : unit.unit_type === 'signage' ? '看板' : unit.unit_type === 'antenna' ? 'アンテナ' : unit.unit_type === 'warehouse' ? '倉庫' : unit.unit_type === 'office' ? '貸室' : unit.unit_type ?? '区画'}）</label>)}</div>
     {selectedUnitIds.map((unitId) => { const unit = units.find((item) => item.unit_id === unitId); const draft = unitDrafts[unitId] ?? {}; const change = (field: string, value: string) => setUnitDrafts((current) => ({ ...current, [unitId]: { ...(current[unitId] ?? {}), [field]: value } })); return <div className="change-item-editor" key={unitId}><strong>{unit?.floor_label}｜{unit?.unit_code}</strong><label>面積<input type="number" value={String(draft.leased_area_sqm ?? '')} onChange={(e) => change('leased_area_sqm', e.target.value)} /></label><label>月額賃料<input type="number" value={String(draft.monthly_rent_amount ?? '')} onChange={(e) => change('monthly_rent_amount', e.target.value)} /></label><label>共益費<input type="number" value={String(draft.monthly_common_charge_amount ?? '')} onChange={(e) => change('monthly_common_charge_amount', e.target.value)} /></label><label>敷金・保証金<input type="number" value={String(draft.deposit_amount ?? '')} onChange={(e) => change('deposit_amount', e.target.value)} /></label></div>; })}
     <ChangeSummary rows={[
       { label: '物件名', before: '—', after: properties.find((p) => p.asset_id === propertyId)?.asset_name ?? '未選択' },
@@ -654,12 +687,13 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
           <option value="">選択してください（{unitFilter.filtered.length}件中）</option>
           {unitFilter.filtered.map((unit) => <option key={unit.unit_id} value={unit.unit_id}>{propertyNameById.get(unit.property_id) ?? '物件未設定'}｜{unit.floor_label ?? '階未設定'}｜{unit.unit_code}</option>)}
         </select>
-      </label> : <label>契約区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{contractUnits.filter((unit) => unit.contract?.lease_contract_id === targetContractId).map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label>}
+      </label> : <label>契約区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{targetContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label>}
       {(operationKind === 'contract' || operationKind === 'unit') && <label>項目<select value={operationField} onChange={(e) => setOperationField(e.target.value)}>{operationKind === 'contract' ? [['contract_type', '契約種別'], ['contract_start_date', '契約開始日'], ['contract_end_date', '契約終了日'], ['renewal_terms', '更新条件'], ['payment_terms', '支払条件'], ['notes', '備考']].map(([value, label]) => <option value={value} key={value}>{label}</option>) : editableFields.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
       <label>{operationKind === 'unlink' ? '解除効力発生日' : operationKind === 'link' ? '利用開始日' : '反映予定値'}<input value={operationValue} onChange={(e) => setOperationValue(e.target.value)} /></label><button className="secondary-button" onClick={addOperation}>変更を追加</button>
     </div>
-    <ChangeSummary rows={operations.map((op) => ({ label: op.field_name ?? op.entity_id ?? op.unit_id ?? op.action, before: op.action, after: prettyValue(op.value) }))} />
-    <ol>{operations.map((operation, index) => <li key={`${operation.action}-${index}`}>{operation.action}｜{operation.field_name ?? operation.entity_id ?? operation.unit_id}｜{prettyValue(operation.value)} <button className="text-button" onClick={() => setOperations((current) => current.filter((_, itemIndex) => itemIndex !== index))}>削除</button></li>)}</ol>
+    {operationKind === 'unit' && operationField === 'monthly_rent_amount' && <label>賃料適用開始日<input type="date" value={operationEffectiveDate} onChange={(e) => setOperationEffectiveDate(e.target.value)} /></label>}
+    <ChangeSummary rows={operations.map((op) => ({ label: op.field_name ?? op.entity_id ?? op.unit_id ?? op.action, before: op.action, after: `${prettyValue(op.value)}${op.effective_date ? `（適用開始日：${op.effective_date}）` : ''}` }))} />
+    <ol>{operations.map((operation, index) => <li key={`${operation.action}-${index}`}>{operation.action}｜{operation.field_name ?? operation.entity_id ?? operation.unit_id}｜{prettyValue(operation.value)}{operation.effective_date ? `（適用開始日：${operation.effective_date}）` : ''} <button className="text-button" onClick={() => setOperations((current) => current.filter((_, itemIndex) => itemIndex !== index))}>削除</button></li>)}</ol>
     <label>本システムに対象項目がない場合の理由<textarea value={noSystemReason} onChange={(e) => setNoSystemReason(e.target.value)} placeholder="例：連帯保証人は本システムの管理対象外。契約原本側で確認済み。" /></label>
     <ActionButton className="secondary-button" onClick={() => void saveUpdate()} disabled={working} label="目視確認結果を保存" hint="入力内容を保存します。正本データはまだ変更されません。" />
   </section>;
@@ -740,7 +774,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       supabase.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, lease_start_date, lease_end_date, leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))').range(0, 9999),
       supabase.from('asset_master').select('asset_id, asset_name').order('asset_name'),
       supabase.from('tenant_master').select('tenant_id, tenant_name, external_tenant_code').order('tenant_name'),
-      supabase.from('unit_master').select('unit_id, property_id, unit_code, unit_name, floor_label, is_active').order('unit_code'),
+      supabase.from('unit_master').select('unit_id, property_id, unit_code, unit_name, floor_label, unit_type, is_active').order('unit_code'),
       supabase.from('lease_contract').select('lease_contract_id, tenant_id, row_version, contract_status, contract_type, lease_term_type, contract_start_date, contract_end_date, renewal_due_date, actual_end_date, tenant:tenant_master(tenant_name)').neq('contract_status', 'draft').order('updated_at', { ascending: false }).range(0, 9999),
     ]).then(([contractUnitResult, propertyResult, tenantResult, unitResult, contractResult]) => {
       const firstError = contractUnitResult.error ?? propertyResult.error ?? tenantResult.error ?? unitResult.error ?? contractResult.error;
@@ -837,9 +871,20 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       p_tenant_name: candidate.tenant_name,
       p_operation_kind: selected.request_type,
     });
+    if (linkError) { setWorking(false); setError(`過去契約履歴を紐付けできませんでした: ${linkError.message}`); return; }
+    const { error: completeError } = await supabase.rpc('complete_historical_contract_workflow', {
+      p_change_request_id: selected.change_request_id,
+      p_expected_row_version: selected.row_version,
+      p_historical_contract_key: candidate.historical_contract_key,
+    });
     setWorking(false);
-    if (linkError) { setError(`過去契約履歴を紐付けできませんでした: ${linkError.message}`); return; }
-    setMessage('過去契約履歴に紐付けました。現行契約・請求データは変更していません。');
+    if (completeError) {
+      setError(`過去契約への紐付けは完了しましたが、対応依頼を完了できませんでした: ${completeError.message}`);
+      await loadRequests();
+      return;
+    }
+    setMessage('過去契約に紐付け、現行データを変更せずに対応依頼を完了しました。');
+    await loadRequests();
   };
 
   const confirmWorkflowContract = async (candidate: WorkflowContractCandidate) => {
@@ -975,7 +1020,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const apply = async () => {
     if (!selected || !supabase || !window.confirm(reviewOnly ? '確認内容を確定し、この取込依頼を閉じますか？' : '正本への反映を確定しますか？')) return;
     setWorking(true); setError('');
-    const { data, error: applyError } = await supabase.rpc('apply_change_request', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version });
+    const { data, error: applyError } = await supabase.rpc('apply_change_request_with_terms', { p_change_request_id: selected.change_request_id, p_expected_row_version: selected.row_version });
     setWorking(false);
     if (applyError) { setError(`適用できませんでした: ${applyError.message}`); return; }
     const applied = (Array.isArray(data) ? data[0] : data) as ChangeRequest | null;
@@ -1004,7 +1049,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           <h4>過去契約履歴候補</h4>
           <p>過去スナップショットを連続期間にまとめた候補です。ここで紐付けても、現行契約・請求・解約処理は変更しません。</p>
           {historicalCandidateLoading ? <p className="muted">過去スナップショット候補を取得中です…</p> : historicalCandidates.length === 0 ? <p className="muted">一致する過去契約履歴はありません。</p> : historicalCandidates.map((candidate) => <article key={candidate.historical_contract_key} className="historical-contract-candidate">
-            <div><strong>{candidate.tenant_name ?? 'テナント未設定'}</strong><span>{candidate.property_name} / {candidate.floor_label ?? ''} / {candidate.unit_code ?? '区画未設定'}</span><span>履歴期間: {candidate.period_start ?? '未設定'} ～ {candidate.period_end ?? '未設定'}（{candidate.snapshot_count}か月）</span></div>
+            <div><strong>{candidate.tenant_name ?? 'テナント未設定'}</strong><span>{candidate.property_name} / {candidate.floor_label ?? 'フロア未設定'} / {candidate.unit_code ?? '識別番号未設定'}</span><span>区画種別: {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '未設定'}</span><span>履歴期間: {candidate.period_start ?? '未設定'} ～ {candidate.period_end ?? '未設定'}（{candidate.snapshot_count}か月）</span></div>
             <div><strong>一致度: {candidate.match_level}</strong><ul>{candidate.match_reasons.filter((reason) => reason.matched).map((reason) => <li key={reason.rule}>✓ {reason.message}</li>)}</ul></div>
             {editable && <button className="secondary-button" onClick={() => void confirmHistoricalContract(candidate)} disabled={working}>過去履歴に紐付ける</button>}
           </article>)}
@@ -1034,17 +1079,20 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
                   const checked = terminationUnitIds.includes(candidate.lease_contract_unit_id);
                   return <label key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className={checked ? 'termination-unit-option selected' : 'termination-unit-option'}>
                     <input type="checkbox" checked={checked} onChange={(event) => setTerminationUnitIds((current) => event.target.checked ? [...current, candidate.lease_contract_unit_id] : current.filter((id) => id !== candidate.lease_contract_unit_id))} />
-                    <span><strong>{candidate.floor_label ?? candidate.unit_code}</strong><small>{candidate.property_name} / {unit?.unit_type === 'parking' ? '駐車場' : '貸室等'} / {candidate.tenant_name}</small></span>
+                    <span><strong>{candidate.floor_label ?? candidate.unit_code}</strong><small>{candidate.property_name} / {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '区画'} / {candidate.tenant_name}</small></span>
                   </label>;
                 })}
               </div>
             </fieldset>}
           </div>}
-          {candidateLoading ? <p className="muted">候補を取得中です…</p> : workflowCandidates.length === 0 ? <p className="muted">候補なし。分類・建物・テナント・契約期間を確認してください。</p> : workflowCandidates.map((candidate) => <article key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className="workflow-contract-candidate">
-            <div><strong>{candidate.tenant_name}</strong><span>{candidate.property_name} / {candidate.floor_label ?? candidate.unit_code}</span><span>契約期間: {candidate.contract_start_date ?? '未設定'} ～ {candidate.contract_end_date ?? '継続中'}</span></div>
+          {candidateLoading ? <p className="muted">候補を取得中です…</p> : workflowCandidates.length === 0 ? <p className="muted">候補なし。分類・建物・テナント・契約期間を確認してください。</p> : <details open={workflowCandidates.length <= 5}>
+            <summary>契約候補を表示（{workflowCandidates.length}件）</summary>
+            {workflowCandidates.map((candidate) => <article key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className="workflow-contract-candidate">
+            <div><strong>{candidate.tenant_name}</strong><span>{candidate.property_name} / {candidate.floor_label ?? candidate.unit_code} / {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '区画'}</span><span>契約期間: {candidate.contract_start_date ?? '未設定'} ～ {candidate.contract_end_date ?? '継続中'}</span></div>
             <div><strong>判定: {candidate.suggestion_level}</strong><ul>{candidate.match_reasons.filter((reason) => reason.matched || reason.rule === 'effective_date').map((reason) => <li key={reason.rule}>{reason.matched ? '✓ ' : '⚠ '}{reason.message}</li>)}</ul></div>
             {editable && <button className="secondary-button" onClick={() => void confirmWorkflowContract(candidate)} disabled={working}>この契約に紐付ける</button>}
           </article>)}
+          </details>}
         </section>}
         {isParkingFeeRequest ? <ParkingFeeRequestEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} onHold={() => setStatus('on_hold')} /> : null}
         {isContractDeadlineRequest && editable ? <ContractDeadlineRequestEditor key={`${selected.change_request_id}-${selected.row_version}-${selectedContract?.row_version ?? 'loading'}-${contractUnits.length}`} request={selected} contract={selectedContract} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} onHold={() => setStatus('on_hold')} /> : null}

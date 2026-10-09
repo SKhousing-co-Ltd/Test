@@ -157,4 +157,7 @@ begin
 end;
 $$;
 
+select '1..1';
+select 'ok 1 - SQL assertions completed';
+
 rollback;
