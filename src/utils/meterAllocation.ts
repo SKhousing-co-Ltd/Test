@@ -63,9 +63,10 @@ export function readingPeriod(year: number, month: number, meterDate: string, pr
 }
 
 // 入居状況を読み込む範囲です。前月1日から翌月末日までを読み、検針日を変えても読み直さずに済むようにします。
-export function occupancyRange(year: number, month: number): Period {
-  const previous = new Date(Date.UTC(year, month - 2, 1));
-  return { start: fromUtc(previous.getTime()), end: monthLast(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1) };
+// 基本料の請求期間がさらに前後の月を指すときは、before・after（月数）で広げます。
+export function occupancyRange(year: number, month: number, before = 1, after = 1): Period {
+  const start = new Date(Date.UTC(year, month - 1 - Math.max(before, 1), 1));
+  return { start: fromUtc(start.getTime()), end: fromUtc(Date.UTC(year, month + Math.max(after, 1), 0)) };
 }
 
 export const unitAt = (meter: AssetMeter, date: string) =>

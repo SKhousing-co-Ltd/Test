@@ -40,6 +40,18 @@ const isAmount = (value: string) => value.trim() === '' || (Number.isFinite(Numb
 type Bulk = { dueMonth: string; dueDay: string; holiday: string; period: string; rounding: string; basic: string; electric: string; water: string; gas: string };
 const emptyBulk: Bulk = { dueMonth: '', dueDay: '', holiday: '', period: '', rounding: '', basic: '', electric: '', water: '', gas: '' };
 
+// 契約区画の公共料金（単価・分類共通の単価・基本料）の保存済みの内容を読み直します。
+async function loadSavedTerms(client: NonNullable<typeof supabase>, leaseContractUnitId: string): Promise<Row['saved'] | { error: string }> {
+  const [prices, categoryPrices, basics] = await Promise.all([
+    client.from('lease_contract_unit_utility_price').select('asset_billing_line_item_id, unit_price, tax_mode, monthly_unit_prices').eq('lease_contract_unit_id', leaseContractUnitId),
+    client.from('lease_contract_unit_category_price').select('category, unit_price, tax_mode, monthly_unit_prices').eq('lease_contract_unit_id', leaseContractUnitId),
+    client.from('lease_contract_unit_basic_charge').select('category, amount, tax_mode').eq('lease_contract_unit_id', leaseContractUnitId),
+  ]);
+  const failed = prices.error ?? categoryPrices.error ?? basics.error;
+  if (failed) return { error: `保存済みの内容を読み込めませんでした: ${failed.message}` };
+  return { prices: (prices.data ?? []) as SavedPrice[], categoryPrices: (categoryPrices.data ?? []) as SavedCategoryPrice[], basics: (basics.data ?? []) as SavedBasic[] };
+}
+
 export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -151,43 +163,48 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
     setProcessing(true); setError(''); setResult(null);
     let success = 0; const failures: Failure[] = [];
     const savedContracts = new Set<string>();
+    // 区画ごとに、請求条件・小数点以下の処理・公共料金をそれぞれ保存します。一部だけ失敗したときは、保存できた項目も結果に出します。
     for (const row of changedRows) {
       const draft = drafts[row.id];
-      const fail = (message: string) => failures.push({ property: row.property, tenant: row.tenant, unit: row.unit, message });
+      const saved: string[] = []; const errors: string[] = [];
       if (termsChanged(row) && !savedContracts.has(row.contractId)) {
         const { error: termsError } = await supabase.rpc('update_lease_contract_billing_terms', {
           p_lease_contract_id: row.contractId, p_due_month_offset: draft.due_month_offset, p_due_day_of_month: draft.due_day_of_month,
           p_due_holiday_adjustment: draft.due_holiday_adjustment, p_period_month_offset: draft.period_month_offset,
           p_is_annual_billing: draft.is_annual_billing, p_annual_billing_month: draft.annual_billing_month, p_annual_start_offset: draft.annual_start_offset,
         });
-        if (termsError) { fail(`請求条件：${termsError.message}`); continue; }
-        savedContracts.add(row.contractId);
+        if (termsError) errors.push(`請求条件：${termsError.message}`); else { saved.push('請求条件'); savedContracts.add(row.contractId); }
       }
       if (roundingChanged(row)) {
         const { error: roundingError } = await supabase.rpc('update_lease_contract_unit_amount_rounding', { p_lease_contract_unit_id: row.id, p_amount_rounding_mode: draft.rounding });
-        if (roundingError) { fail(`小数点以下の処理：${roundingError.message}`); continue; }
+        if (roundingError) errors.push(`小数点以下の処理：${roundingError.message}`); else saved.push('小数点以下の処理');
       }
       if (pricesChanged(row)) {
-        // 保存は置き換えのため、この画面で扱わない単価・基本料は保存済みの内容をそのまま渡します。
-        const categoryPrices = categories.flatMap((category) => {
-          const kept = row.saved.categoryPrices.find((item) => item.category === category);
-          if (!row.sharedCategories.includes(category)) return kept ? [kept] : [];
-          const value = draft[category].trim();
-          if (!value) return [];
-          return [{ category, unit_price: Number(value), tax_mode: kept?.tax_mode ?? 'exclusive', monthly_unit_prices: kept?.monthly_unit_prices ?? {} }];
-        });
-        const keptBasic = row.saved.basics.find((item) => item.category === 'electric');
-        const basics = [
-          ...row.saved.basics.filter((item) => item.category !== 'electric'),
-          ...(draft.basic.trim() ? [{ category: 'electric' as CategoryId, amount: Number(draft.basic), tax_mode: keptBasic?.tax_mode ?? 'exclusive' }] : []),
-        ];
-        const { error: priceError } = await supabase.rpc('save_lease_contract_unit_utility_terms', {
-          p_lease_contract_unit_id: row.id, p_prices: row.saved.prices.map((item) => ({ ...item, monthly_unit_prices: item.monthly_unit_prices ?? {} })),
-          p_category_prices: categoryPrices, p_basic_charges: basics,
-        });
-        if (priceError) { fail(`公共料金：${priceError.message}`); continue; }
+        // 保存は置き換えのため、この画面で扱わない単価・基本料は保存直前の最新の内容をそのまま渡します（画面を開いた後に契約情報で入れた変更も消さないため）。
+        const latest = await loadSavedTerms(supabase, row.id);
+        if ('error' in latest) errors.push(`公共料金：${latest.error}`);
+        else {
+          const categoryPrices = categories.flatMap((category) => {
+            const kept = latest.categoryPrices.find((item) => item.category === category);
+            if (!row.sharedCategories.includes(category)) return kept ? [kept] : [];
+            const value = draft[category].trim();
+            if (!value) return [];
+            return [{ category, unit_price: Number(value), tax_mode: kept?.tax_mode ?? 'exclusive', monthly_unit_prices: kept?.monthly_unit_prices ?? {} }];
+          });
+          const keptBasic = latest.basics.find((item) => item.category === 'electric');
+          const basics = [
+            ...latest.basics.filter((item) => item.category !== 'electric'),
+            ...(draft.basic.trim() ? [{ category: 'electric' as CategoryId, amount: Number(draft.basic), tax_mode: keptBasic?.tax_mode ?? 'exclusive' }] : []),
+          ];
+          const { error: priceError } = await supabase.rpc('save_lease_contract_unit_utility_terms', {
+            p_lease_contract_unit_id: row.id, p_prices: latest.prices.map((item) => ({ ...item, monthly_unit_prices: item.monthly_unit_prices ?? {} })),
+            p_category_prices: categoryPrices, p_basic_charges: basics,
+          });
+          if (priceError) errors.push(`公共料金：${priceError.message}`); else saved.push('公共料金');
+        }
       }
-      success += 1;
+      if (errors.length) failures.push({ property: row.property, tenant: row.tenant, unit: row.unit, message: `${errors.join('／')}${saved.length ? `（${saved.join('・')}は保存済み）` : ''}` });
+      else success += 1;
     }
     setProcessing(false); setResult({ success, failures }); await load();
   };
