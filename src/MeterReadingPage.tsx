@@ -303,7 +303,8 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
       else groups.push({ key, tenantId: assigned ? share.tenantId : '', rowIndex: assigned ? share.rowIndex : 0, vacancy, meters: [share] });
     }
     const rows = groups.map((group) => {
-      const tenant = tenants.find((item) => item.id === group.tenantId);
+      // 金額の丸めは契約区画の設定を当てた後の契約行で計算します（請求・確定と同じ額にするため）。
+      const tenant = calculated.contractTenants.find((item) => item.id === group.tenantId);
       const row = tenant?.rows[group.rowIndex];
       const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, calculated.shares, building.taxRate, undefined, building) : null;
       // 単価は、区画の契約単価、既定単価の順で決めます。
