@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addDays, allocateMeters, basicRatios, meterProblems, occupantChanges, occupantsIn, proratedAmount, readingPeriod, reassignUnit, segmentsOf, totalUsage, unitAt,
+  addDays, allocateMeters, basicRatios, meterProblems, occupancyRange, occupantChanges, occupantsIn, proratedAmount, readingPeriod, reassignUnit, segmentsOf, totalUsage, unitAt,
   type AssetMeter, type Occupancy,
 } from './meterAllocation.ts';
 import type { ContractRow, TenantConfig } from './meterReading.ts';
@@ -138,4 +138,9 @@ test('基本料の日割りは、分割行ごとに入居日数を数え、全�
   assert.equal(proratedAmount(10000, ratios.get('R1'), 'floor'), 4838); // 10000×15/31＝4838.7…
   assert.equal(proratedAmount(10000, ratios.get('R1'), 'ceil'), 4839);
   assert.equal(proratedAmount(10000, ratios.get('R2'), 'floor'), 10000);
+});
+
+test('入居状況の読み込み範囲は前月1日～翌月末日で、基本料の請求期間が指す月まで広げる', () => {
+  assert.deepEqual(occupancyRange(2026, 1), { start: '2025-12-01', end: '2026-02-28' });
+  assert.deepEqual(occupancyRange(2026, 12, 2, 2), { start: '2026-10-01', end: '2027-02-28' });
 });
