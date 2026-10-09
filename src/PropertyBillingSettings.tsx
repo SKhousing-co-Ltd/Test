@@ -19,6 +19,12 @@ type LineItem = {
   period_rule_type: PeriodRule;
   billing_period_pattern_id: string | null;
   sort_order: number;
+  // 請求内容（電灯・空調など）。レントロールの単価列の見出しに使います。
+  billing_content: string | null;
+  show_unit_price_in_rent_roll: boolean;
+  // 既定単価・税区分です。契約区画に単価が無いテナント（新規のテナントなど）に使います。
+  default_unit_price: number | null;
+  default_tax_mode: "exclusive" | "inclusive";
 };
 type Pattern = {
   billing_period_pattern_id: string;
@@ -64,6 +70,10 @@ export function PropertyBillingSettings({
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [name, setName] = useState("");
+  const [billingContent, setBillingContent] = useState("");
+  const [showInRentRoll, setShowInRentRoll] = useState(false);
+  const [defaultUnitPrice, setDefaultUnitPrice] = useState("");
+  const [defaultTaxMode, setDefaultTaxMode] = useState<"exclusive" | "inclusive">("exclusive");
   const [displayName, setDisplayName] = useState("");
   const [typeId, setTypeId] = useState("");
   const [kind, setKind] = useState<"fixed" | "variable">("fixed");
@@ -113,7 +123,7 @@ export function PropertyBillingSettings({
           supabase
             .from("asset_billing_line_item")
             .select(
-              "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order",
+              "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
             )
             .eq("asset_id", propertyId)
             .eq("is_active", true)
@@ -162,10 +172,15 @@ export function PropertyBillingSettings({
         kind === "variable" && rule === "custom_pattern"
           ? patternId || patterns[0]?.billing_period_pattern_id || null
           : null,
-      sort_order: items.length + 1,
+      billing_content: billingContent.trim() || null,
+      show_unit_price_in_rent_roll: showInRentRoll,
+      default_unit_price: defaultUnitPrice.trim() === "" ? null : Number(defaultUnitPrice),
+      default_tax_mode: defaultTaxMode,
+      ...(editingItemId ? {} : { sort_order: items.length + 1 }),
     };
+    if (draft.default_unit_price !== null && !(draft.default_unit_price >= 0)) { setNotice("既定単価は0以上の数値で入力してください。"); return; }
     if (db && supabase && editingItemId) {
-      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order").single();
+      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode").single();
       if (error) { setNotice(`明細項目を更新できませんでした: ${error.message}`); return; }
       setItems(items.map((item) => item.asset_billing_line_item_id === editingItemId ? data as LineItem : item)); setEditingItemId("");
     } else if (db && supabase) {
@@ -173,7 +188,7 @@ export function PropertyBillingSettings({
         .from("asset_billing_line_item")
         .insert({ asset_id: propertyId, ...draft })
         .select(
-          "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order",
+          "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
         )
         .single();
       if (error) {
@@ -184,6 +199,10 @@ export function PropertyBillingSettings({
     } else { setNotice("データベースに接続できないため、明細項目を登録できません。"); return; }
     setName("");
     setDisplayName("");
+    setBillingContent("");
+    setShowInRentRoll(false);
+    setDefaultUnitPrice("");
+    setDefaultTaxMode("exclusive");
     setRule("manual");
     setPatternId("");
     setNotice(editingItemId ? "明細項目を更新しました。" : "明細項目を登録しました。");
@@ -350,6 +369,10 @@ export function PropertyBillingSettings({
               </select>
             </label>
             <label>
+              請求内容
+              <input value={billingContent} placeholder="電灯・空調など" onChange={(e) => setBillingContent(e.target.value)} />
+            </label>
+            <label>
               請求区分
               <select
                 value={kind}
@@ -373,6 +396,21 @@ export function PropertyBillingSettings({
                 {patterns.map((p) => <option key={p.billing_period_pattern_id} value={`pattern:${p.billing_period_pattern_id}`}>{p.pattern_name}</option>)}
               </select>
             </label>
+            <label>
+              既定単価
+              <input type="number" step="0.0001" min="0" value={defaultUnitPrice} placeholder="—" onChange={(e) => setDefaultUnitPrice(e.target.value)} />
+            </label>
+            <label>
+              税区分
+              <select value={defaultTaxMode} onChange={(e) => setDefaultTaxMode(e.target.value as "exclusive" | "inclusive")}>
+                <option value="exclusive">税抜</option>
+                <option value="inclusive">税込</option>
+              </select>
+            </label>
+            <label className="property-billing-item-check">
+              <input type="checkbox" checked={showInRentRoll} onChange={(e) => setShowInRentRoll(e.target.checked)} />
+              単価をレントロールに載せる
+            </label>
             <button
               className="primary-button"
               disabled={!canEdit || !enabledTypes.length}
@@ -388,8 +426,11 @@ export function PropertyBillingSettings({
                   <th>項目</th>
                   <th>明細表示名</th>
                   <th>請求種別</th>
+                  <th>請求内容</th>
                   <th>請求区分</th>
                   <th>請求期間</th>
+                  <th>既定単価</th>
+                  <th>レントロール</th>
                   <th />
                 </tr>
               </thead>
@@ -408,6 +449,7 @@ export function PropertyBillingSettings({
                           item.billing_charge_type_id,
                       )?.charge_type_name ?? "—"}
                     </td>
+                    <td>{item.billing_content || "—"}</td>
                     <td>
                       {item.billing_kind === "fixed" ? "固定費" : "変動費"}
                     </td>
@@ -424,8 +466,10 @@ export function PropertyBillingSettings({
                                   item.billing_period_pattern_id,
                               )?.pattern_name ?? "請求期間パターン")}
                     </td>
+                    <td>{item.default_unit_price === null ? "—" : `${Number(item.default_unit_price).toLocaleString("ja-JP", { maximumFractionDigits: 4 })}円（${item.default_tax_mode === "inclusive" ? "税込" : "税抜"}）`}</td>
+                    <td>{item.show_unit_price_in_rent_roll ? "載せる" : "—"}</td>
                     <td>
-                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setKind(item.billing_kind); setRule(item.period_rule_type); setPatternId(item.billing_period_pattern_id ?? ""); }}>編集</button>
+                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setKind(item.billing_kind); setRule(item.period_rule_type); setPatternId(item.billing_period_pattern_id ?? ""); setBillingContent(item.billing_content ?? ""); setShowInRentRoll(item.show_unit_price_in_rent_roll); setDefaultUnitPrice(item.default_unit_price === null ? "" : String(item.default_unit_price)); setDefaultTaxMode(item.default_tax_mode); }}>編集</button>
                       <button
                         className="tenant-billing-delete"
                         disabled={!canEdit}
@@ -438,7 +482,7 @@ export function PropertyBillingSettings({
                 ))}
                 {!items.length && (
                   <tr>
-                    <td colSpan={7}>明細項目は未登録です。</td>
+                    <td colSpan={10}>明細項目は未登録です。</td>
                   </tr>
                 )}
               </tbody>

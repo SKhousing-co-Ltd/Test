@@ -162,7 +162,7 @@ export function allocateMeters(
       const tenant = tenantById.get(segment.tenantId);
       shares.push({
         id: segments.length > 1 ? `${meter.id}#${index}` : meter.id, meterId: meter.id, subItemId: meter.subItemId, code: meter.code, label: meter.label,
-        tenantId: tenant ? tenant.id : '', rowIndex: rowIndexForUnit(tenant, segment.unitId), usage: segment.usage,
+        tenantId: tenant ? tenant.id : '', rowIndex: rowIndexForUnit(tenant, segment.unitId), usage: segment.usage, ...(segment.unitId ? { unitId: segment.unitId } : {}),
         ...(meter.unitPrice === undefined ? {} : { unitPrice: meter.unitPrice }),
       });
     });

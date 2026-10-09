@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase';
 import { Dialog } from './components/Dialog';
 import './ContractInformationPage.css';
 import { termsDueDate, type BillingTerms } from './utils/billingDates';
+import { ContractUtilityPricesSection } from './ContractUtilityPricesSection';
 import { allProductCategories, normalizeProductCategory, productCategories, type ProductCategory } from './lib/product-categories';
 
 type PropertyOption = {
@@ -356,6 +357,8 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
             </div>
           </div>;
         })()}
+
+        {selectedLeaseContractUnitId && propertyId && <ContractUtilityPricesSection leaseContractUnitId={selectedLeaseContractUnitId} propertyId={propertyId} canEdit={canEditBillingTerms} />}
       </>}
       </div>
     </Dialog>}

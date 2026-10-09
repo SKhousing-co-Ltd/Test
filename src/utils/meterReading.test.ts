@@ -125,10 +125,12 @@ const electricBuilding = (amountInclusive: number | null, unitPrice = 5): Buildi
   categories: [{ id: 'electric', name: '電気', unit: 'kWh', billable: true, fixedBillable: true }],
   subItems: [
     { id: 'basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() },
-    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: 30, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() },
+    { id: 'light', categoryId: 'electric', name: '電灯', kind: 'custom', lineItemId: 'L-light', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() },
   ],
   surcharges: [{ id: 'S1', name: '電気増額分', categoryId: 'electric', unitPrice, lineItemId: '', billable: true, purchase: purchase(amountInclusive), periodPatternId: '' }],
   taxRate: 0.1,
+  // 電灯の単価は明細項目の既定単価（税抜30円）です。
+  lineItemDefaults: { 'L-light': { unitPrice: 30, taxMode: 'exclusive' } },
 });
 const electricRow = (id: string, basic: number): ContractRow => ({
   id, invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true },
@@ -196,4 +198,19 @@ test('請求書に単価を出さない小分類は、単価を空欄にして�
   const { results, building: effective } = calculateAll(electricTenants, building, electricMeters);
   const light = meterInvoiceLines(results, effective).find((line) => line.tenantId === 'T1' && line.sourceName === '電灯');
   assert.deepEqual([light?.usage, light?.unitPrice, light?.amount], [600, null, 18000]);
+});
+
+test('固定単価は、メーターの区画の契約単価（税込は税抜へ戻す）→ 契約行の単価 → 明細項目の既定単価の順で使う', () => {
+  const building = electricBuilding(null);
+  // T1 の区画 U1 は契約単価が税込33円 → 税抜30円（切り捨て）。T2 の区画 U2 は契約単価なしで既定単価30円。
+  building.lineItemDefaults = { 'L-light': { unitPrice: 25, taxMode: 'exclusive' } };
+  building.contractPrices = { 'U1:T1': { 'L-light': { unitPrice: 33, taxMode: 'inclusive' } } };
+  const meters: MeterShare[] = [{ ...electricMeters[0], unitId: 'U1' }, { ...electricMeters[1], unitId: 'U2' }];
+  const tenants = [electricTenants[0], { ...electricTenants[1], rows: [{ ...electricRow('C2', 0), unitPrices: { light: 28 } }] }];
+  const { results } = calculateAll(tenants, building, meters);
+  const lightOf = (index: number) => results[index].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light');
+  assert.equal(lightOf(0)?.groups[0].unitPrice, 30);
+  assert.equal(lightOf(1)?.groups[0].unitPrice, 28);
+  const noRowPrice = calculateAll(electricTenants, building, meters).results[1].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light');
+  assert.equal(noRowPrice?.groups[0].unitPrice, 25);
 });
