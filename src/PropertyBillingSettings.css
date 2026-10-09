@@ -92,3 +92,6 @@
 .utility-price-settings input, .utility-price-settings select { border: 1px solid #d7e0eb; border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; }
 .utility-price-settings input { width: 110px; }
 .utility-price-settings .muted { color: #94a3b8; font-size: 11px; }
+.property-billing-settings-table-wrap td.center, .utility-price-settings td.center { text-align: center; }
+.property-billing-settings-table-wrap td.muted { color: #94a3b8; }
+.property-billing-item-form input:disabled, .property-billing-item-form select:disabled { background: #f1f5f9; color: #94a3b8; }

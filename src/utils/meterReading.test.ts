@@ -131,6 +131,8 @@ const electricBuilding = (amountInclusive: number | null, unitPrice = 5): Buildi
   taxRate: 0.1,
   // 電灯の単価は明細項目の既定単価（税抜30円）です。
   lineItemDefaults: { 'L-light': { unitPrice: 30, taxMode: 'exclusive' } },
+  // 単価は明細項目ごとに持つビルとして計算します（設定が無いと分類で共通になります）。
+  categoryPriceScopes: { electric: 'line_item', water: 'line_item' },
 });
 const electricRow = (id: string, basic: number): ContractRow => ({
   id, invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true },
@@ -233,4 +235,10 @@ test('単価を分類で共通にした分類は、明細項目が違う小分�
   assert.equal(priceOf(0, 'light'), 20);
   assert.equal(priceOf(0, 'ac'), 20);
   assert.equal(priceOf(1, 'light'), 18);
+});
+
+test('単価の持ち方の設定が無い分類は、分類で共通として分類の既定単価を使う', () => {
+  const building = { ...electricBuilding(null), categoryPriceScopes: {}, categoryDefaults: { electric: { unitPrice: 12, taxMode: 'exclusive' as const } } };
+  const { results } = calculateAll(electricTenants, building, electricMeters);
+  assert.equal(results[0].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light')?.groups[0].unitPrice, 12);
 });

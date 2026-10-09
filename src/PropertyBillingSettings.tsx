@@ -7,7 +7,7 @@ import { InvoiceSplitSettings } from "./InvoiceSplitSettings";
 import { TenantOrderSettings } from "./TenantOrderSettings";
 import "./PropertyBillingSettings.css";
 
-type ChargeType = { billing_charge_type_id: string; charge_type_name: string };
+type ChargeType = { billing_charge_type_id: string; charge_type_name: string; utility_kind?: string | null };
 type PeriodRule = "manual" | "meter_reading" | "custom_pattern";
 type Day = "first" | "last" | "meter" | `day_${number}`;
 type LineItem = {
@@ -27,13 +27,15 @@ type LineItem = {
   default_tax_mode: "exclusive" | "inclusive";
 };
 type UtilityCategory = "electric" | "water" | "gas";
-type PriceSettingDraft = { scope: "line_item" | "category"; unitPrice: string; taxMode: "exclusive" | "inclusive" };
+type PriceSettingDraft = { scope: "line_item" | "category"; unitPrice: string; taxMode: "exclusive" | "inclusive"; showInRentRoll: boolean };
+const utilityKindCategory: Record<string, UtilityCategory> = { electricity: "electric", water: "water", gas: "gas" };
 const utilityCategories: UtilityCategory[] = ["electric", "water", "gas"];
 const utilityCategoryNames: Record<UtilityCategory, string> = { electric: "電気", water: "水道", gas: "ガス" };
+// 設定が無い分類は「分類で共通」（レントロールに載せる）です。
 const emptyPriceSettings = (): Record<UtilityCategory, PriceSettingDraft> => ({
-  electric: { scope: "line_item", unitPrice: "", taxMode: "exclusive" },
-  water: { scope: "line_item", unitPrice: "", taxMode: "exclusive" },
-  gas: { scope: "line_item", unitPrice: "", taxMode: "exclusive" },
+  electric: { scope: "category", unitPrice: "", taxMode: "exclusive", showInRentRoll: true },
+  water: { scope: "category", unitPrice: "", taxMode: "exclusive", showInRentRoll: true },
+  gas: { scope: "category", unitPrice: "", taxMode: "exclusive", showInRentRoll: true },
 });
 type Pattern = {
   billing_period_pattern_id: string;
@@ -107,11 +109,11 @@ export function PropertyBillingSettings({
   useEffect(() => {
     if (!propertyId || !supabase) { setPriceSettings(emptyPriceSettings()); return; }
     let cancelled = false;
-    void supabase.from("asset_utility_price_setting").select("category, price_scope, default_unit_price, default_tax_mode").eq("asset_id", propertyId).then(({ data }) => {
+    void supabase.from("asset_utility_price_setting").select("category, price_scope, default_unit_price, default_tax_mode, show_in_rent_roll").eq("asset_id", propertyId).then(({ data }) => {
       if (cancelled) return;
       const next = emptyPriceSettings();
-      for (const row of (data ?? []) as Array<{ category: UtilityCategory; price_scope: "line_item" | "category"; default_unit_price: number | null; default_tax_mode: "exclusive" | "inclusive" }>) {
-        next[row.category] = { scope: row.price_scope, unitPrice: row.default_unit_price === null ? "" : String(row.default_unit_price), taxMode: row.default_tax_mode };
+      for (const row of (data ?? []) as Array<{ category: UtilityCategory; price_scope: "line_item" | "category"; default_unit_price: number | null; default_tax_mode: "exclusive" | "inclusive"; show_in_rent_roll: boolean }>) {
+        next[row.category] = { scope: row.price_scope, unitPrice: row.default_unit_price === null ? "" : String(row.default_unit_price), taxMode: row.default_tax_mode, showInRentRoll: row.show_in_rent_roll };
       }
       setPriceSettings(next);
     });
@@ -123,9 +125,21 @@ export function PropertyBillingSettings({
     const unitPrice = next.unitPrice.trim() === "" ? null : Number(next.unitPrice);
     if (unitPrice !== null && !(unitPrice >= 0)) { setNotice("既定単価は0以上の数値で入力してください。"); return; }
     setPriceSettings((current) => ({ ...current, [category]: next }));
-    const { error } = await supabase.from("asset_utility_price_setting").upsert({ asset_id: propertyId, category, price_scope: next.scope, default_unit_price: unitPrice, default_tax_mode: next.taxMode, updated_at: new Date().toISOString() }, { onConflict: "asset_id,category" });
+    const { error } = await supabase.from("asset_utility_price_setting").upsert({ asset_id: propertyId, category, price_scope: next.scope, default_unit_price: unitPrice, default_tax_mode: next.taxMode, show_in_rent_roll: next.showInRentRoll, updated_at: new Date().toISOString() }, { onConflict: "asset_id,category" });
     setNotice(error ? `分類ごとの単価を保存できませんでした: ${error.message}` : `${utilityCategoryNames[category]}の単価の設定を保存しました。`);
   };
+  // 明細項目の分類（請求種別の公共料金の区分）が「分類で共通」なら、明細項目の既定単価・レントロール表示は使いません。
+  const sharedCategoryOfType = (chargeTypeId: string) => {
+    const category = utilityKindCategory[types.find((type) => type.billing_charge_type_id === chargeTypeId)?.utility_kind ?? ""];
+    return category && priceSettings[category].scope === "category" ? category : null;
+  };
+  const toggleItemRentRoll = async (item: LineItem, checked: boolean) => {
+    if (!supabase || !canEdit) return;
+    const { error } = await supabase.from("asset_billing_line_item").update({ show_unit_price_in_rent_roll: checked }).eq("asset_billing_line_item_id", item.asset_billing_line_item_id);
+    if (error) { setNotice(`レントロールの表示を更新できませんでした: ${error.message}`); return; }
+    setItems((current) => current.map((row) => row.asset_billing_line_item_id === item.asset_billing_line_item_id ? { ...row, show_unit_price_in_rent_roll: checked } : row));
+  };
+  const formShared = sharedCategoryOfType(typeId);
   const enabledTypes = types.filter((type) =>
     enabled.includes(type.billing_charge_type_id),
   );
@@ -145,7 +159,7 @@ export function PropertyBillingSettings({
         const [a, b, c, d] = await Promise.all([
           supabase
             .from("billing_charge_type")
-            .select("billing_charge_type_id, charge_type_name")
+            .select("billing_charge_type_id, charge_type_name, utility_kind")
             .eq("is_active", true)
             .order("sort_order"),
           supabase
@@ -206,8 +220,8 @@ export function PropertyBillingSettings({
           ? patternId || patterns[0]?.billing_period_pattern_id || null
           : null,
       billing_content: billingContent.trim() || null,
-      show_unit_price_in_rent_roll: showInRentRoll,
-      default_unit_price: defaultUnitPrice.trim() === "" ? null : Number(defaultUnitPrice),
+      show_unit_price_in_rent_roll: !formShared && showInRentRoll,
+      default_unit_price: formShared || defaultUnitPrice.trim() === "" ? null : Number(defaultUnitPrice),
       default_tax_mode: defaultTaxMode,
       ...(editingItemId ? {} : { sort_order: items.length + 1 }),
     };
@@ -376,7 +390,7 @@ export function PropertyBillingSettings({
             <h5>分類ごとの単価</h5>
             <p>「分類で共通」にすると、契約では分類の単価を1つ入力します。請求書の明細は明細項目（電灯・空調など）ごとに分かれたまま、単価が同じになります。</p>
             <table>
-              <thead><tr><th>分類</th><th>単価の持ち方</th><th>既定単価</th><th>税区分</th></tr></thead>
+              <thead><tr><th>分類</th><th>単価の持ち方</th><th>既定単価</th><th>税区分</th><th>レントロール</th></tr></thead>
               <tbody>{utilityCategories.map((category) => {
                 const setting = priceSettings[category];
                 const shared = setting.scope === "category";
@@ -385,6 +399,7 @@ export function PropertyBillingSettings({
                   <td><select value={setting.scope} disabled={!canEdit} onChange={(e) => void savePriceSetting(category, { scope: e.target.value as "line_item" | "category" })}><option value="line_item">明細項目ごと</option><option value="category">分類で共通</option></select></td>
                   <td>{shared ? <input type="number" step="0.0001" min="0" value={setting.unitPrice} placeholder="—" disabled={!canEdit} aria-label={`${utilityCategoryNames[category]}の既定単価`} onChange={(e) => setPriceSettings((current) => ({ ...current, [category]: { ...current[category], unitPrice: e.target.value } }))} onBlur={() => void savePriceSetting(category, {})} /> : <span className="muted">明細項目の既定単価を使用</span>}</td>
                   <td>{shared ? <select value={setting.taxMode} disabled={!canEdit} onChange={(e) => void savePriceSetting(category, { taxMode: e.target.value as "exclusive" | "inclusive" })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select> : <span className="muted">—</span>}</td>
+                  <td className="center">{shared ? <input type="checkbox" checked={setting.showInRentRoll} disabled={!canEdit} aria-label={`${utilityCategoryNames[category]}の単価をレントロールに載せる`} onChange={(e) => void savePriceSetting(category, { showInRentRoll: e.target.checked })} /> : <span className="muted">—</span>}</td>
                 </tr>;
               })}</tbody>
             </table>
@@ -448,17 +463,17 @@ export function PropertyBillingSettings({
             </label>
             <label>
               既定単価
-              <input type="number" step="0.0001" min="0" value={defaultUnitPrice} placeholder="—" onChange={(e) => setDefaultUnitPrice(e.target.value)} />
+              <input type="number" step="0.0001" min="0" value={formShared ? "" : defaultUnitPrice} placeholder={formShared ? "分類で共通" : "—"} disabled={Boolean(formShared)} onChange={(e) => setDefaultUnitPrice(e.target.value)} />
             </label>
             <label>
               税区分
-              <select value={defaultTaxMode} onChange={(e) => setDefaultTaxMode(e.target.value as "exclusive" | "inclusive")}>
+              <select value={defaultTaxMode} disabled={Boolean(formShared)} onChange={(e) => setDefaultTaxMode(e.target.value as "exclusive" | "inclusive")}>
                 <option value="exclusive">税抜</option>
                 <option value="inclusive">税込</option>
               </select>
             </label>
             <label className="property-billing-item-check">
-              <input type="checkbox" checked={showInRentRoll} onChange={(e) => setShowInRentRoll(e.target.checked)} />
+              <input type="checkbox" checked={!formShared && showInRentRoll} disabled={Boolean(formShared)} onChange={(e) => setShowInRentRoll(e.target.checked)} />
               単価をレントロールに載せる
             </label>
             <button
@@ -516,8 +531,8 @@ export function PropertyBillingSettings({
                                   item.billing_period_pattern_id,
                               )?.pattern_name ?? "請求期間パターン")}
                     </td>
-                    <td>{item.default_unit_price === null ? "—" : `${Number(item.default_unit_price).toLocaleString("ja-JP", { maximumFractionDigits: 4 })}円（${item.default_tax_mode === "inclusive" ? "税込" : "税抜"}）`}</td>
-                    <td>{item.show_unit_price_in_rent_roll ? "載せる" : "—"}</td>
+                    <td className={sharedCategoryOfType(item.billing_charge_type_id) ? "muted" : undefined}>{sharedCategoryOfType(item.billing_charge_type_id) ? "分類で共通" : item.default_unit_price === null ? "—" : `${Number(item.default_unit_price).toLocaleString("ja-JP", { maximumFractionDigits: 4 })}円（${item.default_tax_mode === "inclusive" ? "税込" : "税抜"}）`}</td>
+                    <td className="center"><input type="checkbox" checked={!sharedCategoryOfType(item.billing_charge_type_id) && item.show_unit_price_in_rent_roll} disabled={!canEdit || Boolean(sharedCategoryOfType(item.billing_charge_type_id))} aria-label={`${item.line_item_name}の単価をレントロールに載せる`} onChange={(e) => void toggleItemRentRoll(item, e.target.checked)} /></td>
                     <td>
                       <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setKind(item.billing_kind); setRule(item.period_rule_type); setPatternId(item.billing_period_pattern_id ?? ""); setBillingContent(item.billing_content ?? ""); setShowInRentRoll(item.show_unit_price_in_rent_roll); setDefaultUnitPrice(item.default_unit_price === null ? "" : String(item.default_unit_price)); setDefaultTaxMode(item.default_tax_mode); }}>編集</button>
                       <button

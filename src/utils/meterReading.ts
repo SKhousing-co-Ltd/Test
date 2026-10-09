@@ -137,7 +137,7 @@ export type BuildingConfig = {
   contractPrices?: Record<string, Record<string, PriceSetting>>;
   // 明細項目の既定単価です。契約区画に単価が無いときに使います。キーは明細項目ID。
   lineItemDefaults?: Record<string, PriceSetting>;
-  // 単価を分類で共通にした分類です。この分類の固定単価の小分類は、明細項目ではなく分類の単価を使います。
+  // 単価の持ち方です（設定が無い分類は分類で共通）。分類で共通の分類の固定単価の小分類は、明細項目ではなく分類の単価を使います。
   categoryPriceScopes?: Partial<Record<CategoryId, 'line_item' | 'category'>>;
   // 契約区画の分類共通の単価（その検針月の単価に解決済み）です。キーは「区画ID:テナントID」→ 分類。
   contractCategoryPrices?: Record<string, Partial<Record<CategoryId, PriceSetting>>>;
@@ -285,7 +285,8 @@ export type PriceSources = Pick<BuildingConfig, 'contractPrices' | 'lineItemDefa
 export function resolveUnitPrice(subItem: SubItem, share: MeterShare, row: ContractRow, building: PriceSources): { price: number; taxMode: TaxMode } {
   if (share.unitPrice !== undefined) return { price: share.unitPrice, taxMode: subItem.taxMode };
   const key = share.unitId ? contractPriceKey(share.unitId, share.tenantId) : '';
-  if (building.categoryPriceScopes?.[subItem.categoryId] === 'category') {
+  // 設定が無い分類は「分類で共通」として扱います。
+  if ((building.categoryPriceScopes?.[subItem.categoryId] ?? 'category') === 'category') {
     const shared = key ? building.contractCategoryPrices?.[key]?.[subItem.categoryId] : undefined;
     if (shared) return { price: shared.unitPrice, taxMode: shared.taxMode };
     const legacyShared = row.unitPrices[subItem.id];

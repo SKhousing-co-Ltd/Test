@@ -52,7 +52,8 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, propertyId, 
       if (failed?.error) { setError(`公共料金の単価を読み込めませんでした: ${failed.error.message}`); setLoading(false); return; }
       // 単価を持たせるのは、固定単価の小分類に紐づく明細項目です。分類で共通にした分類は、分類で1行にします。
       const priceSettings = (priceSettingResult.data ?? []) as Array<{ category: CategoryId; price_scope: string; default_unit_price: number | null; default_tax_mode: TaxMode }>;
-      const sharedCategories = new Set(priceSettings.filter((row) => row.price_scope === 'category').map((row) => row.category));
+      // 設定が無い分類は「分類で共通」です。
+      const sharedCategories = new Set((['electric', 'water', 'gas'] as CategoryId[]).filter((category) => priceSettings.find((row) => row.category === category)?.price_scope !== 'line_item'));
       const fixedSubItems = ((subItemResult.data ?? []) as Array<{ category: CategoryId; asset_billing_line_item_id: string | null; price_mode: string; sub_item_kind: string }>)
         .filter((row) => row.sub_item_kind !== 'basic' && row.price_mode === 'fixed');
       const fixedLineItemIds = new Set(fixedSubItems.filter((row) => row.asset_billing_line_item_id && !sharedCategories.has(row.category)).map((row) => row.asset_billing_line_item_id as string));
