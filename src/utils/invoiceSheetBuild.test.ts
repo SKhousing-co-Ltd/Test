@@ -68,3 +68,14 @@ test('期日の違う契約が混在する物件では、入金期限が期日�
   assert.deepEqual(sheet.rows.map((row) => row.values[4]), ['2026/11/5', '2026/10/30', '2026/10/23']);
   assert.deepEqual(sheet.rows.map((row) => sheet.dueDateByPattern[sheet.duePatternByInvoice[row.invoiceKey]]), ['2026/11/5', '2026/10/30', '2026/10/23']);
 });
+
+test('契約の請求期間が請求設定のパターンと同じ計算結果なら、そのパターンにまとめる', async () => {
+  const assetNextMonth = { billing_period_pattern_id: 'asset-next', pattern_name: '翌月分', start_month_offset: 1, start_day_type: 'first', start_meter_day_offset: 0, end_month_offset: 1, end_day_type: 'last', end_meter_day_offset: 0 };
+  const tables = { billing_code: [code('A', '1001'), code('B', '1002')], lease_contract: [terms('c1'), terms('c2', { period_month_offset: 0 })], asset_billing_period_pattern: [assetNextMonth] };
+  const { sheet, periodPatterns } = await buildInvoiceSheet(fakeClient(tables, [source('c1', 'A', 1), source('c2', 'B', 1)]), 'p', '物件', 2026, 10);
+  // 翌月分は請求設定のパターン1つにまとまり、当月分だけ契約の条件から行を作る
+  assert.deepEqual(periodPatterns.map((pattern) => pattern.pattern_name), ['翌月分', '当月分']);
+  assert.equal(sheet.periodPatternByRow[sheet.rows[0].id], 'asset-next');
+  assert.equal(sheet.rows[0].values[10], '2026/11/1～2026/11/30分');
+  assert.equal(sheet.rows[1].values[10], '2026/10/1～2026/10/31分');
+});

@@ -191,14 +191,19 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   const mixedInvoices: string[] = [];
   const dueTime = (terms: BillingTerms) => { const [y, m, d] = termsDueDate(calendarYear, month, terms).split('/').map(Number); return new Date(y, m - 1, d).getTime(); };
   // 固定費の請求期間も請求条件から決めます（前月分・当月分・翌月分、年払いは請求月だけ1年分）。
+  const assetPatternIds = periodPatterns.map((row) => row.billing_period_pattern_id);
   const termsPeriodIdOf = (terms: BillingTerms) => {
     const period = termsPeriod(month, terms);
     if (!period.billed) return null;
     const id = `terms-period:${period.startOffset}:${period.endOffset}`;
-    if (!periodPatterns.some((pattern) => pattern.billing_period_pattern_id === id)) {
-      const pattern = { billing_period_pattern_id: id, pattern_name: termsPeriodLabel(terms), start_month_offset: period.startOffset, start_day_type: 'first', start_meter_day_offset: 0, end_month_offset: period.endOffset, end_day_type: 'last', end_meter_day_offset: 0 };
+    const pattern = { billing_period_pattern_id: id, pattern_name: termsPeriodLabel(terms), start_month_offset: period.startOffset, start_day_type: 'first', start_meter_day_offset: 0, end_month_offset: period.endOffset, end_day_type: 'last', end_meter_day_offset: 0 };
+    const range = periodRange(calendarYear, month, pattern);
+    // 請求設定の請求期間パターンと計算結果が同じなら、そのパターンにまとめます（画面の請求期間の行も1つになります）。
+    const sameAssetPattern = assetPatternIds.find((assetId) => periodRangeByPattern[assetId]?.start === range.start && periodRangeByPattern[assetId]?.end === range.end);
+    if (sameAssetPattern) return { id: sameAssetPattern, monthsCovered: period.monthsCovered };
+    if (!periodPatterns.some((row) => row.billing_period_pattern_id === id)) {
       periodPatterns.push(pattern);
-      periodRangeByPattern[id] = periodRange(calendarYear, month, pattern);
+      periodRangeByPattern[id] = range;
     }
     return { id, monthsCovered: period.monthsCovered };
   };
