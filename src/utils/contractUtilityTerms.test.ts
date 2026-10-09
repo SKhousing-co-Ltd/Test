@@ -18,7 +18,7 @@ test('検針月に月別単価があればその単価、なければ通常単�
   assert.deepEqual(october.lineItemDefaults, { L1: { unitPrice: 25, taxMode: 'inclusive' } });
 });
 
-const row = (unitIds: string[]): ContractRow => ({ id: 'R', invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true }, billable: { basic: true }, unitPrices: {}, fixedCharges: { basic: 999 }, sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds });
+const row = (unitIds: string[]): ContractRow => ({ id: 'R', invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true }, billable: { basic: true }, fixedCharges: { basic: 999 }, sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds });
 const building = (): BuildingConfig => ({
   categories: [{ id: 'electric', name: '電気', unit: 'kWh', billable: true, fixedBillable: true }],
   subItems: [{ id: 'basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 0, usageDisplayDigits: 0, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() }],
@@ -35,11 +35,13 @@ test('契約区画の基本料は、入居している区画を契約行ごと�
   assert.equal(single[0].rows[0].fixedCharges.basic, 15000);
 });
 
-test('入居していない区画の基本料は含めず、契約区画に基本料が無いテナントは契約行の基本料のまま', () => {
+test('入居していない区画の基本料は含めず、契約区画に基本料が無いテナントには基本料を請求しない', () => {
   const tenants: TenantConfig[] = [{ id: 'T1', name: 'A', splitEnabled: false, rows: [row([])], invoiceSplitByUnit: false, expected: 0 }];
   assert.equal(applyContractBasics(tenants, building(), occupancyOf(['U2']), period)[0].rows[0].fixedCharges.basic, 5000);
   const other: TenantConfig[] = [{ ...tenants[0], id: 'T9' }];
-  assert.equal(applyContractBasics(other, building(), occupancyOf(['U1']), period)[0].rows[0].fixedCharges.basic, 999);
+  const none = applyContractBasics(other, building(), occupancyOf(['U1']), period)[0].rows[0];
+  assert.equal(none.fixedCharges.basic, 0);
+  assert.equal(none.billable.basic, false);
 });
 
 test('分類で共通の単価は、検針月の月別単価と分類の既定単価を取り込む', () => {

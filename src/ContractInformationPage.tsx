@@ -3,7 +3,9 @@ import { Field, contractPeriod, date, leaseTermLabel, money, statusLabels, type 
 import { supabase } from './lib/supabase';
 import { Dialog } from './components/Dialog';
 import './ContractInformationPage.css';
-import { termsDueDate, type BillingTerms } from './utils/billingDates';
+import { type BillingTerms } from './utils/billingDates';
+
+type AmountRounding = 'floor' | 'round' | 'ceil';
 import { ContractUtilityPricesSection } from './ContractUtilityPricesSection';
 import { allProductCategories, normalizeProductCategory, productCategories, type ProductCategory } from './lib/product-categories';
 
@@ -224,6 +226,29 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
     setBillingTerms(next);
   };
 
+  // 公共料金（検針データ）の使用料・基本料の日割りの円未満の処理です。契約区画が持ちます。
+  const [amountRounding, setAmountRounding] = useState<AmountRounding>('floor');
+  useEffect(() => {
+    if (!selectedLeaseContractUnitId || !supabase) return;
+    let cancelled = false;
+    void supabase.from('lease_contract_unit').select('utility_amount_rounding_mode').eq('lease_contract_unit_id', selectedLeaseContractUnitId).maybeSingle()
+      .then(({ data, error: loadError }) => {
+        if (cancelled) return;
+        if (loadError) setBillingError(`小数点以下の処理を読み込めませんでした: ${loadError.message}`);
+        setAmountRounding((data as { utility_amount_rounding_mode: AmountRounding } | null)?.utility_amount_rounding_mode ?? 'floor');
+      });
+    return () => { cancelled = true; };
+  }, [selectedLeaseContractUnitId]);
+  const updateAmountRounding = async (mode: AmountRounding) => {
+    if (!supabase || !canEditBillingTerms || !selectedLeaseContractUnitId) return;
+    setSavingBillingTerms(true);
+    setBillingError('');
+    const { error: saveError } = await supabase.rpc('update_lease_contract_unit_amount_rounding', { p_lease_contract_unit_id: selectedLeaseContractUnitId, p_amount_rounding_mode: mode });
+    setSavingBillingTerms(false);
+    if (saveError) { setBillingError(`小数点以下の処理を更新できませんでした: ${saveError.message}`); return; }
+    setAmountRounding(mode);
+  };
+
   const selectedProperty = properties.find((property) => property.propertyId === propertyId);
   const contract = detail?.contract;
 
@@ -308,14 +333,13 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
           <Field label="最終更新" value={date(contract.updated_at.slice(0, 10))} />
         </div>
 
-        <div className="contract-information-section-heading"><div><h3>請求条件（入金期日・請求期間）</h3><p>この契約の入金期日と、請求書に記載する請求期間を設定します。</p></div></div>
+        <div className="contract-information-section-heading"><div><h3>請求条件</h3></div></div>
         {!canEditBillingTerms && <p className="contract-information-notice muted">編集は総務経理部の担当者のみ行えます。</p>}
         {billingError && <p className="contract-information-notice">{billingError}</p>}
         {billingLoading && <p className="contract-information-empty">読み込み中…</p>}
         {!billingLoading && billingTerms && (() => {
           const terms = billingTerms;
           const disabled = !canEditBillingTerms || savingBillingTerms;
-          const now = new Date();
           return <div className="contract-detail-grid billing-terms-grid">
             <div className="billing-terms-field">
               <span className="billing-terms-label">入金期日</span>
@@ -333,7 +357,6 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
                   </select>
                 </label>
               </div>
-              <small className="billing-terms-preview">今月の場合：{termsDueDate(now.getFullYear(), now.getMonth() + 1, terms)}</small>
             </div>
             <div className="billing-terms-field">
               <span className="billing-terms-label">請求期間</span>
@@ -354,6 +377,14 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
                 </>}
               </div>
               {terms.is_annual_billing && <small className="billing-terms-preview">請求月に月額×12で請求し、それ以外の月は0円で請求します（明細項目1は空白）。</small>}
+            </div>
+            <div className="billing-terms-field">
+              <span className="billing-terms-label">小数点以下の処理</span>
+              <div className="billing-terms-controls">
+                <select aria-label="小数点以下の処理" value={amountRounding} disabled={disabled} onChange={(event) => void updateAmountRounding(event.target.value as AmountRounding)}>
+                  <option value="floor">切り捨て</option><option value="round">四捨五入</option><option value="ceil">切り上げ</option>
+                </select>
+              </div>
             </div>
           </div>;
         })()}

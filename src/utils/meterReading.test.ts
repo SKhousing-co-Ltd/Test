@@ -61,12 +61,12 @@ test('手入力のときは、入力した単価をそのまま使う', () => {
 const category: Category = { id: 'water', name: '水道', unit: '㎥', billable: true, fixedBillable: false };
 const row: ContractRow = {
   id: 'C1', invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true },
-  billable: { water_usage: true }, unitPrices: { water_usage: 400 }, fixedCharges: {},
+  billable: { water_usage: true }, fixedCharges: {},
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds: [],
 };
 const meters: MeterShare[] = [
   { id: 'M1', subItemId: 'water_usage', code: 'W-1', label: '1F', tenantId: 'T1', rowIndex: 0, usage: 20 },
-  { id: 'M2', subItemId: 'water_usage', code: 'W-2', label: '1F', tenantId: 'T1', rowIndex: 0, usage: 14.3, unitPrice: 999 },
+  { id: 'M2', subItemId: 'water_usage', code: 'W-2', label: '1F', tenantId: 'T1', rowIndex: 0, usage: 14.3 },
 ];
 
 test('変動単価は、契約単価・メーターの上書きではなくその月の単価を全メーターに使う', () => {
@@ -136,7 +136,7 @@ const electricBuilding = (amountInclusive: number | null, unitPrice = 5): Buildi
 });
 const electricRow = (id: string, basic: number): ContractRow => ({
   id, invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true },
-  billable: { basic: true, light: true }, unitPrices: {}, fixedCharges: { basic },
+  billable: { basic: true, light: true }, fixedCharges: { basic },
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds: [],
 });
 const electricTenants: TenantConfig[] = [
@@ -202,19 +202,16 @@ test('請求書に単価を出さない小分類は、単価を空欄にして�
   assert.deepEqual([light?.usage, light?.unitPrice, light?.amount], [600, null, 18000]);
 });
 
-test('固定単価は、メーターの区画の契約単価（税込は税抜へ戻す）→ 契約行の単価 → 明細項目の既定単価の順で使う', () => {
+test('固定単価は、メーターの区画の契約単価（税込は税抜へ戻す）→ 明細項目の既定単価の順で使う', () => {
   const building = electricBuilding(null);
-  // T1 の区画 U1 は契約単価が税込33円 → 税抜30円（切り捨て）。T2 の区画 U2 は契約単価なしで既定単価30円。
+  // T1 の区画 U1 は契約単価が税込33円 → 税抜30円（切り捨て）。T2 の区画 U2 は契約単価なしで既定単価25円。
   building.lineItemDefaults = { 'L-light': { unitPrice: 25, taxMode: 'exclusive' } };
   building.contractPrices = { 'U1:T1': { 'L-light': { unitPrice: 33, taxMode: 'inclusive' } } };
   const meters: MeterShare[] = [{ ...electricMeters[0], unitId: 'U1' }, { ...electricMeters[1], unitId: 'U2' }];
-  const tenants = [electricTenants[0], { ...electricTenants[1], rows: [{ ...electricRow('C2', 0), unitPrices: { light: 28 } }] }];
-  const { results } = calculateAll(tenants, building, meters);
+  const { results } = calculateAll(electricTenants, building, meters);
   const lightOf = (index: number) => results[index].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light');
   assert.equal(lightOf(0)?.groups[0].unitPrice, 30);
-  assert.equal(lightOf(1)?.groups[0].unitPrice, 28);
-  const noRowPrice = calculateAll(electricTenants, building, meters).results[1].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'light');
-  assert.equal(noRowPrice?.groups[0].unitPrice, 25);
+  assert.equal(lightOf(1)?.groups[0].unitPrice, 25);
 });
 
 test('単価を分類で共通にした分類は、明細項目が違う小分類でも区画の分類単価（なければ分類の既定単価）を使う', () => {

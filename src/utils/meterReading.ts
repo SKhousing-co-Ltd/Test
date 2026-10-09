@@ -11,6 +11,7 @@
 // 集計処理は全ビル共通で、ビルごとの違いはこのデータだけで表します。
 
 import type { BasicRatio, InputMode } from './meterAllocation';
+import type { BillingPeriodPattern } from './billingDates';
 import { proratedAmount } from './meterAllocation.ts';
 
 export type RoundingMode = 'floor' | 'ceil' | 'round';
@@ -86,7 +87,7 @@ export type Surcharge = { id: string; name: string; categoryId: CategoryId; unit
 export type LineItem = { id: string; name: string; utilityKind: string | null; chargeTypeName: string };
 // テナントの契約行へ振り分けたメーターの使用量です。中間検針のあるメーターは区間ごとに1件になります。
 // tenantId が空のものは、未割当・空室のため請求しない使用量です。
-export type MeterShare = { id: string; meterId?: string; subItemId: string; code: string; label: string; tenantId: string; rowIndex: number; usage: number; unitPrice?: number; unitId?: string };
+export type MeterShare = { id: string; meterId?: string; subItemId: string; code: string; label: string; tenantId: string; rowIndex: number; usage: number; unitId?: string };
 
 export type TenantConfig = {
   id: string;
@@ -103,7 +104,7 @@ export type TenantConfig = {
 export type TaxMode = 'exclusive' | 'inclusive';
 export const taxModeLabel: Record<TaxMode, string> = { exclusive: '税抜', inclusive: '税込' };
 // 同じテナントが複数区画を契約しているとき、検針データを何分割して扱うかです。
-// 分割した各行は、請求有無・単価・計算方法・丸めをそれぞれ設定できます。
+// 分割した各行は、請求有無・計算方法をそれぞれ設定できます。単価と金額の丸めは、行が受け持つ区画の契約情報で決まります。
 export type ContractRow = {
   id: string;
   // 請求書分割設定で区画ごとに請求書を分けている場合、この行をどの請求書に載せるかです。
@@ -111,7 +112,6 @@ export type ContractRow = {
   // 分類そのものを請求するかどうかです。
   categoryBillable: Record<CategoryId, boolean>;
   billable: Record<string, boolean>;
-  unitPrices: Record<string, number | null>;
   fixedCharges: Record<string, number>;
   sumMode: Record<CategoryId, SumMode>;
   amountRoundingMode: RoundingMode;
@@ -145,7 +145,13 @@ export type BuildingConfig = {
   categoryDefaults?: Partial<Record<CategoryId, PriceSetting>>;
   // 契約区画の基本料です。キーは「区画ID:テナントID」→ 分類。
   contractBasics?: Record<string, Partial<Record<CategoryId, { amount: number; taxMode: TaxMode }>>>;
+  // 契約区画の金額の小数点以下の処理です。キーは「区画ID:テナントID」。契約行の丸めはここから決めます。
+  contractRoundings?: Record<string, RoundingMode>;
+  // 請求期間パターンです。基本料の日割りを、基本料の既定の請求期間で数えるのに使います。キーはパターンID。
+  periodPatterns?: Record<string, BillingPeriodPattern>;
 };
+// 基本料の小分類ごとの日割りのキーです。無ければ契約行の日割り（検針期間）を使います。
+export const basicRatioKey = (rowId: string, subItemId: string) => `${rowId}:${subItemId}`;
 export const contractPriceKey = (unitId: string, tenantId: string) => `${unitId}:${tenantId}`;
 
 export const initialBuilding: BuildingConfig = {
@@ -173,8 +179,6 @@ const contractRow = (id: string, electric: number | null, options: { invoiceNo?:
   id,
   invoiceNo: options.invoiceNo ?? 1,
   categoryBillable: { electric: true, water: true, gas: true },
-  // 水道とガスの単価は小分類のビル既定単価を使うため、契約側は未設定にしています。
-  unitPrices: { light: electric, ac: electric, water_usage: null, gas_usage: null },
   billable: Object.fromEntries(subItemIds.map((subItemId) => [subItemId, options.billable?.[subItemId] ?? (subItemId === 'electric_basic' ? Boolean(options.basic) : !subItemId.endsWith('_basic'))])),
   fixedCharges: options.basic ? { electric_basic: options.basic } : {},
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' },
@@ -210,9 +214,9 @@ export const initialTenants: TenantConfig[] = [
   tenant('T13', 'コンカレントシステムズ', 15.38, 365838, { rounding: 'round', basic: 50379 }),
 ];
 
-const meter = (subItemId: string, code: string, label: string, tenantId: string, usage: number, unitPrice?: number): MeterShare =>
+const meter = (subItemId: string, code: string, label: string, tenantId: string, usage: number): MeterShare =>
   // メゾンレクシアの4F分は2行目の契約として扱います。
-  ({ id: `${subItemId}:${code}`, subItemId, code, label, tenantId, rowIndex: tenantId === 'T4' && label.startsWith('4F') ? 1 : 0, usage, ...(unitPrice ? { unitPrice } : {}) });
+  ({ id: `${subItemId}:${code}`, subItemId, code, label, tenantId, rowIndex: tenantId === 'T4' && label.startsWith('4F') ? 1 : 0, usage });
 
 const acReadings: Array<[string, string, string, number, number, number?]> = [
   ['1：4-07', '2F 南', 'T1', 9.816, 20.392], ['1：4-08', '2F 南', 'T1', 9.931, 41.479], ['1：4-09', '2F 南', 'T1', 11.55, 62.76], ['1：4-10', '2F 南', 'T1', 20.047, 181.182],
@@ -244,9 +248,9 @@ export const initialMeters: MeterShare[] = [
   meter('light', '244-583', '5F 南西', 'T5', 129), meter('light', '223-607-967', '5F 南東', 'T6', 269), meter('light', '223-607-820', '5F 南東', 'T6', 148.1),
   meter('light', '223-607-852', '5F 中', 'T7', 238), meter('light', '223-607-809', '5F 北', 'T8', 255.8), meter('light', '259-403', '6F 南西', 'T9', 314),
   meter('light', '222-604-409', '6F 南東', 'T10', 575.5), meter('light', '165-031', '6F 中北', 'T11', 214), meter('light', '223-607-828', '6F 北', 'T12', 296.2),
-  meter('light', '223-607-973', '7F 南・中', 'T13', 1474.8), meter('light', '223-607-819', '7F 南・中', 'T13', 3500), meter('light', '223-607-983', '7F 北', 'T13', 89.5, 33),
+  meter('light', '223-607-973', '7F 南・中', 'T13', 1474.8), meter('light', '223-607-819', '7F 南・中', 'T13', 3500), meter('light', '223-607-983', '7F 北', 'T13', 89.5),
 
-  ...acReadings.map(([code, label, tenantId, electric, , unitPrice]) => meter('ac', code, label, tenantId, electric, unitPrice)),
+  ...acReadings.map(([code, label, tenantId, electric]) => meter('ac', code, label, tenantId, electric)),
   ...acReadings.map(([code, label, tenantId, , gas]) => meter('gas_usage', code, label, tenantId, gas)),
 
   meter('water_usage', '60R-141-19-009', '1F', 'T14', 34),
@@ -278,26 +282,21 @@ export function toExclusive(price: number, subItem: SubItem, taxRate: number, ta
 }
 
 // 固定単価の小分類の単価（税抜）です。次の順で決めます。
-//   メーターの割り当てで上書きした単価 → メーターの区画の契約単価 → 契約行の単価（従来の設定） → 既定単価 → 0
+//   メーターの区画の契約単価 → 既定単価 → 0
 // 契約単価・既定単価は、単価を分類で共通にした分類では分類の単価、それ以外は小分類の明細項目の単価です。
-// 単価の税区分は、契約単価・既定単価はそれぞれの設定、メーター・契約行の単価は小分類の設定に従います。
+// 単価の税区分は、契約単価・既定単価それぞれの設定に従います。
 export type PriceSources = Pick<BuildingConfig, 'contractPrices' | 'lineItemDefaults' | 'categoryPriceScopes' | 'contractCategoryPrices' | 'categoryDefaults'>;
-export function resolveUnitPrice(subItem: SubItem, share: MeterShare, row: ContractRow, building: PriceSources): { price: number; taxMode: TaxMode } {
-  if (share.unitPrice !== undefined) return { price: share.unitPrice, taxMode: subItem.taxMode };
+export function resolveUnitPrice(subItem: SubItem, share: MeterShare, building: PriceSources): { price: number; taxMode: TaxMode } {
   const key = share.unitId ? contractPriceKey(share.unitId, share.tenantId) : '';
   // 設定が無い分類は「分類で共通」として扱います。
   if ((building.categoryPriceScopes?.[subItem.categoryId] ?? 'category') === 'category') {
     const shared = key ? building.contractCategoryPrices?.[key]?.[subItem.categoryId] : undefined;
     if (shared) return { price: shared.unitPrice, taxMode: shared.taxMode };
-    const legacyShared = row.unitPrices[subItem.id];
-    if (legacyShared !== null && legacyShared !== undefined) return { price: legacyShared, taxMode: subItem.taxMode };
     const sharedDefault = building.categoryDefaults?.[subItem.categoryId];
     return sharedDefault ? { price: sharedDefault.unitPrice, taxMode: sharedDefault.taxMode } : { price: 0, taxMode: 'exclusive' };
   }
   const contract = key && subItem.lineItemId ? building.contractPrices?.[key]?.[subItem.lineItemId] : undefined;
   if (contract) return { price: contract.unitPrice, taxMode: contract.taxMode };
-  const legacy = row.unitPrices[subItem.id];
-  if (legacy !== null && legacy !== undefined) return { price: legacy, taxMode: subItem.taxMode };
   const fallback = subItem.lineItemId ? building.lineItemDefaults?.[subItem.lineItemId] : undefined;
   if (fallback) return { price: fallback.unitPrice, taxMode: fallback.taxMode };
   return { price: 0, taxMode: 'exclusive' };
@@ -328,7 +327,7 @@ export function variableUnitPrice(subItem: SubItem, taxRate: number): number | n
   return roundDigits(billed / usage, subItem.unitPriceRoundingDigits, subItem.unitPriceRoundingMode);
 }
 
-// 基本料は、検針期間の途中で入居・退去したテナントだけ入居日数で日割りします（丸めは契約行の小数点の設定）。
+// 基本料は、検針期間の途中で入居・退去したテナントだけ入居日数で日割りします（丸めは契約区画の小数点以下の処理）。
 export function calculateSubItem(subItem: SubItem, category: Category, row: ContractRow, tenantId: string, rowIndex: number, meters: MeterShare[], taxRate: number, basicRatio?: BasicRatio, prices: PriceSources = {}): SubItemResult {
   const roundUsage = (value: number) => roundDigits(value, subItem.usageRoundingDigits, subItem.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
@@ -348,7 +347,7 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   // 変動単価は単価計算タブで決めたその月の単価を、全メーター共通で使います（未決定なら0円）。
   const monthPrice = subItem.priceMode === 'variable' ? toExclusive(variableUnitPrice(subItem, taxRate) ?? 0, subItem, taxRate) : 0;
   const priceOf = (target: MeterShare) => subItem.priceMode === 'variable' ? monthPrice
-    : (() => { const resolved = resolveUnitPrice(subItem, target, row, prices); return toExclusive(resolved.price, subItem, taxRate, resolved.taxMode); })();
+    : (() => { const resolved = resolveUnitPrice(subItem, target, prices); return toExclusive(resolved.price, subItem, taxRate, resolved.taxMode); })();
   const usage = roundUsage(own.reduce((sum, target) => sum + target.usage, 0));
 
   // 単価が違うメーターは、まとめて計算の場合も分けて計算します。
@@ -362,7 +361,8 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   return { subItem, meters: own, usage, amount: groups.reduce((sum, group) => sum + group.amount, 0), groups };
 }
 
-export function calculateRow(row: ContractRow, index: number, tenantId: string, building: BuildingConfig, meters: MeterShare[], basicRatio?: BasicRatio): RowResult {
+// 基本料の日割りは、基本料の小分類ごとに決めます（基本料の既定の請求期間の入居日数）。
+export function calculateRow(row: ContractRow, index: number, tenantId: string, building: BuildingConfig, meters: MeterShare[], ratioOf: (subItemId: string) => BasicRatio | undefined = () => undefined): RowResult {
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
     // 小分類が1つだけの分類は、小分類ごとの請求フラグを持たず、分類の請求有無だけで決めます。
@@ -370,7 +370,7 @@ export function calculateRow(row: ContractRow, index: number, tenantId: string, 
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
       .map((subItem) => row.categoryBillable[category.id] === false
         ? { subItem, meters: [], usage: 0, amount: 0, groups: [] }
-        : calculateSubItem(subItem, category, singleCustom && subItem.kind === 'custom' ? { ...row, billable: { ...row.billable, [subItem.id]: true } } : row, tenantId, index, meters, building.taxRate, basicRatio, building));
+        : calculateSubItem(subItem, category, singleCustom && subItem.kind === 'custom' ? { ...row, billable: { ...row.billable, [subItem.id]: true } } : row, tenantId, index, meters, building.taxRate, ratioOf(subItem.id), building));
     return { category, subItems, usage: subItems.reduce((sum, item) => sum + item.usage, 0), amount: subItems.reduce((sum, item) => sum + item.amount, 0) };
   });
 
@@ -477,7 +477,7 @@ export function calculateAll(tenants: TenantConfig[], building: BuildingConfig, 
 }
 
 export function calculateTenant(tenant: TenantConfig, building: BuildingConfig, meters: MeterShare[], ratios: Map<string, BasicRatio> = new Map()) {
-  const rows = tenant.rows.map((row, index) => calculateRow(row, index, tenant.id, building, meters, ratios.get(row.id)));
+  const rows = tenant.rows.map((row, index) => calculateRow(row, index, tenant.id, building, meters, (subItemId) => ratios.get(basicRatioKey(row.id, subItemId)) ?? ratios.get(row.id)));
   const total = rows.reduce((sum, row) => sum + row.total, 0);
 
   // 請求明細の項目ごとにまとめた金額です。請求書作成へ渡す単位になります。

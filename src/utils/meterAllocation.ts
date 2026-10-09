@@ -20,7 +20,7 @@ export type MeterExchange = { removedReading: number | null; installedReading: n
 
 // 画面で扱うメーターです。設置区画の履歴と、対象月の検針値を持ちます。
 export type AssetMeter = {
-  id: string; subItemId: string; code: string; label: string; unitPrice?: number;
+  id: string; subItemId: string; code: string; label: string;
   assignments: UnitAssignment[];
   // 使用量入力：入力した使用量／指針入力：指針から求めた使用量（保存用）
   usage: number;
@@ -163,7 +163,6 @@ export function allocateMeters(
       shares.push({
         id: segments.length > 1 ? `${meter.id}#${index}` : meter.id, meterId: meter.id, subItemId: meter.subItemId, code: meter.code, label: meter.label,
         tenantId: tenant ? tenant.id : '', rowIndex: rowIndexForUnit(tenant, segment.unitId), usage: segment.usage, ...(segment.unitId ? { unitId: segment.unitId } : {}),
-        ...(meter.unitPrice === undefined ? {} : { unitPrice: meter.unitPrice }),
       });
     });
     const warnings: string[] = [];

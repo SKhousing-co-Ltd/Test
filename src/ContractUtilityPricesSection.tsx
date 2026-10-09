@@ -17,7 +17,6 @@ type PriceDraft = { unitPrice: string; taxMode: TaxMode; monthly: Array<{ month:
 type BasicDraft = { amount: string; taxMode: TaxMode };
 
 const categoryNames: Record<CategoryId, string> = { electric: '電気', water: '水道', gas: 'ガス' };
-const taxModeNames: Record<TaxMode, string> = { exclusive: '税抜', inclusive: '税込' };
 const emptyPrice = (taxMode: TaxMode): PriceDraft => ({ unitPrice: '', taxMode, monthly: [] });
 const isNumber = (value: string) => value.trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0;
 
@@ -129,10 +128,9 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, propertyId, 
   };
 
   const disabled = !canEdit || saving;
-  const defaultLabel = (target: PriceTarget) => target.fallback === null ? '既定単価なし' : `未入力なら既定単価 ${target.fallback.unitPrice.toLocaleString('ja-JP', { maximumFractionDigits: 4 })}円（${taxModeNames[target.fallback.taxMode]}）`;
 
   return <>
-    <div className="contract-information-section-heading"><div><h3>公共料金（単価・基本料）</h3><p>この区画の公共料金の単価と基本料を設定します。変動単価の小分類は検針データで単価を計算します。</p></div></div>
+    <div className="contract-information-section-heading"><div><h3>公共料金</h3></div></div>
     {error && <p className="contract-information-notice">{error}</p>}
     {loading && <p className="contract-information-empty">読み込み中…</p>}
     {!loading && !targets.length && !basicCategories.length && <p className="contract-information-empty">この物件には、契約で単価を持つ明細項目（固定単価の小分類に紐づく明細項目）や請求する基本料がありません。</p>}
@@ -140,11 +138,20 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, propertyId, 
       <table className="contract-information-table utility-price-table">
         <thead><tr><th>項目</th><th>単価・金額</th><th>税区分</th><th>検針月による単価</th></tr></thead>
         <tbody>
+          {basicCategories.map((category) => {
+            const draft = basics[category] ?? { amount: '', taxMode: 'exclusive' as TaxMode };
+            return <tr key={category}>
+              <td><strong>{categoryNames[category]}基本料</strong></td>
+              <td><input type="number" step="1" min="0" value={draft.amount} disabled={disabled} placeholder="—" aria-label={`${categoryNames[category]}基本料`} onChange={(event) => updateBasic(category, { amount: event.target.value })} /> 円／月</td>
+              <td><select value={draft.taxMode} disabled={disabled} aria-label={`${categoryNames[category]}基本料の税区分`} onChange={(event) => updateBasic(category, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td>
+              <td><span className="billing-terms-preview">途中入退去は検針期間の入居日数で日割り</span></td>
+            </tr>;
+          })}
           {targets.map((target) => {
             const draft = prices[target.key] ?? emptyPrice(target.fallback?.taxMode ?? 'exclusive');
             return <tr key={target.key}>
-              <td><strong>{target.label}</strong><small className="billing-terms-preview">{target.sub}</small></td>
-              <td><input type="number" step="0.0001" min="0" value={draft.unitPrice} disabled={disabled} placeholder="—" aria-label={`${target.label}の単価`} onChange={(event) => updatePrice(target.key, { unitPrice: event.target.value })} /> 円<small className="billing-terms-preview">{defaultLabel(target)}</small></td>
+              <td><strong>{target.label}</strong></td>
+              <td><input type="number" step="0.0001" min="0" value={draft.unitPrice} disabled={disabled} placeholder="—" aria-label={`${target.label}の単価`} onChange={(event) => updatePrice(target.key, { unitPrice: event.target.value })} /> 円</td>
               <td><select value={draft.taxMode} disabled={disabled} aria-label={`${target.label}の税区分`} onChange={(event) => updatePrice(target.key, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td>
               <td>
                 <div className="utility-monthly-prices">
@@ -158,15 +165,6 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, propertyId, 
                   <button type="button" className="text-button" disabled={disabled} onClick={() => updatePrice(target.key, { monthly: [...draft.monthly, { month: draft.monthly.length ? Math.min(12, draft.monthly[draft.monthly.length - 1].month + 1) : 7, price: draft.unitPrice }] })}>月別単価を追加</button>
                 </div>
               </td>
-            </tr>;
-          })}
-          {basicCategories.map((category) => {
-            const draft = basics[category] ?? { amount: '', taxMode: 'exclusive' as TaxMode };
-            return <tr key={category}>
-              <td><strong>{categoryNames[category]}基本料</strong></td>
-              <td><input type="number" step="1" min="0" value={draft.amount} disabled={disabled} placeholder="—" aria-label={`${categoryNames[category]}基本料`} onChange={(event) => updateBasic(category, { amount: event.target.value })} /> 円／月</td>
-              <td><select value={draft.taxMode} disabled={disabled} aria-label={`${categoryNames[category]}基本料の税区分`} onChange={(event) => updateBasic(category, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td>
-              <td><span className="billing-terms-preview">途中入退去は検針期間の入居日数で日割り</span></td>
             </tr>;
           })}
         </tbody>
