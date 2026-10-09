@@ -305,7 +305,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     const rows = groups.map((group) => {
       const tenant = tenants.find((item) => item.id === group.tenantId);
       const row = tenant?.rows[group.rowIndex];
-      const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, calculated.shares, building.taxRate) : null;
+      const result = tenant && row ? calculateSubItem(target, targetCategory, row, tenant.id, group.rowIndex, calculated.shares, building.taxRate, undefined, building) : null;
       // 単価は、メーターの割り当てで上書きした単価、区画の契約単価、契約行の単価、明細項目の既定単価の順で決めます。
       // 変動単価は、単価計算タブで決めたその月の単価を全メーター共通で出します。
       const priceOf = (meter: MeterShare) => !row ? null
