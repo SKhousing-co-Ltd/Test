@@ -236,9 +236,12 @@ function formatCurrency(value: number): string {
 }
 
 // 公共料金の列です。検針設定で基本料を請求する分類の基本料と、請求設定で「単価をレントロールに載せる」明細項目の単価を出します。
-type UtilityColumn = { key: string; label: string; kind: 'basic' | 'price'; id: string; fallback: { value: number; taxMode: string } | null };
+// 見出しは2行で、1行目に分類（電気・水道・ガス）、2行目に「基本料」「（請求内容）単価」を出します。
+type UtilityColumn = { key: string; group: string; label: string; kind: 'basic' | 'price'; id: string; fallback: { value: number; taxMode: string } | null };
 type UtilityValue = { value: number; taxMode: string; isDefault: boolean };
 const utilityCategoryNames: Record<string, string> = { electric: '電気', water: '水道', gas: 'ガス' };
+const utilityKindCategory: Record<string, string> = { electricity: 'electric', water: 'water', gas: 'gas' };
+const utilityCategoryOrder = ['electric', 'water', 'gas', 'other'];
 const unitPriceFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 4 });
 
 export function RentRollPage({ capabilities }: { capabilities: ContractCapabilities }) {
@@ -268,7 +271,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     const loadUtility = async () => {
       const [settingResult, lineItemResult, contractResult] = await Promise.all([
         client.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
-        client.from('asset_billing_line_item').select('asset_billing_line_item_id, display_name, billing_content, default_unit_price, default_tax_mode, sort_order').eq('asset_id', propertyId).eq('is_active', true).eq('show_unit_price_in_rent_roll', true).order('sort_order'),
+        client.from('asset_billing_line_item').select('asset_billing_line_item_id, display_name, billing_content, default_unit_price, default_tax_mode, sort_order, charge:billing_charge_type(utility_kind)').eq('asset_id', propertyId).eq('is_active', true).eq('show_unit_price_in_rent_roll', true).order('sort_order'),
         client.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(property_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
       ]);
       if (cancelled) return;
@@ -277,9 +280,12 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const settings = (settingResult.data ?? []) as Array<{ category: string; is_billable: boolean; is_basic_billable: boolean }>;
       const basicColumns: UtilityColumn[] = ['electric', 'water', 'gas']
         .filter((category) => settings.some((row) => row.category === category && row.is_basic_billable && (category === 'electric' || row.is_billable)))
-        .map((category) => ({ key: `basic:${category}`, label: `${utilityCategoryNames[category]}基本料`, kind: 'basic', id: category, fallback: null }));
-      const priceColumns: UtilityColumn[] = ((lineItemResult.data ?? []) as Array<{ asset_billing_line_item_id: string; display_name: string; billing_content: string | null; default_unit_price: number | null; default_tax_mode: string }>)
-        .map((item) => ({ key: `price:${item.asset_billing_line_item_id}`, label: `${item.billing_content || item.display_name}単価`, kind: 'price', id: item.asset_billing_line_item_id, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.default_tax_mode } }));
+        .map((category) => ({ key: `basic:${category}`, group: category, label: '基本料', kind: 'basic', id: category, fallback: null }));
+      const priceColumns: UtilityColumn[] = ((lineItemResult.data ?? []) as unknown as Array<{ asset_billing_line_item_id: string; display_name: string; billing_content: string | null; default_unit_price: number | null; default_tax_mode: string; charge: { utility_kind: string | null } | Array<{ utility_kind: string | null }> | null }>)
+        .map((item) => {
+          const charge = Array.isArray(item.charge) ? item.charge[0] : item.charge;
+          return { key: `price:${item.asset_billing_line_item_id}`, group: utilityKindCategory[charge?.utility_kind ?? ''] ?? 'other', label: `${item.billing_content || item.display_name}単価`, kind: 'price' as const, id: item.asset_billing_line_item_id, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.default_tax_mode } };
+        });
       const values: Record<string, Record<string, { value: number; taxMode: string }>> = {};
       for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null }>) {
         const target: Record<string, { value: number; taxMode: string }> = {};
@@ -287,7 +293,10 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         for (const basic of unit.basics ?? []) target[`basic:${basic.category}`] = { value: Number(basic.amount), taxMode: basic.tax_mode };
         values[unit.lease_contract_unit_id] = target;
       }
-      setUtilityColumns([...basicColumns, ...priceColumns]);
+      // 分類ごとに、基本料・単価（明細項目の並び順）の順に並べます。
+      const ordered = [...basicColumns, ...priceColumns].map((column, index) => ({ column, index }))
+        .sort((left, right) => utilityCategoryOrder.indexOf(left.column.group) - utilityCategoryOrder.indexOf(right.column.group) || left.index - right.index).map(({ column }) => column);
+      setUtilityColumns(ordered);
       setUtilityValues(values);
     };
     void loadUtility();
@@ -302,6 +311,12 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     return column.fallback ? { ...column.fallback, isDefault: true } : null;
   };
   const shownUtilityColumns = viewMode === 'current' ? utilityColumns : [];
+  const utilityGroups = shownUtilityColumns.reduce<Array<{ group: string; count: number }>>((groups, column) => {
+    const last = groups[groups.length - 1];
+    if (last?.group === column.group) last.count += 1; else groups.push({ group: column.group, count: 1 });
+    return groups;
+  }, []);
+  const twoRowHeader = shownUtilityColumns.length > 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -522,7 +537,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       <div className="rent-roll-panel-heading"><div><h3>{selectedProperty?.propertyName ?? '物件を選択'}</h3><p>{loadingRows ? '読み込み中…' : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}</p></div></div>
       <div className="rent-roll-table-wrap" role="region" aria-label="レントロール一覧。縦横にスクロールできます" tabIndex={0}>
         <table className="rent-roll-table">
-          <thead><tr><th>状態</th><th>商品</th><th>種別</th><th>階</th><th>室・枠</th><th>内外</th><th>契約形態</th><th>契約期間</th><th>テナント名</th><th>暗証番号</th><th>車両</th><th>面積㎡</th><th>賃料</th><th>共益費</th><th>賃料＋共益費</th><th>駐車場代</th><th>その他月額</th><th>敷金</th><th>保証金</th><th>礼金</th><th>更新料</th>{shownUtilityColumns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
+          <thead><tr><th rowSpan={twoRowHeader ? 2 : undefined}>状態</th><th rowSpan={twoRowHeader ? 2 : undefined}>商品</th><th rowSpan={twoRowHeader ? 2 : undefined}>種別</th><th rowSpan={twoRowHeader ? 2 : undefined}>階</th><th rowSpan={twoRowHeader ? 2 : undefined}>室・枠</th><th rowSpan={twoRowHeader ? 2 : undefined}>内外</th><th rowSpan={twoRowHeader ? 2 : undefined}>契約形態</th><th rowSpan={twoRowHeader ? 2 : undefined}>契約期間</th><th rowSpan={twoRowHeader ? 2 : undefined}>テナント名</th><th rowSpan={twoRowHeader ? 2 : undefined}>暗証番号</th><th rowSpan={twoRowHeader ? 2 : undefined}>車両</th><th rowSpan={twoRowHeader ? 2 : undefined}>面積㎡</th><th rowSpan={twoRowHeader ? 2 : undefined}>賃料</th><th rowSpan={twoRowHeader ? 2 : undefined}>共益費</th><th rowSpan={twoRowHeader ? 2 : undefined}>賃料＋共益費</th><th rowSpan={twoRowHeader ? 2 : undefined}>駐車場代</th><th rowSpan={twoRowHeader ? 2 : undefined}>その他月額</th><th rowSpan={twoRowHeader ? 2 : undefined}>敷金</th><th rowSpan={twoRowHeader ? 2 : undefined}>保証金</th><th rowSpan={twoRowHeader ? 2 : undefined}>礼金</th><th rowSpan={twoRowHeader ? 2 : undefined}>更新料</th>{utilityGroups.map((group, index) => <th key={`${group.group}-${index}`} colSpan={group.count} className="rent-roll-utility-group">{utilityCategoryNames[group.group] ?? 'その他'}</th>)}</tr>{twoRowHeader && <tr>{shownUtilityColumns.map((column) => <th key={column.key} className="rent-roll-utility-sub">{column.label}</th>)}</tr>}</thead>
           <tbody>
             {loadingRows && <tr><td colSpan={21 + shownUtilityColumns.length} className="rent-roll-empty">レントロールを読み込んでいます。</td></tr>}
             {!loadingRows && filteredRows.length === 0 && <tr><td colSpan={21 + shownUtilityColumns.length} className="rent-roll-empty">条件に一致する区画はありません。</td></tr>}

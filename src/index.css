@@ -168,3 +168,6 @@ a { color: inherit; text-decoration: none; }
 
 .rent-roll-table td small { display: inline-block; margin-left: 4px; color: #64748b; font-size: 10px; }
 .rent-roll-table td.rent-roll-utility-default { color: #94a3b8; }
+.rent-roll-table thead tr:nth-child(2) th { top: 37px; }
+.rent-roll-table th.rent-roll-utility-group { text-align: center; border-left: 1px solid #dfe6ee; }
+.rent-roll-table th.rent-roll-utility-sub { text-align: right; }
