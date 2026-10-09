@@ -3,6 +3,7 @@ import { Field, contractPeriod, date, leaseTermLabel, money, statusLabels, type 
 import { supabase } from './lib/supabase';
 import { Dialog } from './components/Dialog';
 import './ContractInformationPage.css';
+import { termsDueDate, type BillingTerms } from './utils/billingDates';
 
 type PropertyOption = {
   propertyId: string;
@@ -28,57 +29,14 @@ type ContractListRow = {
   monthly_total_amount: number | null;
 };
 
-type BillingCodeRow = {
+type BillingCodeRow = BillingTerms & {
   billing_code_id: string;
   issue_code: string;
   recipient_name: string;
-  billing_due_date_pattern_id: string | null;
-  billing_period_pattern_id: string | null;
-};
-
-type DuePatternRow = {
-  billing_due_date_pattern_id: string;
-  pattern_number: number;
-  month_offset: number;
-  day_of_month: number;
-  holiday_adjustment: 'previous' | 'next';
-};
-
-type PeriodPatternRow = {
-  billing_period_pattern_id: string;
-  pattern_name: string;
-  start_month_offset: number;
-  start_day_type: string;
-  start_meter_day_offset: number;
-  end_month_offset: number;
-  end_day_type: string;
-  end_meter_day_offset: number;
 };
 
 const today = new Date().toISOString().slice(0, 10);
 
-const monthLabel = (n: number) =>
-  ({ '-2': '前々月', '-1': '前月', '0': '当月', '1': '翌月', '2': '翌々月' })[String(n)] ?? '当月';
-const dayLabel = (day: string, offset: number) =>
-  day === 'first' || day === 'day_1'
-    ? '1日'
-    : day === 'last'
-      ? '末日'
-      : day === 'meter'
-        ? `検針日${offset ? '翌日' : '当日'}`
-        : `${day.replace('day_', '')}日`;
-
-function duePatternLabel(pattern: DuePatternRow): string {
-  const circled = '①②③④⑤⑥⑦⑧⑨⑩'.charAt(pattern.pattern_number - 1) || String(pattern.pattern_number);
-  const month = pattern.month_offset ? '翌月' : '当月';
-  const day = pattern.day_of_month === 0 ? '末日' : `${pattern.day_of_month}日`;
-  const holiday = pattern.holiday_adjustment === 'previous' ? '前日' : '翌日';
-  return `${circled}${month}${day}（土日祝は${holiday}）`;
-}
-
-function periodPatternLabel(pattern: PeriodPatternRow): string {
-  return `${pattern.pattern_name}（${monthLabel(pattern.start_month_offset)}${dayLabel(pattern.start_day_type, pattern.start_meter_day_offset)} ～ ${monthLabel(pattern.end_month_offset)}${dayLabel(pattern.end_day_type, pattern.end_meter_day_offset)}）`;
-}
 
 export function ContractInformationPage({ canEditBillingTerms }: { canEditBillingTerms: boolean }) {
   const [properties, setProperties] = useState<PropertyOption[]>([]);
@@ -95,8 +53,6 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
   const [detailError, setDetailError] = useState('');
 
   const [billingCodes, setBillingCodes] = useState<BillingCodeRow[]>([]);
-  const [duePatterns, setDuePatterns] = useState<DuePatternRow[]>([]);
-  const [periodPatterns, setPeriodPatterns] = useState<PeriodPatternRow[]>([]);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingError, setBillingError] = useState('');
   const [savingBillingCodeId, setSavingBillingCodeId] = useState('');
@@ -202,8 +158,6 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
     const tenantId = detail?.contract.tenant_id;
     if (!tenantId || !propertyId) {
       setBillingCodes([]);
-      setDuePatterns([]);
-      setPeriodPatterns([]);
       return;
     }
     let cancelled = false;
@@ -215,57 +169,51 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
         setBillingLoading(false);
         return;
       }
-      const [codeResult, dueResult, periodResult] = await Promise.all([
-        supabase
-          .from('billing_code')
-          .select('billing_code_id, issue_code, recipient_name, billing_due_date_pattern_id, billing_period_pattern_id')
-          .eq('property_id', propertyId)
-          .eq('tenant_id', tenantId)
-          .eq('is_active', true)
-          .order('issue_code'),
-        supabase
-          .from('asset_billing_due_date_pattern')
-          .select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment')
-          .eq('asset_id', propertyId)
-          .order('pattern_number'),
-        supabase
-          .from('asset_billing_period_pattern')
-          .select('billing_period_pattern_id, pattern_name, start_month_offset, start_day_type, start_meter_day_offset, end_month_offset, end_day_type, end_meter_day_offset')
-          .eq('asset_id', propertyId)
-          .order('sort_order'),
-      ]);
+      const codeResult = await supabase
+        .from('billing_code')
+        .select('billing_code_id, issue_code, recipient_name, due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset')
+        .eq('property_id', propertyId)
+        .eq('tenant_id', tenantId)
+        .eq('is_active', true)
+        .order('issue_code');
       if (cancelled) return;
-      if (codeResult.error || dueResult.error || periodResult.error) {
-        setBillingError(`請求条件を読み込めませんでした: ${codeResult.error?.message ?? dueResult.error?.message ?? periodResult.error?.message}`);
-      }
+      if (codeResult.error) setBillingError(`請求条件を読み込めませんでした: ${codeResult.error.message}`);
       setBillingCodes((codeResult.data ?? []) as BillingCodeRow[]);
-      setDuePatterns((dueResult.data ?? []) as DuePatternRow[]);
-      setPeriodPatterns((periodResult.data ?? []) as PeriodPatternRow[]);
       setBillingLoading(false);
     };
     void loadBilling();
     return () => { cancelled = true; };
   }, [detail?.contract.tenant_id, propertyId]);
 
-  const updateBillingTerms = async (code: BillingCodeRow, field: 'due' | 'period', value: string) => {
+  const updateBillingTerms = async (code: BillingCodeRow, patch: Partial<BillingTerms>) => {
     if (!supabase || !canEditBillingTerms) return;
-    const nextDueId = field === 'due' ? (value || null) : code.billing_due_date_pattern_id;
-    const nextPeriodId = field === 'period' ? (value || null) : code.billing_period_pattern_id;
+    const next = { ...code, ...patch };
+    // 年払いに切り替えたときは、請求月（既定は今月）と翌月～1年分を初期値にします。
+    if (next.is_annual_billing) {
+      next.annual_billing_month = next.annual_billing_month ?? new Date().getMonth() + 1;
+      next.annual_start_offset = next.annual_start_offset ?? 1;
+    } else {
+      next.annual_billing_month = null;
+      next.annual_start_offset = null;
+    }
     setSavingBillingCodeId(code.billing_code_id);
     setBillingError('');
-    const { error: saveError } = await supabase.rpc('update_billing_code_billing_terms', {
+    const { error: saveError } = await supabase.rpc('update_billing_code_terms', {
       p_billing_code_id: code.billing_code_id,
-      p_billing_due_date_pattern_id: nextDueId,
-      p_billing_period_pattern_id: nextPeriodId,
+      p_due_month_offset: next.due_month_offset,
+      p_due_day_of_month: next.due_day_of_month,
+      p_due_holiday_adjustment: next.due_holiday_adjustment,
+      p_period_month_offset: next.period_month_offset,
+      p_is_annual_billing: next.is_annual_billing,
+      p_annual_billing_month: next.annual_billing_month,
+      p_annual_start_offset: next.annual_start_offset,
     });
     setSavingBillingCodeId('');
     if (saveError) {
       setBillingError(`請求条件を更新できませんでした: ${saveError.message}`);
       return;
     }
-    setBillingCodes((current) => current.map((item) => item.billing_code_id === code.billing_code_id
-      ? { ...item, billing_due_date_pattern_id: nextDueId, billing_period_pattern_id: nextPeriodId }
-      : item));
+    setBillingCodes((current) => current.map((item) => item.billing_code_id === code.billing_code_id ? next : item));
   };
 
   const selectedProperty = properties.find((property) => property.propertyId === propertyId);
@@ -339,39 +287,59 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
           <Field label="最終更新" value={date(contract.updated_at.slice(0, 10))} />
         </div>
 
-        <div className="contract-information-section-heading"><div><h3>請求条件（支払期日・請求スパン）</h3><p>請求コードごとに、入金期日パターン・請求期間パターンを設定します。</p></div></div>
+        <div className="contract-information-section-heading"><div><h3>請求条件（入金期日・請求期間）</h3><p>請求コードごとに、入金期日と請求書に記載する請求期間を設定します。</p></div></div>
         {!canEditBillingTerms && <p className="contract-information-notice muted">編集は総務経理部の担当者のみ行えます。</p>}
         {billingError && <p className="contract-information-notice">{billingError}</p>}
         <div className="contract-information-table-wrap">
-          <table className="contract-information-table">
-            <thead><tr><th>請求コード</th><th>請求先</th><th>入金期日パターン</th><th>請求期間パターン</th></tr></thead>
+          <table className="contract-information-table billing-terms-table">
+            <thead><tr><th>請求コード</th><th>請求先</th><th>入金期日</th><th>請求期間</th></tr></thead>
             <tbody>
               {billingLoading && <tr><td colSpan={4} className="contract-information-empty">読み込み中…</td></tr>}
               {!billingLoading && billingCodes.length === 0 && <tr><td colSpan={4} className="contract-information-empty">この契約に紐づく請求コードがありません。</td></tr>}
-              {!billingLoading && billingCodes.map((code) => <tr key={code.billing_code_id}>
-                <td><strong>{code.issue_code}</strong></td>
-                <td>{code.recipient_name}</td>
-                <td>
-                  <select
-                    value={code.billing_due_date_pattern_id ?? ''}
-                    disabled={!canEditBillingTerms || savingBillingCodeId === code.billing_code_id}
-                    onChange={(event) => void updateBillingTerms(code, 'due', event.target.value)}
-                  >
-                    <option value="">未設定</option>
-                    {duePatterns.map((pattern) => <option key={pattern.billing_due_date_pattern_id} value={pattern.billing_due_date_pattern_id}>{duePatternLabel(pattern)}</option>)}
-                  </select>
-                </td>
-                <td>
-                  <select
-                    value={code.billing_period_pattern_id ?? ''}
-                    disabled={!canEditBillingTerms || savingBillingCodeId === code.billing_code_id}
-                    onChange={(event) => void updateBillingTerms(code, 'period', event.target.value)}
-                  >
-                    <option value="">未設定</option>
-                    {periodPatterns.map((pattern) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{periodPatternLabel(pattern)}</option>)}
-                  </select>
-                </td>
-              </tr>)}
+              {!billingLoading && billingCodes.map((code) => {
+                const disabled = !canEditBillingTerms || savingBillingCodeId === code.billing_code_id;
+                const now = new Date();
+                return <tr key={code.billing_code_id}>
+                  <td><strong>{code.issue_code}</strong></td>
+                  <td>{code.recipient_name}</td>
+                  <td>
+                    <div className="billing-terms-controls">
+                      <select aria-label="入金期日の月" value={code.due_month_offset} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { due_month_offset: Number(event.target.value) })}>
+                        <option value={0}>当月</option><option value={1}>翌月</option>
+                      </select>
+                      <select aria-label="入金期日の日" value={code.due_day_of_month} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { due_day_of_month: Number(event.target.value) })}>
+                        {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}日</option>)}
+                        <option value={0}>末日</option>
+                      </select>
+                      <label>土日祝の場合
+                        <select value={code.due_holiday_adjustment} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { due_holiday_adjustment: event.target.value as 'previous' | 'next' })}>
+                          <option value="previous">前日</option><option value="next">翌日</option>
+                        </select>
+                      </label>
+                    </div>
+                    <small className="billing-terms-preview">今月の場合：{termsDueDate(now.getFullYear(), now.getMonth() + 1, code)}</small>
+                  </td>
+                  <td>
+                    <div className="billing-terms-controls">
+                      <select aria-label="請求期間" value={code.period_month_offset} disabled={disabled || code.is_annual_billing} onChange={(event) => void updateBillingTerms(code, { period_month_offset: Number(event.target.value) })}>
+                        <option value={-1}>前月分</option><option value={0}>当月分</option><option value={1}>翌月分</option>
+                      </select>
+                      <label className="billing-terms-check"><input type="checkbox" checked={code.is_annual_billing} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { is_annual_billing: event.target.checked })} />年払い</label>
+                      {code.is_annual_billing && <>
+                        <label>請求月
+                          <select value={code.annual_billing_month ?? ''} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { annual_billing_month: Number(event.target.value) })}>
+                            {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}月</option>)}
+                          </select>
+                        </label>
+                        <select aria-label="年払いの請求期間" value={code.annual_start_offset ?? 1} disabled={disabled} onChange={(event) => void updateBillingTerms(code, { annual_start_offset: Number(event.target.value) })}>
+                          <option value={1}>翌月～1年分</option><option value={2}>翌々月～1年分</option>
+                        </select>
+                      </>}
+                    </div>
+                    {code.is_annual_billing && <small className="billing-terms-preview">請求月以外は0円で請求します（明細項目1は空白）。</small>}
+                  </td>
+                </tr>;
+              })}
             </tbody>
           </table>
         </div>

@@ -31,7 +31,6 @@ type Pattern = {
   end_meter_day_offset: number;
   sort_order: number;
 };
-type DuePattern = { billing_due_date_pattern_id: string; pattern_number: number; month_offset: number; day_of_month: number; holiday_adjustment: 'previous' | 'next' };
 const monthLabel = (n: number) =>
   ({ "-2": "前々月", "-1": "前月", "0": "当月", "1": "翌月", "2": "翌々月" })[
     String(n)
@@ -55,17 +54,12 @@ export function PropertyBillingSettings({
   canEdit: boolean;
 }) {
   const [tab, setTab] = useState<
-    "types" | "items" | "duePatterns" | "patterns" | "allocations" | "invoiceSplits" | "tenantOrder"
+    "types" | "items" | "patterns" | "allocations" | "invoiceSplits" | "tenantOrder"
   >("types");
   const [types, setTypes] = useState<ChargeType[]>([]);
   const [enabled, setEnabled] = useState<string[]>([]);
   const [items, setItems] = useState<LineItem[]>([]);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
-  const [duePatterns, setDuePatterns] = useState<DuePattern[]>([]);
-  const [dueMonth, setDueMonth] = useState(0);
-  const [dueDay, setDueDay] = useState(1);
-  const [dueHoliday, setDueHoliday] = useState<'previous' | 'next'>('next');
-  const [editingDuePatternId, setEditingDuePatternId] = useState("");
   const [db, setDb] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
@@ -105,7 +99,7 @@ export function PropertyBillingSettings({
       setLoading(true);
       setNotice("");
       if (supabase) {
-        const [a, b, c, d, e] = await Promise.all([
+        const [a, b, c, d] = await Promise.all([
           supabase
             .from("billing_charge_type")
             .select("billing_charge_type_id, charge_type_name")
@@ -131,15 +125,13 @@ export function PropertyBillingSettings({
             )
             .eq("asset_id", propertyId)
             .order("sort_order"),
-          supabase.from('asset_billing_due_date_pattern').select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment').eq('asset_id', propertyId).order('pattern_number'),
         ]);
-        if (!a.error && !b.error && !c.error && !d.error && !e.error) {
+        if (!a.error && !b.error && !c.error && !d.error) {
           const active = (b.data ?? []).map((x) => x.billing_charge_type_id);
           setTypes((a.data ?? []) as ChargeType[]);
           setEnabled(active);
           setItems((c.data ?? []) as LineItem[]);
           setPatterns((d.data ?? []) as Pattern[]);
-          setDuePatterns((e.data ?? []) as DuePattern[]);
           setTypeId(active[0] ?? "");
           setDb(true);
           setLoading(false);
@@ -150,7 +142,6 @@ export function PropertyBillingSettings({
       setEnabled([]);
       setItems([]);
       setPatterns([]);
-      setDuePatterns([]);
       setTypeId("");
       setDb(false);
       setNotice("請求設定のデータを読み込めませんでした。データベース移行が未適用、または権限設定を確認してください。");
@@ -253,39 +244,6 @@ export function PropertyBillingSettings({
     setPatternName("");
     setNotice(editingPatternId ? "請求期間パターンを更新しました。" : "請求期間パターンを登録しました。");
   };
-  const resetDuePatternForm = () => { setEditingDuePatternId(""); setDueMonth(0); setDueDay(1); setDueHoliday('next'); };
-  const saveDuePattern = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!db || !supabase) { setNotice('データベースに接続できないため、入金期日パターンを保存できません。'); return; }
-    const draft = { month_offset: dueMonth, day_of_month: dueDay, holiday_adjustment: dueHoliday };
-    if (editingDuePatternId) {
-      const { data, error } = await supabase.from('asset_billing_due_date_pattern').update(draft).eq('billing_due_date_pattern_id', editingDuePatternId).select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment').single();
-      if (error) { setNotice(`入金期日パターンを更新できませんでした: ${error.message}`); return; }
-      setDuePatterns(duePatterns.map((pattern) => pattern.billing_due_date_pattern_id === editingDuePatternId ? data as DuePattern : pattern));
-      setNotice('入金期日パターンを更新しました。');
-    } else {
-      const patternNumber = Math.max(0, ...duePatterns.map((pattern) => pattern.pattern_number)) + 1;
-      const { data, error } = await supabase.from('asset_billing_due_date_pattern').insert({ asset_id: propertyId, pattern_number: patternNumber, ...draft }).select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment').single();
-      if (error) { setNotice(`入金期日パターンを登録できませんでした: ${error.message}`); return; }
-      setDuePatterns([...duePatterns, data as DuePattern]);
-      setNotice('入金期日パターンを登録しました。');
-    }
-    resetDuePatternForm();
-  };
-  const removeDuePattern = async (pattern: DuePattern) => {
-    if (!db || !supabase) { setNotice('データベースに接続できないため、入金期日パターンを削除できません。'); return; }
-    const client = supabase;
-    const { error } = await client.from('asset_billing_due_date_pattern').delete().eq('billing_due_date_pattern_id', pattern.billing_due_date_pattern_id);
-    if (error) { setNotice(`入金期日パターンを削除できませんでした: ${error.message}`); return; }
-    const remaining = duePatterns.filter((row) => row.billing_due_date_pattern_id !== pattern.billing_due_date_pattern_id).sort((left, right) => left.pattern_number - right.pattern_number);
-    for (const row of remaining.filter((item) => item.pattern_number > pattern.pattern_number)) {
-      const { error: renumberError } = await client.from('asset_billing_due_date_pattern').update({ pattern_number: row.pattern_number - 1 }).eq('billing_due_date_pattern_id', row.billing_due_date_pattern_id);
-      if (renumberError) { setNotice('削除後のパターン番号を更新できませんでした。画面を再読み込みしてください。'); return; }
-    }
-    setDuePatterns(remaining.map((row) => ({ ...row, pattern_number: row.pattern_number > pattern.pattern_number ? row.pattern_number - 1 : row.pattern_number })));
-    if (editingDuePatternId === pattern.billing_due_date_pattern_id) resetDuePatternForm();
-    setNotice('入金期日パターンを削除しました。');
-  };
   const description = (p: Pattern) =>
     `${monthLabel(p.start_month_offset)} ${dayLabel(p.start_day_type, p.start_meter_day_offset)} ～ ${monthLabel(p.end_month_offset)} ${dayLabel(p.end_day_type, p.end_meter_day_offset)}`;
   return (
@@ -320,12 +278,6 @@ export function PropertyBillingSettings({
           onClick={() => setTab("items")}
         >
           明細項目
-        </button>
-        <button
-          className={tab === "duePatterns" ? "active" : ""}
-          onClick={() => setTab("duePatterns")}
-        >
-          入金期日パターン
         </button>
         <button
           className={tab === "patterns" ? "active" : ""}
@@ -563,9 +515,6 @@ export function PropertyBillingSettings({
             </table>
           </div>
         </section>
-      )}
-      {tab === "duePatterns" && (
-        <section className="property-period-patterns"><div><h4>入金期日パターン</h4><p>登録順に①、②、③…と採番します。</p></div><form className="due-pattern-form" onSubmit={saveDuePattern}><label>月<select value={dueMonth} onChange={(e) => setDueMonth(Number(e.target.value))}><option value={0}>当月</option><option value={1}>翌月</option></select></label><label>期日<select value={dueDay} onChange={(e) => setDueDay(Number(e.target.value))}><option value={0}>末日</option>{Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}日</option>)}</select></label><label>土日祝の場合<select value={dueHoliday} onChange={(e) => setDueHoliday(e.target.value as 'previous' | 'next')}><option value="previous">前日</option><option value="next">翌日</option></select></label><div className="due-pattern-actions">{editingDuePatternId && <button type="button" className="text-button" onClick={resetDuePatternForm}>取消</button>}<button className="primary-button" disabled={!canEdit}>{editingDuePatternId ? '更新' : '登録'}</button></div></form><div className="property-billing-settings-table-wrap"><table><thead><tr><th>番号</th><th>期日</th><th>土日祝の場合</th><th /></tr></thead><tbody>{duePatterns.map((p) => <tr key={p.billing_due_date_pattern_id}><td>{'①②③④⑤⑥⑦⑧⑨⑩'.charAt(p.pattern_number - 1) || p.pattern_number}</td><td>{p.month_offset ? '翌月' : '当月'}{p.day_of_month === 0 ? '末日' : `${p.day_of_month}日`}</td><td>{p.holiday_adjustment === 'previous' ? '前日' : '翌日'}</td><td><button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingDuePatternId(p.billing_due_date_pattern_id); setDueMonth(p.month_offset); setDueDay(p.day_of_month); setDueHoliday(p.holiday_adjustment); }}>編集</button><button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={() => void removeDuePattern(p)}>削除</button></td></tr>)}{!duePatterns.length && <tr><td colSpan={4}>入金期日パターンは未登録です。</td></tr>}</tbody></table></div></section>
       )}
       {tab === "allocations" && (
         <BillingCodeAllocationSettings

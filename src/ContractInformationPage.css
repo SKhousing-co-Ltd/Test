@@ -49,3 +49,8 @@
   .contract-information-toolbar { align-items: stretch; flex-direction: column; }
   .contract-information-toolbar select, .contract-information-toolbar input { width: 100%; min-width: 0; box-sizing: border-box; }
 }
+
+.billing-terms-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.billing-terms-controls label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.billing-terms-check input { width: auto; }
+.billing-terms-preview { display: block; margin-top: 4px; color: #64748b; font-size: 12px; }
