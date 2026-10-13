@@ -1,111 +1,975 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { supabase } from './lib/supabase';
-import { ContractTemplateTabs, type DocumentType } from './ContractTemplateTabs';
+import { useEffect, useMemo, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { supabase } from "./lib/supabase";
+import {
+  ContractTemplateTabs,
+  type DocumentType,
+} from "./ContractTemplateTabs";
 
 type Values = Record<string, string>;
-type Field = { key: string; label: string; type?: 'text' | 'number' | 'integer' | 'date' | 'textarea'; required?: boolean; section?: 'heading'; acroformFieldName?: string };
-type BlockDefinitions = { heading?: { enabled?: boolean }; terms?: { enabled?: boolean; acroformFieldName?: string }; signature?: { enabled?: boolean }; plan?: { enabled?: boolean }; restoration?: { enabled?: boolean; acroformFieldName?: string } };
-type StoredDocument = { lease_contract_document_id: string; document_type: DocumentType; contract_document_template_revision_id: string | null; content_version: number; field_values: Values; workflow_defaults: Values; manually_edited_fields: string[]; desknets_application_id: string | null; terms_text: string; restoration_criteria_text: string; pdf_file_path: string | null; pdf_generated_at: string | null; latest_word_output_revision_id: string | null; latest_formal_output_revision_id: string | null };
-type OutputRevision = { lease_contract_document_output_revision_id: string; content_version: number; status: 'word_generated' | 'formalized' | 'failed'; word_file_path: string | null; pdf_file_path: string | null };
-type Revision = { contract_document_template_revision_id: string; generation_engine?: 'acroform_legacy' | 'document_generation'; field_definitions: Field[]; default_terms_text: string; default_restoration_criteria_text: string; block_definitions: BlockDefinitions };
-type Application = { applicationId: string; title: string; approvedAt: string | null; values: Values; source: Record<string, unknown> };
-type Geometry = { type: 'MultiPolygon'; coordinates: number[][][][] };
-type PlanCandidate = { unitId: string; unitCode: string; floorLabel: string; areaSqm: number | null; revisionId: string; previewPath: string; previewUrl: string; geometry: Geometry };
+type Field = {
+  key: string;
+  label: string;
+  type?: "text" | "number" | "integer" | "date" | "textarea";
+  required?: boolean;
+  section?: "heading";
+  acroformFieldName?: string;
+};
+type BlockDefinitions = {
+  heading?: { enabled?: boolean };
+  terms?: { enabled?: boolean; acroformFieldName?: string };
+  signature?: { enabled?: boolean };
+  plan?: { enabled?: boolean };
+  restoration?: { enabled?: boolean; acroformFieldName?: string };
+};
+type StoredDocument = {
+  lease_contract_document_id: string;
+  document_type: DocumentType;
+  contract_document_template_revision_id: string | null;
+  content_version: number;
+  field_values: Values;
+  workflow_defaults: Values;
+  manually_edited_fields: string[];
+  desknets_application_id: string | null;
+  terms_text: string;
+  restoration_criteria_text: string;
+  pdf_file_path: string | null;
+  pdf_generated_at: string | null;
+  latest_word_output_revision_id: string | null;
+  latest_formal_output_revision_id: string | null;
+};
+type OutputRevision = {
+  lease_contract_document_output_revision_id: string;
+  content_version: number;
+  status: "word_generated" | "formalized" | "failed";
+  word_file_path: string | null;
+  pdf_file_path: string | null;
+};
+type Revision = {
+  contract_document_template_revision_id: string;
+  generation_engine?: "acroform_legacy" | "document_generation";
+  field_definitions: Field[];
+  default_terms_text: string;
+  default_restoration_criteria_text: string;
+  block_definitions: BlockDefinitions;
+};
+type Application = {
+  applicationId: string;
+  title: string;
+  approvedAt: string | null;
+  values: Values;
+  source: Record<string, unknown>;
+};
+type Geometry = { type: "MultiPolygon"; coordinates: number[][][][] };
+type PlanCandidate = {
+  unitId: string;
+  unitCode: string;
+  floorLabel: string;
+  areaSqm: number | null;
+  revisionId: string;
+  previewPath: string;
+  previewUrl: string;
+  geometry: Geometry;
+};
 
 const fallbackFields: Field[] = [
-  { key: 'propertyName', label: '物件名', required: true }, { key: 'propertyAddress', label: '所在地' }, { key: 'unitNames', label: '貸室・区画' }, { key: 'floorLabel', label: '階数', type: 'number' },
-  { key: 'leasedAreaSqm', label: '賃貸面積', type: 'number', required: true }, { key: 'tenantName', label: '賃借人', required: true }, { key: 'tenantSignerName', label: '賃借人署名者名' }, { key: 'usePurpose', label: '使用目的' },
-  { key: 'contractStartDate', label: '契約開始日', type: 'date', required: true }, { key: 'contractEndDate', label: '契約終了日', type: 'date', required: true }, { key: 'monthlyRentAmount', label: '月額賃料', type: 'number' }, { key: 'monthlyCommonChargeAmount', label: '月額共益費', type: 'number' }, { key: 'depositAmount', label: '敷金', type: 'number' }, { key: 'specialProvisions', label: '特約事項', type: 'textarea' },
+  { key: "propertyName", label: "物件名", required: true },
+  { key: "propertyAddress", label: "所在地" },
+  { key: "unitNames", label: "貸室・区画" },
+  { key: "floorLabel", label: "階数", type: "number" },
+  { key: "leasedAreaSqm", label: "賃貸面積", type: "number", required: true },
+  { key: "tenantName", label: "賃借人", required: true },
+  { key: "tenantSignerName", label: "賃借人署名者名" },
+  { key: "usePurpose", label: "使用目的" },
+  {
+    key: "contractStartDate",
+    label: "契約開始日",
+    type: "date",
+    required: true,
+  },
+  { key: "contractEndDate", label: "契約終了日", type: "date", required: true },
+  { key: "monthlyRentAmount", label: "月額賃料", type: "number" },
+  { key: "monthlyCommonChargeAmount", label: "月額共益費", type: "number" },
+  { key: "depositAmount", label: "敷金", type: "number" },
+  { key: "specialProvisions", label: "特約事項", type: "textarea" },
 ];
-const emptyValues = (fields: Field[]) => Object.fromEntries(fields.map((field) => [field.key, '']));
-const requiresPlan = (type: DocumentType) => ['ordinary_lease', 'fixed_term_building_lease'].includes(type);
-const currencyKeys = new Set(['monthlyRentAmount', 'monthlyCommonChargeAmount', 'depositAmount', 'securityDepositAmount', 'keyMoneyAmount', 'guarantorLimitAmount']);
-const currencyInput = (value: string) => value === '' ? '' : Number(value.replace(/,/g, '')).toLocaleString('ja-JP');
-const numericValue = (value: string) => value.replace(/[^0-9.-]/g, '');
-async function renderPlanSnapshot(client: NonNullable<typeof supabase>, group: PlanCandidate[]) {
-  const { data, error } = await client.storage.from('floor-plans').download(group[0].previewPath); if (error || !data) throw new Error(error?.message ?? '平面図を取得できませんでした。');
-  const url = URL.createObjectURL(data); const image = await new Promise<HTMLImageElement>((resolve, reject) => { const item = new Image(); item.onload = () => resolve(item); item.onerror = () => reject(new Error('平面図を描画できませんでした。')); item.src = url; }); URL.revokeObjectURL(url);
-  const canvas = window.document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight; const context = canvas.getContext('2d'); if (!context) throw new Error('平面図の描画領域を作成できませんでした。'); context.drawImage(image, 0, 0);
-  group.forEach((candidate) => candidate.geometry.coordinates.forEach((polygon) => polygon.forEach((ring) => { context.beginPath(); ring.forEach(([x, y], index) => { const px = x * canvas.width; const py = y * canvas.height; if (index) context.lineTo(px, py); else context.moveTo(px, py); }); context.closePath(); context.fillStyle = 'rgba(220, 53, 45, .3)'; context.strokeStyle = '#b42318'; context.lineWidth = Math.max(2, canvas.width / 500); context.fill(); context.stroke(); })));
-  return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('平面図スナップショットを作成できませんでした。')), 'image/png'));
+const emptyValues = (fields: Field[]) =>
+  Object.fromEntries(fields.map((field) => [field.key, ""]));
+const requiresPlan = (type: DocumentType) =>
+  ["ordinary_lease", "fixed_term_building_lease"].includes(type);
+const currencyKeys = new Set([
+  "monthlyRentAmount",
+  "monthlyCommonChargeAmount",
+  "depositAmount",
+  "securityDepositAmount",
+  "keyMoneyAmount",
+  "guarantorLimitAmount",
+]);
+const currencyInput = (value: string) =>
+  value === "" ? "" : Number(value.replace(/,/g, "")).toLocaleString("ja-JP");
+const numericValue = (value: string) => value.replace(/[^0-9.-]/g, "");
+async function renderPlanSnapshot(
+  client: NonNullable<typeof supabase>,
+  group: PlanCandidate[],
+) {
+  const { data, error } = await client.storage
+    .from("floor-plans")
+    .download(group[0].previewPath);
+  if (error || !data)
+    throw new Error(error?.message ?? "平面図を取得できませんでした。");
+  const url = URL.createObjectURL(data);
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const item = new Image();
+    item.onload = () => resolve(item);
+    item.onerror = () => reject(new Error("平面図を描画できませんでした。"));
+    item.src = url;
+  });
+  URL.revokeObjectURL(url);
+  const canvas = window.document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("平面図の描画領域を作成できませんでした。");
+  context.drawImage(image, 0, 0);
+  group.forEach((candidate) =>
+    candidate.geometry.coordinates.forEach((polygon) =>
+      polygon.forEach((ring) => {
+        context.beginPath();
+        ring.forEach(([x, y], index) => {
+          const px = x * canvas.width;
+          const py = y * canvas.height;
+          if (index) context.lineTo(px, py);
+          else context.moveTo(px, py);
+        });
+        context.closePath();
+        context.fillStyle = "rgba(220, 53, 45, .3)";
+        context.strokeStyle = "#b42318";
+        context.lineWidth = Math.max(2, canvas.width / 500);
+        context.fill();
+        context.stroke();
+      }),
+    ),
+  );
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (blob) =>
+        blob
+          ? resolve(blob)
+          : reject(new Error("平面図スナップショットを作成できませんでした。")),
+      "image/png",
+    ),
+  );
 }
 
 export function ContractDocumentPage() {
-  const { contractId = '' } = useParams();
-  const [documentType, setDocumentType] = useState<DocumentType>('ordinary_lease');
+  const { contractId = "" } = useParams();
+  const [documentType, setDocumentType] =
+    useState<DocumentType>("ordinary_lease");
   const [revision, setRevision] = useState<Revision | null>(null);
   const [document, setDocument] = useState<StoredDocument | null>(null);
-  const [outputRevision, setOutputRevision] = useState<OutputRevision | null>(null);
+  const [outputRevision, setOutputRevision] = useState<OutputRevision | null>(
+    null,
+  );
   const [isDirty, setIsDirty] = useState(false);
   const [isPlanDirty, setIsPlanDirty] = useState(false);
-  const [values, setValues] = useState<Values>({}); const [defaults, setDefaults] = useState<Values>({}); const [manualFields, setManualFields] = useState<string[]>([]);
-  const [termsText, setTermsText] = useState(''); const [restorationText, setRestorationText] = useState('');
-  const [applications, setApplications] = useState<Application[]>([]); const [candidates, setCandidates] = useState<PlanCandidate[]>([]); const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [notice, setNotice] = useState(''); const [error, setError] = useState('');
-  const fields = useMemo(() => revision?.field_definitions?.filter((field) => !field.section || field.section === 'heading') ?? fallbackFields, [revision]);
+  const [values, setValues] = useState<Values>({});
+  const [defaults, setDefaults] = useState<Values>({});
+  const [manualFields, setManualFields] = useState<string[]>([]);
+  const [termsText, setTermsText] = useState("");
+  const [restorationText, setRestorationText] = useState("");
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [candidates, setCandidates] = useState<PlanCandidate[]>([]);
+  const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [workflowPdf, setWorkflowPdf] = useState<File | null>(null);
+  const fields = useMemo(
+    () =>
+      revision?.field_definitions?.filter(
+        (field) => !field.section || field.section === "heading",
+      ) ?? fallbackFields,
+    [revision],
+  );
 
-  useEffect(() => { void load(); }, [contractId]);
+  useEffect(() => {
+    void load();
+  }, [contractId]);
 
   const load = async () => {
-    if (!supabase || !contractId) return; setLoading(true); setError('');
+    if (!supabase || !contractId) return;
+    setLoading(true);
+    setError("");
     const client = supabase;
-    const [{ data: contract, error: contractError }, { data: stored, error: documentError }] = await Promise.all([
-      client.from('lease_contract').select('lease_contract_id, contract_start_date, contract_end_date, payment_terms, notes, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, unit:unit_master(unit_id, unit_code, property_id, floor_label, rentable_area_sqm, asset:asset_master(asset_name, address, building_structure, lot_address)))').eq('lease_contract_id', contractId).maybeSingle(),
-      client.from('lease_contract_document').select('lease_contract_document_id, document_type, contract_document_template_revision_id, content_version, field_values, workflow_defaults, manually_edited_fields, desknets_application_id, terms_text, restoration_criteria_text, pdf_file_path, pdf_generated_at, latest_word_output_revision_id, latest_formal_output_revision_id').eq('lease_contract_id', contractId).maybeSingle(),
+    const [
+      { data: contract, error: contractError },
+      { data: stored, error: documentError },
+    ] = await Promise.all([
+      client
+        .from("lease_contract")
+        .select(
+          "lease_contract_id, contract_start_date, contract_end_date, payment_terms, notes, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, unit:unit_master(unit_id, unit_code, property_id, floor_label, rentable_area_sqm, asset:asset_master(asset_name, address, building_structure, lot_address)))",
+        )
+        .eq("lease_contract_id", contractId)
+        .maybeSingle(),
+      client
+        .from("lease_contract_document")
+        .select(
+          "lease_contract_document_id, document_type, contract_document_template_revision_id, content_version, field_values, workflow_defaults, manually_edited_fields, desknets_application_id, terms_text, restoration_criteria_text, pdf_file_path, pdf_generated_at, latest_word_output_revision_id, latest_formal_output_revision_id",
+        )
+        .eq("lease_contract_id", contractId)
+        .maybeSingle(),
     ]);
-    if (contractError || documentError || !contract) { setError(`契約書データを読み込めませんでした: ${(contractError ?? documentError)?.message ?? '契約がありません。'}`); setLoading(false); return; }
-    const existing = stored as StoredDocument | null; const type = existing?.document_type ?? 'ordinary_lease'; setDocumentType(type); setDocument(existing);
+    if (contractError || documentError || !contract) {
+      setError(
+        `契約書データを読み込めませんでした: ${(contractError ?? documentError)?.message ?? "契約がありません。"}`,
+      );
+      setLoading(false);
+      return;
+    }
+    const existing = stored as StoredDocument | null;
+    const type = existing?.document_type ?? "ordinary_lease";
+    setDocumentType(type);
+    setDocument(existing);
     let activeRevisionId = existing?.contract_document_template_revision_id;
-    if (!activeRevisionId) { const { data: template } = await client.from('contract_document_template').select('active_revision_id').eq('document_type', type).maybeSingle(); activeRevisionId = template?.active_revision_id ?? null; }
-    const { data: revisionData, error: revisionError } = activeRevisionId ? await client.from('contract_document_template_revision').select('contract_document_template_revision_id, generation_engine, field_definitions, default_terms_text, default_restoration_criteria_text, block_definitions').eq('contract_document_template_revision_id', activeRevisionId).single() : { data: null, error: null };
-    if (revisionError || !revisionData) setError('有効な契約書ひな型が登録されていません。');
-    const loadedRevision = revisionData as Revision | null; setRevision(loadedRevision);
-    const units = ((contract as any).contract_units ?? []); const unit = units[0]; const unitRows = units.map((item: any) => item.unit).filter(Boolean); const leasedArea = units.reduce((sum: number, item: any) => sum + Number(item.leased_area_sqm ?? item.unit?.rentable_area_sqm ?? 0), 0);
-    const rentalDefaults: Values = { ...emptyValues(loadedRevision?.field_definitions ?? fallbackFields), propertyName: unit?.unit?.asset?.asset_name ?? '', propertyAddress: unit?.unit?.asset?.address ?? '', propertyLotAddress: unit?.unit?.asset?.lot_address ?? '', buildingStructure: unit?.unit?.asset?.building_structure ?? '', unitNames: unitRows.map((item: any) => item.unit_code).join(', '), floorLabel: String(unit?.unit?.floor_label ?? '').match(/\d+/)?.[0] ?? '', leasedAreaSqm: leasedArea ? String(leasedArea) : '', tenantName: (contract as any).tenant?.tenant_name ?? '', tenantSignerName: (contract as any).tenant?.tenant_name ?? '', usePurpose: type === 'parking' ? '駐車場' : type === 'warehouse' ? '倉庫' : '事務所', contractStartDate: contract.contract_start_date ?? '', contractEndDate: contract.contract_end_date ?? '', monthlyRentAmount: unit?.monthly_rent_amount?.toString() ?? '', monthlyCommonChargeAmount: unit?.monthly_common_charge_amount?.toString() ?? '', depositAmount: unit?.deposit_amount?.toString() ?? '', parkingContractCount: type === 'parking' ? String(Math.max(unitRows.length, 1)) : '', specialProvisions: contract.notes ?? '', rentPaymentDue: contract.payment_terms ?? '' };
+    if (!activeRevisionId) {
+      const { data: template } = await client
+        .from("contract_document_template")
+        .select("active_revision_id")
+        .eq("document_type", type)
+        .maybeSingle();
+      activeRevisionId = template?.active_revision_id ?? null;
+    }
+    const { data: revisionData, error: revisionError } = activeRevisionId
+      ? await client
+          .from("contract_document_template_revision")
+          .select(
+            "contract_document_template_revision_id, generation_engine, field_definitions, default_terms_text, default_restoration_criteria_text, block_definitions",
+          )
+          .eq("contract_document_template_revision_id", activeRevisionId)
+          .single()
+      : { data: null, error: null };
+    if (revisionError || !revisionData)
+      setError("有効な契約書ひな型が登録されていません。");
+    const loadedRevision = revisionData as Revision | null;
+    setRevision(loadedRevision);
+    const units = (contract as any).contract_units ?? [];
+    const unit = units[0];
+    const unitRows = units.map((item: any) => item.unit).filter(Boolean);
+    const leasedArea = units.reduce(
+      (sum: number, item: any) =>
+        sum + Number(item.leased_area_sqm ?? item.unit?.rentable_area_sqm ?? 0),
+      0,
+    );
+    const rentalDefaults: Values = {
+      ...emptyValues(loadedRevision?.field_definitions ?? fallbackFields),
+      propertyName: unit?.unit?.asset?.asset_name ?? "",
+      propertyAddress: unit?.unit?.asset?.address ?? "",
+      propertyLotAddress: unit?.unit?.asset?.lot_address ?? "",
+      buildingStructure: unit?.unit?.asset?.building_structure ?? "",
+      unitNames: unitRows.map((item: any) => item.unit_code).join(", "),
+      floorLabel: String(unit?.unit?.floor_label ?? "").match(/\d+/)?.[0] ?? "",
+      leasedAreaSqm: leasedArea ? String(leasedArea) : "",
+      tenantName: (contract as any).tenant?.tenant_name ?? "",
+      tenantSignerName: (contract as any).tenant?.tenant_name ?? "",
+      usePurpose:
+        type === "parking"
+          ? "駐車場"
+          : type === "warehouse"
+            ? "倉庫"
+            : "事務所",
+      contractStartDate: contract.contract_start_date ?? "",
+      contractEndDate: contract.contract_end_date ?? "",
+      monthlyRentAmount: unit?.monthly_rent_amount?.toString() ?? "",
+      monthlyCommonChargeAmount:
+        unit?.monthly_common_charge_amount?.toString() ?? "",
+      depositAmount: unit?.deposit_amount?.toString() ?? "",
+      parkingContractCount:
+        type === "parking" ? String(Math.max(unitRows.length, 1)) : "",
+      specialProvisions: contract.notes ?? "",
+      rentPaymentDue: contract.payment_terms ?? "",
+    };
     const savedTerms = existing?.terms_text?.trim();
     const savedRestoration = existing?.restoration_criteria_text?.trim();
-    setValues(existing ? { ...rentalDefaults, ...existing.field_values } : rentalDefaults); setDefaults(existing?.workflow_defaults ?? rentalDefaults); setManualFields(existing?.manually_edited_fields ?? []); setTermsText(savedTerms || loadedRevision?.default_terms_text || ''); setRestorationText(savedRestoration || loadedRevision?.default_restoration_criteria_text || ''); setIsDirty(false); setIsPlanDirty(false);
-    if (existing) { const { data: currentOutput } = await client.from('lease_contract_document_output_revision').select('lease_contract_document_output_revision_id, content_version, status, word_file_path, pdf_file_path').eq('lease_contract_document_id', existing.lease_contract_document_id).eq('content_version', existing.content_version).maybeSingle(); setOutputRevision(currentOutput as OutputRevision | null); } else setOutputRevision(null);
-    if (existing) { const { data: plans } = await client.from('lease_contract_document_plan').select('target_unit_ids').eq('lease_contract_document_id', existing.lease_contract_document_id); setSelectedUnitIds((plans ?? []).flatMap((row: any) => row.target_unit_ids ?? [])); }
-    const { data: revisionRows } = await client.from('floor_plan_revision').select('floor_plan_revision_id, preview_file_path, floor_plan:floor_plan_id(property_id, floor_label)').eq('is_current', true);
-    const relevant = (revisionRows ?? []).filter((row: any) => unitRows.some((item: any) => item.property_id === row.floor_plan?.property_id && item.floor_label === row.floor_plan?.floor_label));
-    const revisionIds = relevant.map((row: any) => row.floor_plan_revision_id); const { data: featureRows } = revisionIds.length ? await client.from('floor_plan_map_features').select('floor_plan_revision_id, unit_id, geometry_geojson').in('floor_plan_revision_id', revisionIds) : { data: [] as any[] }; const features = new Map((featureRows ?? []).map((row: any) => [`${row.floor_plan_revision_id}:${row.unit_id}`, row.geometry_geojson as Geometry]));
-    setCandidates((await Promise.all(unitRows.flatMap((item: any) => relevant.filter((row: any) => row.floor_plan?.property_id === item.property_id && row.floor_plan?.floor_label === item.floor_label).map(async (row: any) => { const geometry = features.get(`${row.floor_plan_revision_id}:${item.unit_id}`); if (!geometry) return null; const { data: signed } = await client.storage.from('floor-plans').createSignedUrl(row.preview_file_path, 3600); return { unitId: item.unit_id, unitCode: item.unit_code, floorLabel: item.floor_label, areaSqm: Number(units.find((contractUnit: any) => contractUnit.unit?.unit_id === item.unit_id)?.leased_area_sqm ?? item.rentable_area_sqm ?? 0) || null, revisionId: row.floor_plan_revision_id, previewPath: row.preview_file_path, previewUrl: signed?.signedUrl ?? '', geometry }; })))).filter(Boolean) as PlanCandidate[]);
+    setValues(
+      existing
+        ? { ...rentalDefaults, ...existing.field_values }
+        : rentalDefaults,
+    );
+    setDefaults(existing?.workflow_defaults ?? rentalDefaults);
+    setManualFields(existing?.manually_edited_fields ?? []);
+    setTermsText(savedTerms || loadedRevision?.default_terms_text || "");
+    setRestorationText(
+      savedRestoration ||
+        loadedRevision?.default_restoration_criteria_text ||
+        "",
+    );
+    setIsDirty(false);
+    setIsPlanDirty(false);
+    if (existing) {
+      const { data: currentOutput } = await client
+        .from("lease_contract_document_output_revision")
+        .select(
+          "lease_contract_document_output_revision_id, content_version, status, word_file_path, pdf_file_path",
+        )
+        .eq("lease_contract_document_id", existing.lease_contract_document_id)
+        .eq("content_version", existing.content_version)
+        .maybeSingle();
+      setOutputRevision(currentOutput as OutputRevision | null);
+    } else setOutputRevision(null);
+    if (existing) {
+      const { data: plans } = await client
+        .from("lease_contract_document_plan")
+        .select("target_unit_ids")
+        .eq("lease_contract_document_id", existing.lease_contract_document_id);
+      setSelectedUnitIds(
+        (plans ?? []).flatMap((row: any) => row.target_unit_ids ?? []),
+      );
+    }
+    const { data: revisionRows } = await client
+      .from("floor_plan_revision")
+      .select(
+        "floor_plan_revision_id, preview_file_path, floor_plan:floor_plan_id(property_id, floor_label)",
+      )
+      .eq("is_current", true);
+    const relevant = (revisionRows ?? []).filter((row: any) =>
+      unitRows.some(
+        (item: any) =>
+          item.property_id === row.floor_plan?.property_id &&
+          item.floor_label === row.floor_plan?.floor_label,
+      ),
+    );
+    const revisionIds = relevant.map((row: any) => row.floor_plan_revision_id);
+    const { data: featureRows } = revisionIds.length
+      ? await client
+          .from("floor_plan_map_features")
+          .select("floor_plan_revision_id, unit_id, geometry_geojson")
+          .in("floor_plan_revision_id", revisionIds)
+      : { data: [] as any[] };
+    const features = new Map(
+      (featureRows ?? []).map((row: any) => [
+        `${row.floor_plan_revision_id}:${row.unit_id}`,
+        row.geometry_geojson as Geometry,
+      ]),
+    );
+    setCandidates(
+      (
+        await Promise.all(
+          unitRows.flatMap((item: any) =>
+            relevant
+              .filter(
+                (row: any) =>
+                  row.floor_plan?.property_id === item.property_id &&
+                  row.floor_plan?.floor_label === item.floor_label,
+              )
+              .map(async (row: any) => {
+                const geometry = features.get(
+                  `${row.floor_plan_revision_id}:${item.unit_id}`,
+                );
+                if (!geometry) return null;
+                const { data: signed } = await client.storage
+                  .from("floor-plans")
+                  .createSignedUrl(row.preview_file_path, 3600);
+                return {
+                  unitId: item.unit_id,
+                  unitCode: item.unit_code,
+                  floorLabel: item.floor_label,
+                  areaSqm:
+                    Number(
+                      units.find(
+                        (contractUnit: any) =>
+                          contractUnit.unit?.unit_id === item.unit_id,
+                      )?.leased_area_sqm ??
+                        item.rentable_area_sqm ??
+                        0,
+                    ) || null,
+                  revisionId: row.floor_plan_revision_id,
+                  previewPath: row.preview_file_path,
+                  previewUrl: signed?.signedUrl ?? "",
+                  geometry,
+                };
+              }),
+          ),
+        )
+      ).filter(Boolean) as PlanCandidate[],
+    );
     setLoading(false);
   };
 
   const savePlans = async (stored: StoredDocument) => {
     if (!supabase || !requiresPlan(documentType) || !isPlanDirty) return true;
     const client = supabase;
-    const selected = candidates.filter((candidate) => selectedUnitIds.includes(candidate.unitId));
-    const groups = [...selected.reduce((map, candidate) => { const group = map.get(candidate.revisionId) ?? []; group.push(candidate); map.set(candidate.revisionId, group); return map; }, new Map<string, PlanCandidate[]>()).entries()];
-    const { error: removeError } = await client.from('lease_contract_document_plan').delete().eq('lease_contract_document_id', stored.lease_contract_document_id); if (removeError) { setError(`対象箇所図を更新できませんでした: ${removeError.message}`); return false; }
-    try { const rows = await Promise.all(groups.map(async ([revisionId, group]) => { const snapshot = await renderPlanSnapshot(client, group); const path = `${contractId}/plan-snapshots/${revisionId}.png`; const { error: uploadError } = await client.storage.from('contract-documents').upload(path, snapshot, { contentType: 'image/png', upsert: true }); if (uploadError) throw uploadError; return { lease_contract_document_id: stored.lease_contract_document_id, floor_plan_revision_id: revisionId, target_unit_ids: group.map((candidate) => candidate.unitId), snapshot_file_path: path }; })); if (rows.length) { const { error: insertError } = await client.from('lease_contract_document_plan').insert(rows); if (insertError) throw insertError; } setIsPlanDirty(false); return true; } catch (planError) { setError(`対象箇所図を保存できませんでした: ${planError instanceof Error ? planError.message : String(planError)}`); return false; }
+    const selected = candidates.filter((candidate) =>
+      selectedUnitIds.includes(candidate.unitId),
+    );
+    const groups = [
+      ...selected
+        .reduce((map, candidate) => {
+          const group = map.get(candidate.revisionId) ?? [];
+          group.push(candidate);
+          map.set(candidate.revisionId, group);
+          return map;
+        }, new Map<string, PlanCandidate[]>())
+        .entries(),
+    ];
+    const { error: removeError } = await client
+      .from("lease_contract_document_plan")
+      .delete()
+      .eq("lease_contract_document_id", stored.lease_contract_document_id);
+    if (removeError) {
+      setError(`対象箇所図を更新できませんでした: ${removeError.message}`);
+      return false;
+    }
+    try {
+      const rows = await Promise.all(
+        groups.map(async ([revisionId, group]) => {
+          const snapshot = await renderPlanSnapshot(client, group);
+          const path = `${contractId}/plan-snapshots/${revisionId}.png`;
+          const { error: uploadError } = await client.storage
+            .from("contract-documents")
+            .upload(path, snapshot, { contentType: "image/png", upsert: true });
+          if (uploadError) throw uploadError;
+          return {
+            lease_contract_document_id: stored.lease_contract_document_id,
+            floor_plan_revision_id: revisionId,
+            target_unit_ids: group.map((candidate) => candidate.unitId),
+            snapshot_file_path: path,
+          };
+        }),
+      );
+      if (rows.length) {
+        const { error: insertError } = await client
+          .from("lease_contract_document_plan")
+          .insert(rows);
+        if (insertError) throw insertError;
+      }
+      setIsPlanDirty(false);
+      return true;
+    } catch (planError) {
+      setError(
+        `対象箇所図を保存できませんでした: ${planError instanceof Error ? planError.message : String(planError)}`,
+      );
+      return false;
+    }
   };
   const save = async () => {
-    if (!supabase || !revision) return null; setSaving(true); setError('');
-    const { data, error: saveError } = await supabase.from('lease_contract_document').upsert({ lease_contract_id: contractId, document_type: documentType, contract_document_template_revision_id: revision.contract_document_template_revision_id, field_values: values, workflow_defaults: defaults, manually_edited_fields: manualFields, desknets_application_id: document?.desknets_application_id ?? null, terms_text: termsText, restoration_criteria_text: restorationText }, { onConflict: 'lease_contract_id' }).select('lease_contract_document_id, document_type, contract_document_template_revision_id, content_version, field_values, workflow_defaults, manually_edited_fields, desknets_application_id, terms_text, restoration_criteria_text, pdf_file_path, pdf_generated_at, latest_word_output_revision_id, latest_formal_output_revision_id').single();
-    setSaving(false); if (saveError) { setError(`保存できませんでした: ${saveError.message}`); return null; } const stored = data as StoredDocument; setDocument(stored); if (!await savePlans(stored)) return null; setIsDirty(false); setNotice('契約書データを保存しました。'); return stored;
+    if (!supabase || !revision) return null;
+    setSaving(true);
+    setError("");
+    const { data, error: saveError } = await supabase
+      .from("lease_contract_document")
+      .upsert(
+        {
+          lease_contract_id: contractId,
+          document_type: documentType,
+          contract_document_template_revision_id:
+            revision.contract_document_template_revision_id,
+          field_values: values,
+          workflow_defaults: defaults,
+          manually_edited_fields: manualFields,
+          desknets_application_id: document?.desknets_application_id ?? null,
+          terms_text: termsText,
+          restoration_criteria_text: restorationText,
+        },
+        { onConflict: "lease_contract_id" },
+      )
+      .select(
+        "lease_contract_document_id, document_type, contract_document_template_revision_id, content_version, field_values, workflow_defaults, manually_edited_fields, desknets_application_id, terms_text, restoration_criteria_text, pdf_file_path, pdf_generated_at, latest_word_output_revision_id, latest_formal_output_revision_id",
+      )
+      .single();
+    setSaving(false);
+    if (saveError) {
+      setError(`保存できませんでした: ${saveError.message}`);
+      return null;
+    }
+    const stored = data as StoredDocument;
+    setDocument(stored);
+    if (!(await savePlans(stored))) return null;
+    setIsDirty(false);
+    setNotice("契約書データを保存しました。");
+    return stored;
   };
-  const update = (key: string, value: string) => { setValues((current) => ({ ...current, [key]: currencyKeys.has(key) ? numericValue(value) : value })); setManualFields((current) => current.includes(key) ? current : [...current, key]); setIsDirty(true); };
-  const applyApplication = async (application: Application) => { const nextDefaults = { ...defaults, ...application.values }; const nextValues = { ...values }; Object.entries(application.values).forEach(([key, value]) => { if (!manualFields.includes(key)) nextValues[key] = value; }); setValues(nextValues); setDefaults(nextDefaults); setDocument((current) => current ? { ...current, desknets_application_id: application.applicationId } : current); setIsDirty(true); };
-  const loadApplications = async () => { if (!supabase) return; const { data, error: loadError } = await supabase.functions.invoke('desknets-workflow-applications'); if (loadError || data?.error) setError(data?.error ?? `申請を取得できませんでした: ${loadError?.message ?? ''}`); else setApplications(data.applications ?? []); };
-  const openFile = async (path: string, label: string) => { if (!supabase) return; const { data, error: signedError } = await supabase.storage.from('contract-documents').createSignedUrl(path, 60); if (signedError || !data?.signedUrl) { setError(`${label}を開けませんでした: ${signedError?.message ?? ''}`); return; } window.open(data.signedUrl, '_blank', 'noopener,noreferrer'); };
-  const generateWord = async () => { if (!supabase) return; const planRequired = requiresPlan(documentType) || revision?.block_definitions?.plan?.enabled === true; if (planRequired && !selectedUnitIds.length) { setError('Wordを生成する前に対象区画を選択してください。'); return; } const saved = await save(); if (!saved) return; setSaving(true); const { data, error: generationError } = await supabase.functions.invoke('generate-contract-word', { body: { leaseContractId: contractId } }); setSaving(false); if (generationError || data?.error || !data?.wordFilePath) { const body = await (generationError as { context?: Response } | null)?.context?.clone().json().catch(() => null) as { error?: string } | null; setError(data?.error ?? body?.error ?? `Wordを生成できませんでした: ${generationError?.message ?? ''}`); return; } setOutputRevision({ lease_contract_document_output_revision_id: data.outputRevisionId, content_version: data.contentVersion, status: 'word_generated', word_file_path: data.wordFilePath, pdf_file_path: null }); setNotice('確認用Wordを生成しました。内容を変更した場合は、正式PDFの前にWordを再生成してください。'); await openFile(data.wordFilePath, 'Word'); await load(); };
-  const finalizePdf = async () => { if (!supabase) return; setSaving(true); const { data, error: generationError } = await supabase.functions.invoke('finalize-contract-pdf', { body: { leaseContractId: contractId } }); setSaving(false); if (generationError || data?.error || !data?.pdfFilePath) { const body = await (generationError as { context?: Response } | null)?.context?.clone().json().catch(() => null) as { error?: string } | null; setError(data?.error ?? body?.error ?? `正式PDFを出力できませんでした: ${generationError?.message ?? ''}`); return; } setOutputRevision((current) => current ? { ...current, status: 'formalized', pdf_file_path: data.pdfFilePath } : current); setNotice('正式PDFを履歴として保存しました。'); await openFile(data.pdfFilePath, '正式PDF'); await load(); };
-  const selectUnit = (candidate: PlanCandidate, checked: boolean) => { const next = checked ? [...selectedUnitIds, candidate.unitId] : selectedUnitIds.filter((id) => id !== candidate.unitId); const selected = candidates.filter((item) => next.includes(item.unitId)); setSelectedUnitIds(next); setIsPlanDirty(true); update('unitNames', selected.map((item) => item.unitCode).join(', ')); update('floorLabel', String(selected[0]?.floorLabel ?? '').match(/\d+/)?.[0] ?? ''); update('leasedAreaSqm', selected.length ? String(selected.reduce((sum, item) => sum + (item.areaSqm ?? 0), 0)) : ''); };
+  const update = (key: string, value: string) => {
+    setValues((current) => ({
+      ...current,
+      [key]: currencyKeys.has(key) ? numericValue(value) : value,
+    }));
+    setManualFields((current) =>
+      current.includes(key) ? current : [...current, key],
+    );
+    setIsDirty(true);
+  };
+  const applyApplication = async (application: Application) => {
+    const nextDefaults = { ...defaults, ...application.values };
+    const nextValues = { ...values };
+    Object.entries(application.values).forEach(([key, value]) => {
+      if (!manualFields.includes(key)) nextValues[key] = value;
+    });
+    setValues(nextValues);
+    setDefaults(nextDefaults);
+    setDocument((current) =>
+      current
+        ? { ...current, desknets_application_id: application.applicationId }
+        : current,
+    );
+    setIsDirty(true);
+  };
+  const loadApplications = async () => {
+    if (!supabase) return;
+    const { data, error: loadError } = await supabase.functions.invoke(
+      "desknets-workflow-applications",
+    );
+    if (loadError || data?.error)
+      setError(
+        data?.error ??
+          `申請を取得できませんでした: ${loadError?.message ?? ""}`,
+      );
+    else setApplications(data.applications ?? []);
+  };
+  const openFile = async (path: string, label: string) => {
+    if (!supabase) return;
+    const { data, error: signedError } = await supabase.storage
+      .from("contract-documents")
+      .createSignedUrl(path, 60);
+    if (signedError || !data?.signedUrl) {
+      setError(`${label}を開けませんでした: ${signedError?.message ?? ""}`);
+      return;
+    }
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+  const generateWord = async () => {
+    if (!supabase) return;
+    const planRequired =
+      requiresPlan(documentType) ||
+      revision?.block_definitions?.plan?.enabled === true;
+    if (planRequired && !selectedUnitIds.length) {
+      setError("Wordを生成する前に対象区画を選択してください。");
+      return;
+    }
+    const saved = await save();
+    if (!saved) return;
+    setSaving(true);
+    const { data, error: generationError } = await supabase.functions.invoke(
+      "generate-contract-word",
+      { body: { leaseContractId: contractId } },
+    );
+    setSaving(false);
+    if (generationError || data?.error || !data?.wordFilePath) {
+      const body = (await (
+        generationError as { context?: Response } | null
+      )?.context
+        ?.clone()
+        .json()
+        .catch(() => null)) as { error?: string } | null;
+      setError(
+        data?.error ??
+          body?.error ??
+          `Wordを生成できませんでした: ${generationError?.message ?? ""}`,
+      );
+      return;
+    }
+    setOutputRevision({
+      lease_contract_document_output_revision_id: data.outputRevisionId,
+      content_version: data.contentVersion,
+      status: "word_generated",
+      word_file_path: data.wordFilePath,
+      pdf_file_path: null,
+    });
+    setNotice(
+      "確認用Wordを生成しました。内容を変更した場合は、正式PDFの前にWordを再生成してください。",
+    );
+    await openFile(data.wordFilePath, "Word");
+    await load();
+  };
+  const finalizePdf = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    const { data, error: generationError } = await supabase.functions.invoke(
+      "finalize-contract-pdf",
+      { body: { leaseContractId: contractId } },
+    );
+    setSaving(false);
+    if (generationError || data?.error || !data?.pdfFilePath) {
+      const body = (await (
+        generationError as { context?: Response } | null
+      )?.context
+        ?.clone()
+        .json()
+        .catch(() => null)) as { error?: string } | null;
+      setError(
+        data?.error ??
+          body?.error ??
+          `正式PDFを出力できませんでした: ${generationError?.message ?? ""}`,
+      );
+      return;
+    }
+    setOutputRevision((current) =>
+      current
+        ? { ...current, status: "formalized", pdf_file_path: data.pdfFilePath }
+        : current,
+    );
+    setNotice("正式PDFを履歴として保存しました。");
+    await openFile(data.pdfFilePath, "正式PDF");
+    await load();
+  };
+  const uploadWorkflowPdf = async () => {
+    if (!supabase || !workflowPdf || !document) return;
+    setSaving(true);
+    setError("");
+    const path = `${contractId}/workflow/${Date.now()}-${workflowPdf.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const uploaded = await supabase.storage
+      .from("contract-documents")
+      .upload(path, workflowPdf, {
+        contentType: workflowPdf.type || "application/pdf",
+        upsert: false,
+      });
+    if (uploaded.error) {
+      setSaving(false);
+      setError(`PDFを保存できませんでした: ${uploaded.error.message}`);
+      return;
+    }
+    const updated = await supabase
+      .from("lease_contract_document")
+      .update({
+        pdf_file_path: path,
+        workflow_pdf_uploaded_at: new Date().toISOString(),
+        workflow_pdf_uploaded_by:
+          (await supabase.auth.getUser()).data.user?.id ?? null,
+      })
+      .eq("lease_contract_document_id", document.lease_contract_document_id);
+    if (updated.error) {
+      setSaving(false);
+      setError(`PDF情報を保存できませんでした: ${updated.error.message}`);
+      return;
+    }
+    const history = await supabase
+      .from("lease_contract_document_pdf_history")
+      .insert({
+        lease_contract_document_id: document.lease_contract_document_id,
+        pdf_file_path: path,
+        uploaded_by: (await supabase.auth.getUser()).data.user?.id ?? null,
+      });
+    if (history.error) {
+      setSaving(false);
+      setError(`PDFの履歴を保存できませんでした: ${history.error.message}`);
+      return;
+    }
+    setWorkflowPdf(null);
+    setSaving(false);
+    setNotice("移行用PDFを履歴付きで保存しました。");
+    await load();
+  };
+  const completeWorkflowDocument = async () => {
+    if (!supabase) return;
+    setSaving(true);
+    const result = await supabase.rpc("complete_contract_document_workflow", {
+      p_lease_contract_id: contractId,
+    });
+    setSaving(false);
+    if (result.error)
+      setError(`契約書作成完了を保存できませんでした: ${result.error.message}`);
+    else setNotice("契約書作成完了として登録しました。");
+  };
+  const selectUnit = (candidate: PlanCandidate, checked: boolean) => {
+    const next = checked
+      ? [...selectedUnitIds, candidate.unitId]
+      : selectedUnitIds.filter((id) => id !== candidate.unitId);
+    const selected = candidates.filter((item) => next.includes(item.unitId));
+    setSelectedUnitIds(next);
+    setIsPlanDirty(true);
+    update("unitNames", selected.map((item) => item.unitCode).join(", "));
+    update(
+      "floorLabel",
+      String(selected[0]?.floorLabel ?? "").match(/\d+/)?.[0] ?? "",
+    );
+    update(
+      "leasedAreaSqm",
+      selected.length
+        ? String(selected.reduce((sum, item) => sum + (item.areaSqm ?? 0), 0))
+        : "",
+    );
+  };
 
-  if (loading) return <section className="contract-document-page"><p>契約書データを読み込み中です…</p></section>;
-  const blocks = revision?.block_definitions ?? {}; const planVisible = requiresPlan(documentType) || blocks.plan?.enabled === true;
-  const wordIsCurrent = !isDirty && Boolean(outputRevision?.word_file_path && outputRevision.content_version === document?.content_version);
-  const formalPdfIsCurrent = Boolean(outputRevision?.status === 'formalized' && outputRevision.pdf_file_path && outputRevision.content_version === document?.content_version);
-  return <section className="contract-document-page"><header className="document-heading"><div><p className="section-kicker">CONTRACT DOCUMENT</p><h2>契約書作成</h2><p>フォームを正本として保存し、確認用Wordを生成してから正式PDFを確定します。</p></div><div><Link className="secondary-button" to="/contracts">契約一覧へ戻る</Link><button className="primary-button" onClick={() => void generateWord()} disabled={saving || !revision}>{saving ? '処理中…' : 'Wordを生成'}</button></div></header><ContractTemplateTabs contractId={contractId} currentType={documentType} onChanged={() => void load()} />{!wordIsCurrent && document && <p className="document-message">内容が変更されています。正式PDFを出力する前にWordを再生成してください。</p>}{error && <p className="document-message error">{error}</p>}{notice && <p className="document-message">{notice}</p>}<div className="document-editor">
-    <section className="document-panel"><header><div><h3>頭書ブロック</h3><p>DeskNet’s・契約・物件データを初期転記します。</p></div><button className="secondary-button" onClick={() => void loadApplications()}>申請を取得</button></header>{applications.length > 0 && <div className="application-list">{applications.map((item) => <button key={item.applicationId} onClick={() => void applyApplication(item)}><strong>{item.title}</strong><span>申請ID: {item.applicationId}</span></button>)}</div>}<div className="document-form">{fields.map((field) => <label key={field.key} className={field.type === 'textarea' ? 'full-width' : ''}>{field.label}{field.required && <b>必須</b>}{field.type === 'textarea' ? <textarea rows={4} value={values[field.key] ?? ''} onChange={(event) => update(field.key, event.target.value)} /> : <input type={currencyKeys.has(field.key) ? 'text' : field.type === 'integer' ? 'number' : field.type ?? 'text'} inputMode={currencyKeys.has(field.key) ? 'numeric' : undefined} value={currencyKeys.has(field.key) ? currencyInput(values[field.key] ?? '') : values[field.key] ?? ''} onChange={(event) => update(field.key, event.target.value)} />}</label>)}</div></section>
-    {(blocks.terms?.enabled ?? true) && <section className="document-panel"><header><div><h3>約款ブロック</h3><p>ひな型版の標準本文を契約ごとに編集できます。</p></div></header><textarea className="document-long-text" rows={18} value={termsText} onChange={(event) => { setTermsText(event.target.value); setIsDirty(true); }} /></section>}
-    {(blocks.signature?.enabled ?? true) && <section className="document-panel"><header><div><h3>署名・押印ブロック</h3><p>PDFひな型上の署名・押印枠を使用します。画像・電子署名の登録は行いません。</p></div></header></section>}
-    {planVisible && <section className="document-panel plan-selection"><header><div><h3>対象箇所図ブロック</h3><p>契約対象の区画を選択します。</p></div></header>{candidates.length ? <div className="plan-candidates">{candidates.map((candidate) => <label key={`${candidate.revisionId}-${candidate.unitId}`}><input type="checkbox" checked={selectedUnitIds.includes(candidate.unitId)} onChange={(event) => selectUnit(candidate, event.target.checked)} /> <span>{candidate.floorLabel} / {candidate.unitCode}</span>{candidate.previewUrl && <a href={candidate.previewUrl} target="_blank" rel="noreferrer">図面を確認</a>}</label>)}</div> : <p className="plan-empty">対象区画に対応する平面図がありません。</p>}</section>}
-    {(blocks.restoration?.enabled ?? true) && <section className="document-panel"><header><div><h3>別表ブロック</h3><p>原状回復工事基準を契約ごとに編集できます。</p></div></header><textarea className="document-long-text" rows={14} value={restorationText} onChange={(event) => { setRestorationText(event.target.value); setIsDirty(true); }} /></section>}
-    <footer className="document-actions"><button className="secondary-button" onClick={() => void save()} disabled={saving || !revision}>入力内容を保存</button>{wordIsCurrent && outputRevision?.word_file_path && <button className="secondary-button" onClick={() => void openFile(outputRevision.word_file_path!, 'Word')} disabled={saving}>最新Wordを開く</button>}<button className="primary-button" onClick={() => void finalizePdf()} disabled={saving || !wordIsCurrent}>正式PDFを出力</button>{formalPdfIsCurrent && outputRevision?.pdf_file_path && <button className="secondary-button" onClick={() => void openFile(outputRevision.pdf_file_path!, '正式PDF')} disabled={saving}>最新正式PDFを開く</button>}</footer>
-  </div></section>;
+  if (loading)
+    return (
+      <section className="contract-document-page">
+        <p>契約書データを読み込み中です…</p>
+      </section>
+    );
+  const blocks = revision?.block_definitions ?? {};
+  const planVisible =
+    requiresPlan(documentType) || blocks.plan?.enabled === true;
+  const wordIsCurrent =
+    !isDirty &&
+    Boolean(
+      outputRevision?.word_file_path &&
+      outputRevision.content_version === document?.content_version,
+    );
+  const formalPdfIsCurrent = Boolean(
+    outputRevision?.status === "formalized" &&
+    outputRevision.pdf_file_path &&
+    outputRevision.content_version === document?.content_version,
+  );
+  return (
+    <section className="contract-document-page">
+      <header className="document-heading">
+        <div>
+          <p className="section-kicker">CONTRACT DOCUMENT</p>
+          <h2>契約書作成</h2>
+          <p>
+            フォームを正本として保存し、確認用Wordを生成してから正式PDFを確定します。
+          </p>
+        </div>
+        <div>
+          <Link className="secondary-button" to="/contracts">
+            契約一覧へ戻る
+          </Link>
+          <button
+            className="primary-button"
+            onClick={() => void generateWord()}
+            disabled={saving || !revision}
+          >
+            {saving ? "処理中…" : "Wordを生成"}
+          </button>
+        </div>
+      </header>
+      <ContractTemplateTabs
+        contractId={contractId}
+        currentType={documentType}
+        onChanged={() => void load()}
+      />
+      {!wordIsCurrent && document && (
+        <p className="document-message">
+          内容が変更されています。正式PDFを出力する前にWordを再生成してください。
+        </p>
+      )}
+      {error && <p className="document-message error">{error}</p>}
+      {notice && <p className="document-message">{notice}</p>}
+      <div className="document-editor">
+        <section className="document-panel">
+          <header>
+            <div>
+              <h3>頭書ブロック</h3>
+              <p>DeskNet’s・契約・物件データを初期転記します。</p>
+            </div>
+            <button
+              className="secondary-button"
+              onClick={() => void loadApplications()}
+            >
+              申請を取得
+            </button>
+          </header>
+          {applications.length > 0 && (
+            <div className="application-list">
+              {applications.map((item) => (
+                <button
+                  key={item.applicationId}
+                  onClick={() => void applyApplication(item)}
+                >
+                  <strong>{item.title}</strong>
+                  <span>申請ID: {item.applicationId}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="document-form">
+            {fields.map((field) => (
+              <label
+                key={field.key}
+                className={field.type === "textarea" ? "full-width" : ""}
+              >
+                {field.label}
+                {field.required && <b>必須</b>}
+                {field.type === "textarea" ? (
+                  <textarea
+                    rows={4}
+                    value={values[field.key] ?? ""}
+                    onChange={(event) => update(field.key, event.target.value)}
+                  />
+                ) : (
+                  <input
+                    type={
+                      currencyKeys.has(field.key)
+                        ? "text"
+                        : field.type === "integer"
+                          ? "number"
+                          : (field.type ?? "text")
+                    }
+                    inputMode={
+                      currencyKeys.has(field.key) ? "numeric" : undefined
+                    }
+                    value={
+                      currencyKeys.has(field.key)
+                        ? currencyInput(values[field.key] ?? "")
+                        : (values[field.key] ?? "")
+                    }
+                    onChange={(event) => update(field.key, event.target.value)}
+                  />
+                )}
+              </label>
+            ))}
+          </div>
+        </section>
+        {(blocks.terms?.enabled ?? true) && (
+          <section className="document-panel">
+            <header>
+              <div>
+                <h3>約款ブロック</h3>
+                <p>ひな型版の標準本文を契約ごとに編集できます。</p>
+              </div>
+            </header>
+            <textarea
+              className="document-long-text"
+              rows={18}
+              value={termsText}
+              onChange={(event) => {
+                setTermsText(event.target.value);
+                setIsDirty(true);
+              }}
+            />
+          </section>
+        )}
+        {(blocks.signature?.enabled ?? true) && (
+          <section className="document-panel">
+            <header>
+              <div>
+                <h3>署名・押印ブロック</h3>
+                <p>
+                  PDFひな型上の署名・押印枠を使用します。画像・電子署名の登録は行いません。
+                </p>
+              </div>
+            </header>
+          </section>
+        )}
+        {planVisible && (
+          <section className="document-panel plan-selection">
+            <header>
+              <div>
+                <h3>対象箇所図ブロック</h3>
+                <p>契約対象の区画を選択します。</p>
+              </div>
+            </header>
+            {candidates.length ? (
+              <div className="plan-candidates">
+                {candidates.map((candidate) => (
+                  <label key={`${candidate.revisionId}-${candidate.unitId}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedUnitIds.includes(candidate.unitId)}
+                      onChange={(event) =>
+                        selectUnit(candidate, event.target.checked)
+                      }
+                    />{" "}
+                    <span>
+                      {candidate.floorLabel} / {candidate.unitCode}
+                    </span>
+                    {candidate.previewUrl && (
+                      <a
+                        href={candidate.previewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        図面を確認
+                      </a>
+                    )}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="plan-empty">
+                対象区画に対応する平面図がありません。
+              </p>
+            )}
+          </section>
+        )}
+        {(blocks.restoration?.enabled ?? true) && (
+          <section className="document-panel">
+            <header>
+              <div>
+                <h3>別表ブロック</h3>
+                <p>原状回復工事基準を契約ごとに編集できます。</p>
+              </div>
+            </header>
+            <textarea
+              className="document-long-text"
+              rows={14}
+              value={restorationText}
+              onChange={(event) => {
+                setRestorationText(event.target.value);
+                setIsDirty(true);
+              }}
+            />
+          </section>
+        )}
+        <section className="document-panel">
+          <header>
+            <div>
+              <h3>移行期間のPDF添付</h3>
+              <p>差し替え前のファイルは履歴として残ります。</p>
+            </div>
+          </header>
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(event) =>
+              setWorkflowPdf(event.target.files?.[0] ?? null)
+            }
+          />
+          <button
+            className="secondary-button"
+            onClick={() => void uploadWorkflowPdf()}
+            disabled={saving || !workflowPdf || !document}
+          >
+            PDFを保存
+          </button>
+        </section>
+        <footer className="document-actions">
+          <button
+            className="secondary-button"
+            onClick={() => void save()}
+            disabled={saving || !revision}
+          >
+            入力内容を保存
+          </button>
+          {wordIsCurrent && outputRevision?.word_file_path && (
+            <button
+              className="secondary-button"
+              onClick={() =>
+                void openFile(outputRevision.word_file_path!, "Word")
+              }
+              disabled={saving}
+            >
+              最新Wordを開く
+            </button>
+          )}
+          <button
+            className="primary-button"
+            onClick={() => void finalizePdf()}
+            disabled={saving || !wordIsCurrent}
+          >
+            正式PDFを出力
+          </button>
+          {formalPdfIsCurrent && outputRevision?.pdf_file_path && (
+            <button
+              className="secondary-button"
+              onClick={() =>
+                void openFile(outputRevision.pdf_file_path!, "正式PDF")
+              }
+              disabled={saving}
+            >
+              最新正式PDFを開く
+            </button>
+          )}
+          <button
+            className="primary-button"
+            onClick={() => void completeWorkflowDocument()}
+            disabled={saving}
+          >
+            契約書作成完了
+          </button>
+        </footer>
+      </div>
+    </section>
+  );
 }

@@ -10,11 +10,9 @@ alter table public.lease_contract
   add column if not exists is_annual_billing boolean not null default false,
   add column if not exists annual_billing_month smallint check (annual_billing_month between 1 and 12),
   add column if not exists annual_start_offset smallint check (annual_start_offset in (1, 2));
-
 alter table public.lease_contract drop constraint if exists lease_contract_annual_terms_check;
 alter table public.lease_contract add constraint lease_contract_annual_terms_check
   check (not is_annual_billing or (annual_billing_month is not null and annual_start_offset is not null));
-
 comment on column public.lease_contract.due_month_offset is '入金期日の月（0=当月、1=翌月）';
 comment on column public.lease_contract.due_day_of_month is '入金期日の日（1〜31、0=末日）';
 comment on column public.lease_contract.due_holiday_adjustment is '入金期日が土日祝のとき（previous=前日、next=翌日）';
