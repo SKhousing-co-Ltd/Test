@@ -81,3 +81,17 @@
 /* 挿入する位置に実線を引きます。 */
 .tenant-order-settings tr.tenant-order-drop-before td { box-shadow: inset 0 3px 0 #2f6fb0; }
 .tenant-order-settings tr.tenant-order-drop-after td { box-shadow: inset 0 -3px 0 #2f6fb0; }
+.property-billing-item-form { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.property-billing-item-form .property-billing-item-check { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; }
+.property-billing-item-form .property-billing-item-check input { width: auto; }
+.utility-price-settings { padding: 14px 17px; border-bottom: 1px solid #e9eef4; }
+.utility-price-settings h5 { margin: 0 0 4px; color: #33465f; font-size: 13px; }
+.utility-price-settings p { margin: 0 0 10px; color: #7a8899; font-size: 11px; }
+.utility-price-settings table { border-collapse: collapse; font-size: 12px; }
+.utility-price-settings th, .utility-price-settings td { padding: 6px 12px 6px 0; text-align: left; }
+.utility-price-settings input, .utility-price-settings select { border: 1px solid #d7e0eb; border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; }
+.utility-price-settings input { width: 110px; }
+.utility-price-settings .muted { color: #94a3b8; font-size: 11px; }
+.property-billing-settings-table-wrap td.center, .utility-price-settings td.center { text-align: center; }
+.property-billing-settings-table-wrap td.muted { color: #94a3b8; }
+.property-billing-item-form input:disabled, .property-billing-item-form select:disabled { background: #f1f5f9; color: #94a3b8; }

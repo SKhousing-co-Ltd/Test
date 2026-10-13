@@ -7,7 +7,7 @@ import { InvoiceSplitSettings } from "./InvoiceSplitSettings";
 import { TenantOrderSettings } from "./TenantOrderSettings";
 import "./PropertyBillingSettings.css";
 
-type ChargeType = { billing_charge_type_id: string; charge_type_name: string };
+type ChargeType = { billing_charge_type_id: string; charge_type_name: string; utility_kind?: string | null };
 type PeriodRule = "manual" | "meter_reading" | "custom_pattern";
 type Day = "first" | "last" | "meter" | `day_${number}`;
 type LineItem = {
@@ -19,7 +19,24 @@ type LineItem = {
   period_rule_type: PeriodRule;
   billing_period_pattern_id: string | null;
   sort_order: number;
+  // 請求内容（電灯・空調など）。レントロールの単価列の見出しに使います。
+  billing_content: string | null;
+  show_unit_price_in_rent_roll: boolean;
+  // 既定単価・税区分です。契約区画に単価が無いテナント（新規のテナントなど）に使います。
+  default_unit_price: number | null;
+  default_tax_mode: "exclusive" | "inclusive";
 };
+type UtilityCategory = "electric" | "water" | "gas";
+type PriceSettingDraft = { scope: "line_item" | "category"; unitPrice: string; taxMode: "exclusive" | "inclusive"; showInRentRoll: boolean };
+const utilityKindCategory: Record<string, UtilityCategory> = { electricity: "electric", water: "water", gas: "gas" };
+const utilityCategories: UtilityCategory[] = ["electric", "water", "gas"];
+const utilityCategoryNames: Record<UtilityCategory, string> = { electric: "電気", water: "水道", gas: "ガス" };
+// 設定が無い分類は「分類で共通」（レントロールに載せる）です。
+const emptyPriceSettings = (): Record<UtilityCategory, PriceSettingDraft> => ({
+  electric: { scope: "category", unitPrice: "", taxMode: "exclusive", showInRentRoll: true },
+  water: { scope: "category", unitPrice: "", taxMode: "exclusive", showInRentRoll: true },
+  gas: { scope: "category", unitPrice: "", taxMode: "exclusive", showInRentRoll: true },
+});
 type Pattern = {
   billing_period_pattern_id: string;
   pattern_name: string;
@@ -31,7 +48,6 @@ type Pattern = {
   end_meter_day_offset: number;
   sort_order: number;
 };
-type DuePattern = { billing_due_date_pattern_id: string; pattern_number: number; month_offset: number; day_of_month: number; holiday_adjustment: 'previous' | 'next' };
 const monthLabel = (n: number) =>
   ({ "-2": "前々月", "-1": "前月", "0": "当月", "1": "翌月", "2": "翌々月" })[
     String(n)
@@ -55,21 +71,20 @@ export function PropertyBillingSettings({
   canEdit: boolean;
 }) {
   const [tab, setTab] = useState<
-    "types" | "items" | "duePatterns" | "patterns" | "allocations" | "invoiceSplits" | "tenantOrder"
+    "types" | "items" | "patterns" | "allocations" | "invoiceSplits" | "tenantOrder"
   >("types");
   const [types, setTypes] = useState<ChargeType[]>([]);
   const [enabled, setEnabled] = useState<string[]>([]);
   const [items, setItems] = useState<LineItem[]>([]);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
-  const [duePatterns, setDuePatterns] = useState<DuePattern[]>([]);
-  const [dueMonth, setDueMonth] = useState(0);
-  const [dueDay, setDueDay] = useState(1);
-  const [dueHoliday, setDueHoliday] = useState<'previous' | 'next'>('next');
-  const [editingDuePatternId, setEditingDuePatternId] = useState("");
   const [db, setDb] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [name, setName] = useState("");
+  const [billingContent, setBillingContent] = useState("");
+  const [showInRentRoll, setShowInRentRoll] = useState(false);
+  const [defaultUnitPrice, setDefaultUnitPrice] = useState("");
+  const [defaultTaxMode, setDefaultTaxMode] = useState<"exclusive" | "inclusive">("exclusive");
   const [displayName, setDisplayName] = useState("");
   const [typeId, setTypeId] = useState("");
   const [kind, setKind] = useState<"fixed" | "variable">("fixed");
@@ -89,6 +104,42 @@ export function PropertyBillingSettings({
   const [dropItemId, setDropItemId] = useState("");
   const [dropPatternId, setDropPatternId] = useState("");
   const property = properties.find((p) => p.asset_id === propertyId);
+  // 分類（電気・水道・ガス）ごとの単価の持ち方です。分類で共通にすると、契約で入力する単価は分類で1つになり、既定単価もここで持ちます。
+  const [priceSettings, setPriceSettings] = useState<Record<UtilityCategory, PriceSettingDraft>>(emptyPriceSettings);
+  useEffect(() => {
+    if (!propertyId || !supabase) { setPriceSettings(emptyPriceSettings()); return; }
+    let cancelled = false;
+    void supabase.from("asset_utility_price_setting").select("category, price_scope, default_unit_price, default_tax_mode, show_in_rent_roll").eq("asset_id", propertyId).then(({ data }) => {
+      if (cancelled) return;
+      const next = emptyPriceSettings();
+      for (const row of (data ?? []) as Array<{ category: UtilityCategory; price_scope: "line_item" | "category"; default_unit_price: number | null; default_tax_mode: "exclusive" | "inclusive"; show_in_rent_roll: boolean }>) {
+        next[row.category] = { scope: row.price_scope, unitPrice: row.default_unit_price === null ? "" : String(row.default_unit_price), taxMode: row.default_tax_mode, showInRentRoll: row.show_in_rent_roll };
+      }
+      setPriceSettings(next);
+    });
+    return () => { cancelled = true; };
+  }, [propertyId]);
+  const savePriceSetting = async (category: UtilityCategory, patch: Partial<PriceSettingDraft>) => {
+    if (!supabase || !canEdit) return;
+    const next = { ...priceSettings[category], ...patch };
+    const unitPrice = next.unitPrice.trim() === "" ? null : Number(next.unitPrice);
+    if (unitPrice !== null && !(unitPrice >= 0)) { setNotice("既定単価は0以上の数値で入力してください。"); return; }
+    setPriceSettings((current) => ({ ...current, [category]: next }));
+    const { error } = await supabase.from("asset_utility_price_setting").upsert({ asset_id: propertyId, category, price_scope: next.scope, default_unit_price: unitPrice, default_tax_mode: next.taxMode, show_in_rent_roll: next.showInRentRoll, updated_at: new Date().toISOString() }, { onConflict: "asset_id,category" });
+    setNotice(error ? `分類ごとの単価を保存できませんでした: ${error.message}` : `${utilityCategoryNames[category]}の単価の設定を保存しました。`);
+  };
+  // 明細項目の分類（請求種別の公共料金の区分）が「分類で共通」なら、明細項目の既定単価・レントロール表示は使いません。
+  const sharedCategoryOfType = (chargeTypeId: string) => {
+    const category = utilityKindCategory[types.find((type) => type.billing_charge_type_id === chargeTypeId)?.utility_kind ?? ""];
+    return category && priceSettings[category].scope === "category" ? category : null;
+  };
+  const toggleItemRentRoll = async (item: LineItem, checked: boolean) => {
+    if (!supabase || !canEdit) return;
+    const { error } = await supabase.from("asset_billing_line_item").update({ show_unit_price_in_rent_roll: checked }).eq("asset_billing_line_item_id", item.asset_billing_line_item_id);
+    if (error) { setNotice(`レントロールの表示を更新できませんでした: ${error.message}`); return; }
+    setItems((current) => current.map((row) => row.asset_billing_line_item_id === item.asset_billing_line_item_id ? { ...row, show_unit_price_in_rent_roll: checked } : row));
+  };
+  const formShared = sharedCategoryOfType(typeId);
   const enabledTypes = types.filter((type) =>
     enabled.includes(type.billing_charge_type_id),
   );
@@ -105,10 +156,10 @@ export function PropertyBillingSettings({
       setLoading(true);
       setNotice("");
       if (supabase) {
-        const [a, b, c, d, e] = await Promise.all([
+        const [a, b, c, d] = await Promise.all([
           supabase
             .from("billing_charge_type")
-            .select("billing_charge_type_id, charge_type_name")
+            .select("billing_charge_type_id, charge_type_name, utility_kind")
             .eq("is_active", true)
             .order("sort_order"),
           supabase
@@ -119,7 +170,7 @@ export function PropertyBillingSettings({
           supabase
             .from("asset_billing_line_item")
             .select(
-              "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order",
+              "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
             )
             .eq("asset_id", propertyId)
             .eq("is_active", true)
@@ -131,15 +182,13 @@ export function PropertyBillingSettings({
             )
             .eq("asset_id", propertyId)
             .order("sort_order"),
-          supabase.from('asset_billing_due_date_pattern').select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment').eq('asset_id', propertyId).order('pattern_number'),
         ]);
-        if (!a.error && !b.error && !c.error && !d.error && !e.error) {
+        if (!a.error && !b.error && !c.error && !d.error) {
           const active = (b.data ?? []).map((x) => x.billing_charge_type_id);
           setTypes((a.data ?? []) as ChargeType[]);
           setEnabled(active);
           setItems((c.data ?? []) as LineItem[]);
           setPatterns((d.data ?? []) as Pattern[]);
-          setDuePatterns((e.data ?? []) as DuePattern[]);
           setTypeId(active[0] ?? "");
           setDb(true);
           setLoading(false);
@@ -150,7 +199,6 @@ export function PropertyBillingSettings({
       setEnabled([]);
       setItems([]);
       setPatterns([]);
-      setDuePatterns([]);
       setTypeId("");
       setDb(false);
       setNotice("請求設定のデータを読み込めませんでした。データベース移行が未適用、または権限設定を確認してください。");
@@ -171,10 +219,15 @@ export function PropertyBillingSettings({
         kind === "variable" && rule === "custom_pattern"
           ? patternId || patterns[0]?.billing_period_pattern_id || null
           : null,
-      sort_order: items.length + 1,
+      billing_content: billingContent.trim() || null,
+      show_unit_price_in_rent_roll: !formShared && showInRentRoll,
+      default_unit_price: formShared || defaultUnitPrice.trim() === "" ? null : Number(defaultUnitPrice),
+      default_tax_mode: defaultTaxMode,
+      ...(editingItemId ? {} : { sort_order: items.length + 1 }),
     };
+    if (draft.default_unit_price !== null && !(draft.default_unit_price >= 0)) { setNotice("既定単価は0以上の数値で入力してください。"); return; }
     if (db && supabase && editingItemId) {
-      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order").single();
+      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode").single();
       if (error) { setNotice(`明細項目を更新できませんでした: ${error.message}`); return; }
       setItems(items.map((item) => item.asset_billing_line_item_id === editingItemId ? data as LineItem : item)); setEditingItemId("");
     } else if (db && supabase) {
@@ -182,7 +235,7 @@ export function PropertyBillingSettings({
         .from("asset_billing_line_item")
         .insert({ asset_id: propertyId, ...draft })
         .select(
-          "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order",
+          "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
         )
         .single();
       if (error) {
@@ -193,6 +246,10 @@ export function PropertyBillingSettings({
     } else { setNotice("データベースに接続できないため、明細項目を登録できません。"); return; }
     setName("");
     setDisplayName("");
+    setBillingContent("");
+    setShowInRentRoll(false);
+    setDefaultUnitPrice("");
+    setDefaultTaxMode("exclusive");
     setRule("manual");
     setPatternId("");
     setNotice(editingItemId ? "明細項目を更新しました。" : "明細項目を登録しました。");
@@ -253,39 +310,6 @@ export function PropertyBillingSettings({
     setPatternName("");
     setNotice(editingPatternId ? "請求期間パターンを更新しました。" : "請求期間パターンを登録しました。");
   };
-  const resetDuePatternForm = () => { setEditingDuePatternId(""); setDueMonth(0); setDueDay(1); setDueHoliday('next'); };
-  const saveDuePattern = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!db || !supabase) { setNotice('データベースに接続できないため、入金期日パターンを保存できません。'); return; }
-    const draft = { month_offset: dueMonth, day_of_month: dueDay, holiday_adjustment: dueHoliday };
-    if (editingDuePatternId) {
-      const { data, error } = await supabase.from('asset_billing_due_date_pattern').update(draft).eq('billing_due_date_pattern_id', editingDuePatternId).select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment').single();
-      if (error) { setNotice(`入金期日パターンを更新できませんでした: ${error.message}`); return; }
-      setDuePatterns(duePatterns.map((pattern) => pattern.billing_due_date_pattern_id === editingDuePatternId ? data as DuePattern : pattern));
-      setNotice('入金期日パターンを更新しました。');
-    } else {
-      const patternNumber = Math.max(0, ...duePatterns.map((pattern) => pattern.pattern_number)) + 1;
-      const { data, error } = await supabase.from('asset_billing_due_date_pattern').insert({ asset_id: propertyId, pattern_number: patternNumber, ...draft }).select('billing_due_date_pattern_id, pattern_number, month_offset, day_of_month, holiday_adjustment').single();
-      if (error) { setNotice(`入金期日パターンを登録できませんでした: ${error.message}`); return; }
-      setDuePatterns([...duePatterns, data as DuePattern]);
-      setNotice('入金期日パターンを登録しました。');
-    }
-    resetDuePatternForm();
-  };
-  const removeDuePattern = async (pattern: DuePattern) => {
-    if (!db || !supabase) { setNotice('データベースに接続できないため、入金期日パターンを削除できません。'); return; }
-    const client = supabase;
-    const { error } = await client.from('asset_billing_due_date_pattern').delete().eq('billing_due_date_pattern_id', pattern.billing_due_date_pattern_id);
-    if (error) { setNotice(`入金期日パターンを削除できませんでした: ${error.message}`); return; }
-    const remaining = duePatterns.filter((row) => row.billing_due_date_pattern_id !== pattern.billing_due_date_pattern_id).sort((left, right) => left.pattern_number - right.pattern_number);
-    for (const row of remaining.filter((item) => item.pattern_number > pattern.pattern_number)) {
-      const { error: renumberError } = await client.from('asset_billing_due_date_pattern').update({ pattern_number: row.pattern_number - 1 }).eq('billing_due_date_pattern_id', row.billing_due_date_pattern_id);
-      if (renumberError) { setNotice('削除後のパターン番号を更新できませんでした。画面を再読み込みしてください。'); return; }
-    }
-    setDuePatterns(remaining.map((row) => ({ ...row, pattern_number: row.pattern_number > pattern.pattern_number ? row.pattern_number - 1 : row.pattern_number })));
-    if (editingDuePatternId === pattern.billing_due_date_pattern_id) resetDuePatternForm();
-    setNotice('入金期日パターンを削除しました。');
-  };
   const description = (p: Pattern) =>
     `${monthLabel(p.start_month_offset)} ${dayLabel(p.start_day_type, p.start_meter_day_offset)} ～ ${monthLabel(p.end_month_offset)} ${dayLabel(p.end_day_type, p.end_meter_day_offset)}`;
   return (
@@ -320,12 +344,6 @@ export function PropertyBillingSettings({
           onClick={() => setTab("items")}
         >
           明細項目
-        </button>
-        <button
-          className={tab === "duePatterns" ? "active" : ""}
-          onClick={() => setTab("duePatterns")}
-        >
-          入金期日パターン
         </button>
         <button
           className={tab === "patterns" ? "active" : ""}
@@ -368,6 +386,24 @@ export function PropertyBillingSettings({
             <h4>明細項目</h4>
             <p>固定費の請求期間は契約情報から取得します。</p>
           </div>
+          <div className="utility-price-settings">
+            <h5>分類ごとの単価</h5>
+            <p>「分類で共通」にすると、契約では分類の単価を1つ入力します。請求書の明細は明細項目（電灯・空調など）ごとに分かれたまま、単価が同じになります。</p>
+            <table>
+              <thead><tr><th>分類</th><th>単価の持ち方</th><th>既定単価</th><th>税区分</th><th>レントロール</th></tr></thead>
+              <tbody>{utilityCategories.map((category) => {
+                const setting = priceSettings[category];
+                const shared = setting.scope === "category";
+                return <tr key={category}>
+                  <td><strong>{utilityCategoryNames[category]}</strong></td>
+                  <td><select value={setting.scope} disabled={!canEdit} onChange={(e) => void savePriceSetting(category, { scope: e.target.value as "line_item" | "category" })}><option value="line_item">明細項目ごと</option><option value="category">分類で共通</option></select></td>
+                  <td>{shared ? <input type="number" step="0.0001" min="0" value={setting.unitPrice} placeholder="—" disabled={!canEdit} aria-label={`${utilityCategoryNames[category]}の既定単価`} onChange={(e) => setPriceSettings((current) => ({ ...current, [category]: { ...current[category], unitPrice: e.target.value } }))} onBlur={() => void savePriceSetting(category, {})} /> : <span className="muted">明細項目の既定単価を使用</span>}</td>
+                  <td>{shared ? <select value={setting.taxMode} disabled={!canEdit} onChange={(e) => void savePriceSetting(category, { taxMode: e.target.value as "exclusive" | "inclusive" })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select> : <span className="muted">—</span>}</td>
+                  <td className="center">{shared ? <input type="checkbox" checked={setting.showInRentRoll} disabled={!canEdit} aria-label={`${utilityCategoryNames[category]}の単価をレントロールに載せる`} onChange={(e) => void savePriceSetting(category, { showInRentRoll: e.target.checked })} /> : <span className="muted">—</span>}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
           <form className="property-billing-item-form" onSubmit={addItem}>
             <label>
               項目
@@ -398,6 +434,10 @@ export function PropertyBillingSettings({
               </select>
             </label>
             <label>
+              請求内容
+              <input value={billingContent} placeholder="電灯・空調など" onChange={(e) => setBillingContent(e.target.value)} />
+            </label>
+            <label>
               請求区分
               <select
                 value={kind}
@@ -421,6 +461,21 @@ export function PropertyBillingSettings({
                 {patterns.map((p) => <option key={p.billing_period_pattern_id} value={`pattern:${p.billing_period_pattern_id}`}>{p.pattern_name}</option>)}
               </select>
             </label>
+            <label>
+              既定単価
+              <input type="number" step="0.0001" min="0" value={formShared ? "" : defaultUnitPrice} placeholder={formShared ? "分類で共通" : "—"} disabled={Boolean(formShared)} onChange={(e) => setDefaultUnitPrice(e.target.value)} />
+            </label>
+            <label>
+              税区分
+              <select value={defaultTaxMode} disabled={Boolean(formShared)} onChange={(e) => setDefaultTaxMode(e.target.value as "exclusive" | "inclusive")}>
+                <option value="exclusive">税抜</option>
+                <option value="inclusive">税込</option>
+              </select>
+            </label>
+            <label className="property-billing-item-check">
+              <input type="checkbox" checked={!formShared && showInRentRoll} disabled={Boolean(formShared)} onChange={(e) => setShowInRentRoll(e.target.checked)} />
+              単価をレントロールに載せる
+            </label>
             <button
               className="primary-button"
               disabled={!canEdit || !enabledTypes.length}
@@ -436,8 +491,11 @@ export function PropertyBillingSettings({
                   <th>項目</th>
                   <th>明細表示名</th>
                   <th>請求種別</th>
+                  <th>請求内容</th>
                   <th>請求区分</th>
                   <th>請求期間</th>
+                  <th>既定単価</th>
+                  <th>レントロール</th>
                   <th />
                 </tr>
               </thead>
@@ -456,6 +514,7 @@ export function PropertyBillingSettings({
                           item.billing_charge_type_id,
                       )?.charge_type_name ?? "—"}
                     </td>
+                    <td>{item.billing_content || "—"}</td>
                     <td>
                       {item.billing_kind === "fixed" ? "固定費" : "変動費"}
                     </td>
@@ -472,8 +531,10 @@ export function PropertyBillingSettings({
                                   item.billing_period_pattern_id,
                               )?.pattern_name ?? "請求期間パターン")}
                     </td>
+                    <td className={sharedCategoryOfType(item.billing_charge_type_id) ? "muted" : undefined}>{sharedCategoryOfType(item.billing_charge_type_id) ? "分類で共通" : item.default_unit_price === null ? "—" : `${Number(item.default_unit_price).toLocaleString("ja-JP", { maximumFractionDigits: 4 })}円（${item.default_tax_mode === "inclusive" ? "税込" : "税抜"}）`}</td>
+                    <td className="center"><input type="checkbox" checked={!sharedCategoryOfType(item.billing_charge_type_id) && item.show_unit_price_in_rent_roll} disabled={!canEdit || Boolean(sharedCategoryOfType(item.billing_charge_type_id))} aria-label={`${item.line_item_name}の単価をレントロールに載せる`} onChange={(e) => void toggleItemRentRoll(item, e.target.checked)} /></td>
                     <td>
-                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setKind(item.billing_kind); setRule(item.period_rule_type); setPatternId(item.billing_period_pattern_id ?? ""); }}>編集</button>
+                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setKind(item.billing_kind); setRule(item.period_rule_type); setPatternId(item.billing_period_pattern_id ?? ""); setBillingContent(item.billing_content ?? ""); setShowInRentRoll(item.show_unit_price_in_rent_roll); setDefaultUnitPrice(item.default_unit_price === null ? "" : String(item.default_unit_price)); setDefaultTaxMode(item.default_tax_mode); }}>編集</button>
                       <button
                         className="tenant-billing-delete"
                         disabled={!canEdit}
@@ -486,7 +547,7 @@ export function PropertyBillingSettings({
                 ))}
                 {!items.length && (
                   <tr>
-                    <td colSpan={7}>明細項目は未登録です。</td>
+                    <td colSpan={10}>明細項目は未登録です。</td>
                   </tr>
                 )}
               </tbody>
@@ -563,9 +624,6 @@ export function PropertyBillingSettings({
             </table>
           </div>
         </section>
-      )}
-      {tab === "duePatterns" && (
-        <section className="property-period-patterns"><div><h4>入金期日パターン</h4><p>登録順に①、②、③…と採番します。</p></div><form className="due-pattern-form" onSubmit={saveDuePattern}><label>月<select value={dueMonth} onChange={(e) => setDueMonth(Number(e.target.value))}><option value={0}>当月</option><option value={1}>翌月</option></select></label><label>期日<select value={dueDay} onChange={(e) => setDueDay(Number(e.target.value))}><option value={0}>末日</option>{Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}日</option>)}</select></label><label>土日祝の場合<select value={dueHoliday} onChange={(e) => setDueHoliday(e.target.value as 'previous' | 'next')}><option value="previous">前日</option><option value="next">翌日</option></select></label><div className="due-pattern-actions">{editingDuePatternId && <button type="button" className="text-button" onClick={resetDuePatternForm}>取消</button>}<button className="primary-button" disabled={!canEdit}>{editingDuePatternId ? '更新' : '登録'}</button></div></form><div className="property-billing-settings-table-wrap"><table><thead><tr><th>番号</th><th>期日</th><th>土日祝の場合</th><th /></tr></thead><tbody>{duePatterns.map((p) => <tr key={p.billing_due_date_pattern_id}><td>{'①②③④⑤⑥⑦⑧⑨⑩'.charAt(p.pattern_number - 1) || p.pattern_number}</td><td>{p.month_offset ? '翌月' : '当月'}{p.day_of_month === 0 ? '末日' : `${p.day_of_month}日`}</td><td>{p.holiday_adjustment === 'previous' ? '前日' : '翌日'}</td><td><button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingDuePatternId(p.billing_due_date_pattern_id); setDueMonth(p.month_offset); setDueDay(p.day_of_month); setDueHoliday(p.holiday_adjustment); }}>編集</button><button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={() => void removeDuePattern(p)}>削除</button></td></tr>)}{!duePatterns.length && <tr><td colSpan={4}>入金期日パターンは未登録です。</td></tr>}</tbody></table></div></section>
       )}
       {tab === "allocations" && (
         <BillingCodeAllocationSettings

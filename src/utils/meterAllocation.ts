@@ -20,7 +20,7 @@ export type MeterExchange = { removedReading: number | null; installedReading: n
 
 // 画面で扱うメーターです。設置区画の履歴と、対象月の検針値を持ちます。
 export type AssetMeter = {
-  id: string; subItemId: string; code: string; label: string; unitPrice?: number;
+  id: string; subItemId: string; code: string; label: string;
   assignments: UnitAssignment[];
   // 使用量入力：入力した使用量／指針入力：指針から求めた使用量（保存用）
   usage: number;
@@ -63,9 +63,10 @@ export function readingPeriod(year: number, month: number, meterDate: string, pr
 }
 
 // 入居状況を読み込む範囲です。前月1日から翌月末日までを読み、検針日を変えても読み直さずに済むようにします。
-export function occupancyRange(year: number, month: number): Period {
-  const previous = new Date(Date.UTC(year, month - 2, 1));
-  return { start: fromUtc(previous.getTime()), end: monthLast(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1) };
+// 基本料の請求期間がさらに前後の月を指すときは、before・after（月数）で広げます。
+export function occupancyRange(year: number, month: number, before = 1, after = 1): Period {
+  const start = new Date(Date.UTC(year, month - 1 - Math.max(before, 1), 1));
+  return { start: fromUtc(start.getTime()), end: fromUtc(Date.UTC(year, month + Math.max(after, 1), 0)) };
 }
 
 export const unitAt = (meter: AssetMeter, date: string) =>
@@ -162,8 +163,7 @@ export function allocateMeters(
       const tenant = tenantById.get(segment.tenantId);
       shares.push({
         id: segments.length > 1 ? `${meter.id}#${index}` : meter.id, meterId: meter.id, subItemId: meter.subItemId, code: meter.code, label: meter.label,
-        tenantId: tenant ? tenant.id : '', rowIndex: rowIndexForUnit(tenant, segment.unitId), usage: segment.usage,
-        ...(meter.unitPrice === undefined ? {} : { unitPrice: meter.unitPrice }),
+        tenantId: tenant ? tenant.id : '', rowIndex: rowIndexForUnit(tenant, segment.unitId), usage: segment.usage, ...(segment.unitId ? { unitId: segment.unitId } : {}),
       });
     });
     const warnings: string[] = [];

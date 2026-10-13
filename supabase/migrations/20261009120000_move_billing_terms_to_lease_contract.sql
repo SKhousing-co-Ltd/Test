@@ -20,6 +20,7 @@ comment on column public.lease_contract.period_month_offset is '請求期間（-
 comment on column public.lease_contract.is_annual_billing is '年払い。請求月だけ1年分（月額×12）を請求し、他の月は0円';
 comment on column public.lease_contract.annual_billing_month is '年払いの請求月（1〜12）';
 comment on column public.lease_contract.annual_start_offset is '年払いの請求期間の開始（1=翌月〜1年分、2=翌々月〜1年分）';
+
 drop function if exists public.update_billing_code_terms(uuid, smallint, smallint, text, smallint, boolean, smallint, smallint);
 alter table public.billing_code
   drop constraint if exists billing_code_annual_terms_check,
@@ -30,6 +31,7 @@ alter table public.billing_code
   drop column if exists is_annual_billing,
   drop column if exists annual_billing_month,
   drop column if exists annual_start_offset;
+
 create or replace function public.update_lease_contract_billing_terms(
   p_lease_contract_id uuid,
   p_due_month_offset smallint,
@@ -67,6 +69,7 @@ begin
   end if;
 end;
 $$;
+
 revoke all on function public.update_lease_contract_billing_terms(uuid, smallint, smallint, text, smallint, boolean, smallint, smallint) from public, anon;
 grant execute on function public.update_lease_contract_billing_terms(uuid, smallint, smallint, text, smallint, boolean, smallint, smallint) to authenticated;
 comment on function public.update_lease_contract_billing_terms(uuid, smallint, smallint, text, smallint, boolean, smallint, smallint) is '契約の入金期日・請求期間（年払い含む）を設定する。総務経理部所属者とadminロールのみ実行できる。';

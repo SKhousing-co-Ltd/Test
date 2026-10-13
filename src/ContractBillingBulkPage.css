@@ -1,0 +1,7 @@
+/* 設定条件が多いため、ツールバーは折り返して全項目とボタンを表示します。 */
+.contract-billing-bulk .parking-fee-cleanup-tools { flex-wrap: wrap; }
+.contract-billing-bulk .parking-fee-cleanup-tools select { min-width: 120px; }
+.contract-billing-bulk .parking-fee-cleanup-tools input { width: 120px; }
+.contract-billing-bulk .contract-billing-bulk-actions { display: flex; gap: 10px; flex-basis: 100%; justify-content: flex-end; }
+.contract-billing-bulk .parking-fee-cleanup-table select { border: 1px solid #d5e0eb; border-radius: 6px; padding: 6px; font: inherit; font-size: 11px; }
+.contract-billing-bulk .parking-fee-cleanup-table tr.changed td { background: #fffbea; }
