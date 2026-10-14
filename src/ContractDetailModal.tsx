@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog } from './components/Dialog';
 import { MainContractEditor } from './MainContractEditor';
+import { ParkingDetailModal } from './ParkingDetailModal';
+import type { ParkingCurrentRow } from './ParkingPage';
 import type { ContractCapabilities } from './lib/contract-capabilities';
 import { productCategoryLabel, normalizeProductCategory } from './lib/product-categories';
 import { supabase } from './lib/supabase';
@@ -192,6 +194,8 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
   const [approvalError, setApprovalError] = useState('');
   const [linkedApprovals, setLinkedApprovals] = useState<LinkedApproval[]>([]);
   const [editing, setEditing] = useState(false);
+  const [parkingEditorRow, setParkingEditorRow] = useState<ParkingCurrentRow | null>(null);
+  const [parkingEditorLoading, setParkingEditorLoading] = useState(false);
 
   const load = useCallback(async (cancelled: () => boolean = () => false) => {
       setLoading(true);
@@ -242,6 +246,22 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
     return () => { cancelled = true; };
   }, [load]);
 
+  const openParkingEditor = async () => {
+    if (!supabase || !detail?.contract) return;
+    setParkingEditorLoading(true);
+    setError('');
+    const { data, error: parkingError } = await supabase.rpc('parking_list_at_date', {
+      p_property_id: detail.contract.property_id,
+      p_as_of_date: asOfDate,
+    });
+    setParkingEditorLoading(false);
+    if (parkingError) { setError(`駐車場詳細を取得できませんでした: ${parkingError.message}`); return; }
+    const parkingRow = ((data ?? []) as unknown as ParkingCurrentRow[])
+      .find((row) => row.lease_contract_unit_id === leaseContractUnitId);
+    if (!parkingRow) { setError('駐車場台帳に対応する契約区画が見つかりませんでした。'); return; }
+    setParkingEditorRow(parkingRow);
+  };
+
   const contract = detail?.contract;
   return <Dialog title="契約詳細" onClose={onClose} className="contract-detail-dialog">
     {loading && <p className="contract-detail-loading">契約情報を読み込んでいます。</p>}
@@ -251,7 +271,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       <section className="contract-detail-summary">
         <header>
           <div><p className="section-kicker">{contract.unit_type === 'parking' ? 'PARKING CONTRACT' : 'MAIN CONTRACT'}</p><h3>{contract.tenant_name}</h3><p>{contract.property_name}｜{contract.floor_label || '階未設定'}｜{contract.unit_name || contract.unit_code}</p></div>
-          <div className="contract-detail-badges"><span className={`contract-detail-status ${contract.contract_status}`}>{statusLabels[contract.contract_status] ?? contract.contract_status}</span>{capabilities.canEditContract && contract.unit_type !== 'parking' ? <button type="button" className="primary-button compact" onClick={() => setEditing(true)}>契約を編集</button> : <span className="contract-view-only">閲覧専用</span>}</div>
+          <div className="contract-detail-badges"><span className={`contract-detail-status ${contract.contract_status}`}>{statusLabels[contract.contract_status] ?? contract.contract_status}</span>{capabilities.canEditContract && contract.unit_type !== 'parking' ? <button type="button" className="primary-button compact" onClick={() => setEditing(true)}>契約を編集</button> : capabilities.canEditParkingContract && contract.unit_type === 'parking' ? <button type="button" className="primary-button compact" disabled={parkingEditorLoading} onClick={() => void openParkingEditor()}>{parkingEditorLoading ? '読み込み中…' : '駐車場詳細を編集'}</button> : <span className="contract-view-only">閲覧専用</span>}</div>
         </header>
         <div className="contract-detail-grid">
           <Field label="物件" value={contract.property_name} />
@@ -311,5 +331,6 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       </section>}
       </>}
     </div>}
+    {parkingEditorRow && <ParkingDetailModal row={parkingEditorRow} canManage={capabilities.canEditParkingContract} onClose={() => setParkingEditorRow(null)} onSaved={async () => { setParkingEditorRow(null); await load(); onChanged?.(); }} />}
   </Dialog>;
 }
