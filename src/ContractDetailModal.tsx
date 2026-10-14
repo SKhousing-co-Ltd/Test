@@ -233,7 +233,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         setDetail(data as ContractDetailResponse);
         const loadedDetail = data as ContractDetailResponse;
         const contractId = loadedDetail.contract.lease_contract_id;
-        if (capabilities.canEditContract && loadedDetail.contract.unit_type !== 'parking') {
+        if ((loadedDetail.contract.unit_type === 'parking' && capabilities.canEditParkingContract) || (loadedDetail.contract.unit_type !== 'parking' && capabilities.canEditContract)) {
           const { data: mergeRows, error: mergeError } = await supabase.rpc('list_contract_unit_merge_candidates', { p_target_lease_contract_id: contractId });
           if (!mergeError) setMergeCandidates((mergeRows ?? []) as ContractUnitMergeCandidate[]);
         } else setMergeCandidates([]);
@@ -258,7 +258,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         }
       }
       setLoading(false);
-  }, [asOfDate, capabilities.canViewContract, leaseContractUnitId]);
+  }, [asOfDate, capabilities.canEditContract, capabilities.canEditParkingContract, capabilities.canViewContract, leaseContractUnitId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,7 +285,8 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
   const mergeContractUnit = async (candidate: ContractUnitMergeCandidate) => {
     if (!supabase || !detail?.contract || mergeLoading) return;
     const label = [candidate.floor_label, candidate.unit_name || candidate.unit_code].filter(Boolean).join(' ');
-    if (!window.confirm(`${label}を「${detail.contract.tenant_name}」の同一契約区画としてまとめます。区画の賃料・契約期間は維持されます。実行しますか？`)) return;
+    const action = detail.contract.unit_type === 'parking' ? '同一契約内の増車' : '同一契約区画';
+    if (!window.confirm(`${label}を「${detail.contract.tenant_name}」の${action}としてまとめます。区画の料金・契約期間は維持されます。実行しますか？`)) return;
     setMergeLoading(true); setMergingId(candidate.lease_contract_unit_id); setError('');
     const { error: mergeError } = await supabase.rpc('merge_contract_unit_into_contract', {
       p_target_lease_contract_id: detail.contract.lease_contract_id,
@@ -343,14 +344,14 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         </table></div>}
       </section>
 
-      {capabilities.canEditContract && contract.unit_type !== 'parking' && mergeCandidates.length > 0 && <section className="contract-detail-candidates">
-        <div className="contract-detail-section-heading"><div><h3>同一契約へまとめられる区画</h3><p>同じテナント・同じ物件で、別の契約レコードになっている区画です。</p></div></div>
+      {((contract.unit_type === 'parking' && capabilities.canEditParkingContract) || (contract.unit_type !== 'parking' && capabilities.canEditContract)) && mergeCandidates.length > 0 && <section className="contract-detail-candidates">
+        <div className="contract-detail-section-heading"><div><h3>{contract.unit_type === 'parking' ? '同一契約へ増車できる車室' : '同一契約へまとめられる区画'}</h3><p>同じテナント・同じ物件で、別の契約レコードになっている{contract.unit_type === 'parking' ? '駐車場契約' : '区画'}です。</p></div></div>
         <div className="contract-detail-table-wrap"><table className="contract-detail-table">
           <thead><tr><th>区画</th><th>種別</th><th>区画利用期間</th><th>別契約の期間</th><th>操作</th></tr></thead>
           <tbody>{mergeCandidates.map((candidate) => <tr key={candidate.lease_contract_unit_id}>
             <td><strong>{[candidate.floor_label, candidate.unit_name || candidate.unit_code].filter(Boolean).join(' ')}</strong><small>{candidate.unit_code}</small></td>
             <td>{productCategoryLabel[normalizeProductCategory(candidate.unit_type)]}</td><td>{date(candidate.lease_start_date)} ～ {date(candidate.lease_end_date)}</td><td>{date(candidate.contract_start_date)} ～ {date(candidate.contract_end_date)}</td>
-            <td><button type="button" className="secondary-button compact" disabled={mergeLoading} onClick={() => void mergeContractUnit(candidate)}>{mergingId === candidate.lease_contract_unit_id ? '処理中…' : '同一契約へまとめる'}</button></td>
+            <td><button type="button" className="secondary-button compact" disabled={mergeLoading} onClick={() => void mergeContractUnit(candidate)}>{mergingId === candidate.lease_contract_unit_id ? '処理中…' : contract.unit_type === 'parking' ? '同一契約へ増車' : '同一契約へまとめる'}</button></td>
           </tr>)}</tbody>
         </table></div>
       </section>}
