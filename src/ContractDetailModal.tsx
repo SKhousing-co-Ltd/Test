@@ -82,6 +82,17 @@ type ParkingContract = {
   relationship_source: 'fee_history' | 'contract_header' | 'tenant_property_candidate';
 };
 
+type LinkedApproval = {
+  appsuite_record_id: string;
+  app_id: string;
+  data_id: string;
+  ringi_number: string | null;
+  workflow_type: string | null;
+  approval_status: string | null;
+  source_updated_at: string | null;
+  confirmed_at: string | null;
+};
+
 export type ContractDetailResponse = {
   as_of_date: string;
   contract: ContractDetail;
@@ -126,6 +137,19 @@ export function Field({ label, value }: { label: string; value: string }) {
   return <div className="contract-detail-field"><span>{label}</span><strong>{value}</strong></div>;
 }
 
+const appsuiteRecordUrl = (appId: string, dataId: string) =>
+  `https://sk-housing.dn-cloud.com/cgi-bin/dneo/appsuite.cgi?cmd=cdbbrowse&app_id=${encodeURIComponent(appId)}#view_id=2&id=${encodeURIComponent(dataId)}`;
+
+function openAppsuiteRecord(event: React.MouseEvent<HTMLAnchorElement>, url: string) {
+  event.preventDefault();
+  const popup = window.open(url, 'desknets-workflow', 'popup,width=1280,height=900,resizable=yes,scrollbars=yes');
+  if (!popup) window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function one<T>(value: T | T[] | null): T | null {
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
 function ParkingRows({ rows, candidate = false, canEdit }: { rows: ParkingContract[]; candidate?: boolean; canEdit: boolean }) {
   const navigate = useNavigate();
   const [workingId, setWorkingId] = useState('');
@@ -164,11 +188,14 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
   const [detail, setDetail] = useState<ContractDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [approvalError, setApprovalError] = useState('');
+  const [linkedApprovals, setLinkedApprovals] = useState<LinkedApproval[]>([]);
   const [editing, setEditing] = useState(false);
 
   const load = useCallback(async (cancelled: () => boolean = () => false) => {
       setLoading(true);
       setError('');
+      setApprovalError('');
       if (!supabase || !capabilities.canViewContract) {
         setError('契約情報を閲覧する権限がありません。');
         setLoading(false);
@@ -183,6 +210,24 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         setError(`契約情報を取得できませんでした: ${loadError.message}`);
       } else {
         setDetail(data as ContractDetailResponse);
+        const contractId = (data as ContractDetailResponse).contract.lease_contract_id;
+        const { data: linkRows, error: linkError } = await supabase
+          .from('workflow_contract_link')
+          .select('workflow_contract_link_id, confirmed_at, appsuite_record:appsuite_record(appsuite_record_id, app_id, data_id, ringi_number, workflow_type, approval_status, source_updated_at)')
+          .eq('lease_contract_id', contractId)
+          .order('confirmed_at', { ascending: false });
+        if (cancelled()) return;
+        if (linkError) {
+          setApprovalError(`紐づいている稟議を取得できませんでした: ${linkError.message}`);
+          setLinkedApprovals([]);
+        } else {
+          const unique = new Map<string, LinkedApproval>();
+          for (const row of linkRows ?? []) {
+            const record = one(row.appsuite_record) as Omit<LinkedApproval, 'confirmed_at'> | null;
+            if (record && !unique.has(record.appsuite_record_id)) unique.set(record.appsuite_record_id, { ...record, confirmed_at: row.confirmed_at });
+          }
+          setLinkedApprovals([...unique.values()]);
+        }
       }
       setLoading(false);
   }, [asOfDate, capabilities.canViewContract, leaseContractUnitId]);
@@ -227,6 +272,17 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           <Field label="備考" value={contract.notes || '—'} />
           <Field label="最終更新" value={new Date(contract.updated_at).toLocaleString('ja-JP')} />
         </div>
+      </section>
+
+      <section>
+        <div className="contract-detail-section-heading"><div><h3>紐づいている稟議</h3><p>契約業務フローまたは運用開始前の紐づけ作業で、この契約に関連付けた決裁済み稟議です。</p></div></div>
+        {approvalError ? <p className="contract-detail-inline-error">{approvalError}</p> : linkedApprovals.length === 0 ? <p className="contract-detail-empty">紐づいている稟議はありません。</p> : <div className="contract-detail-table-wrap"><table className="contract-detail-table contract-approval-detail-table">
+          <thead><tr><th>稟議番号</th><th>稟議種別</th><th>決裁状況</th><th>稟議更新日</th><th>紐づけ日時</th></tr></thead>
+          <tbody>{linkedApprovals.map((approval) => {
+            const url = appsuiteRecordUrl(approval.app_id, approval.data_id);
+            return <tr key={approval.appsuite_record_id}><td><a href={url} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, url)}>{approval.ringi_number || approval.data_id}</a><small>AppSuite ID: {approval.data_id}</small></td><td>{approval.workflow_type || '—'}</td><td>{approval.approval_status || '—'}</td><td>{approval.source_updated_at ? new Date(approval.source_updated_at).toLocaleString('ja-JP') : '—'}</td><td>{approval.confirmed_at ? new Date(approval.confirmed_at).toLocaleString('ja-JP') : '—'}</td></tr>;
+          })}</tbody>
+        </table></div>}
       </section>
 
       <section>
