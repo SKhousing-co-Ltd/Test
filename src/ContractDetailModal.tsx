@@ -91,6 +91,7 @@ type LinkedApproval = {
   approval_status: string | null;
   source_updated_at: string | null;
   confirmed_at: string | null;
+  target_label: string;
 };
 
 export type ContractDetailResponse = {
@@ -210,11 +211,14 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         setError(`契約情報を取得できませんでした: ${loadError.message}`);
       } else {
         setDetail(data as ContractDetailResponse);
-        const contractId = (data as ContractDetailResponse).contract.lease_contract_id;
+        const loadedDetail = data as ContractDetailResponse;
+        const contractId = loadedDetail.contract.lease_contract_id;
+        const relatedParkingContractIds = loadedDetail.related_parking_contracts.map((item) => item.lease_contract_id);
+        const targetContractIds = [...new Set([contractId, ...relatedParkingContractIds])];
         const { data: linkRows, error: linkError } = await supabase
           .from('workflow_contract_link')
-          .select('workflow_contract_link_id, confirmed_at, appsuite_record:appsuite_record(appsuite_record_id, app_id, data_id, ringi_number, workflow_type, approval_status, source_updated_at)')
-          .eq('lease_contract_id', contractId)
+          .select('workflow_contract_link_id, lease_contract_id, confirmed_at, appsuite_record:appsuite_record(appsuite_record_id, app_id, data_id, ringi_number, workflow_type, approval_status, source_updated_at)')
+          .in('lease_contract_id', targetContractIds)
           .order('confirmed_at', { ascending: false });
         if (cancelled()) return;
         if (linkError) {
@@ -223,8 +227,8 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         } else {
           const unique = new Map<string, LinkedApproval>();
           for (const row of linkRows ?? []) {
-            const record = one(row.appsuite_record) as Omit<LinkedApproval, 'confirmed_at'> | null;
-            if (record && !unique.has(record.appsuite_record_id)) unique.set(record.appsuite_record_id, { ...record, confirmed_at: row.confirmed_at });
+            const record = one(row.appsuite_record) as Omit<LinkedApproval, 'confirmed_at' | 'target_label'> | null;
+            if (record && !unique.has(record.appsuite_record_id)) unique.set(record.appsuite_record_id, { ...record, confirmed_at: row.confirmed_at, target_label: row.lease_contract_id === contractId ? 'この契約' : '駐車場契約' });
           }
           setLinkedApprovals([...unique.values()]);
         }
@@ -277,10 +281,10 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       <section>
         <div className="contract-detail-section-heading"><div><h3>紐づいている稟議</h3><p>契約業務フローまたは運用開始前の紐づけ作業で、この契約に関連付けた決裁済み稟議です。</p></div></div>
         {approvalError ? <p className="contract-detail-inline-error">{approvalError}</p> : linkedApprovals.length === 0 ? <p className="contract-detail-empty">紐づいている稟議はありません。</p> : <div className="contract-detail-table-wrap"><table className="contract-detail-table contract-approval-detail-table">
-          <thead><tr><th>稟議番号</th><th>稟議種別</th><th>決裁状況</th><th>稟議更新日</th><th>紐づけ日時</th></tr></thead>
+          <thead><tr><th>稟議番号</th><th>対象</th><th>稟議種別</th><th>決裁状況</th><th>稟議更新日</th><th>紐づけ日時</th></tr></thead>
           <tbody>{linkedApprovals.map((approval) => {
             const url = appsuiteRecordUrl(approval.app_id, approval.data_id);
-            return <tr key={approval.appsuite_record_id}><td><a href={url} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, url)}>{approval.ringi_number || approval.data_id}</a><small>AppSuite ID: {approval.data_id}</small></td><td>{approval.workflow_type || '—'}</td><td>{approval.approval_status || '—'}</td><td>{approval.source_updated_at ? new Date(approval.source_updated_at).toLocaleString('ja-JP') : '—'}</td><td>{approval.confirmed_at ? new Date(approval.confirmed_at).toLocaleString('ja-JP') : '—'}</td></tr>;
+            return <tr key={approval.appsuite_record_id}><td><a href={url} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, url)}>{approval.ringi_number || approval.data_id}</a><small>AppSuite ID: {approval.data_id}</small></td><td><span className="contract-approval-target">{approval.target_label}</span></td><td>{approval.workflow_type || '—'}</td><td>{approval.approval_status || '—'}</td><td>{approval.source_updated_at ? new Date(approval.source_updated_at).toLocaleString('ja-JP') : '—'}</td><td>{approval.confirmed_at ? new Date(approval.confirmed_at).toLocaleString('ja-JP') : '—'}</td></tr>;
           })}</tbody>
         </table></div>}
       </section>
