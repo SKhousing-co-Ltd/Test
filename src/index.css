@@ -6415,9 +6415,21 @@ td small {
   font: inherit;
 }
 .workflow-action-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 360px;
+}
+.contract-workflow-table th:last-child,
+.contract-workflow-table td:last-child {
+  min-width: 380px;
+}
+.workflow-action-group .workflow-complete-button {
+  width: 100%;
+}
+.workflow-action-group .text-button {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 .workflow-check {
   font-size: 10px;

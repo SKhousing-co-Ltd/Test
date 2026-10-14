@@ -35,6 +35,11 @@ type WorkflowContractCandidate = {
   lease_contract_unit_id: string; unit_id: string; unit_code: string; floor_label: string | null; unit_type: string | null;
   contract_start_date: string | null; contract_end_date: string | null; suggestion_level: string; match_reasons: Array<{ rule: string; matched: boolean; message: string }>;
 };
+type LinkedContract = {
+  workflow_contract_link_id: string; lease_contract_id: string; lease_contract_unit_id: string | null;
+  contract: { contract_start_date: string | null; contract_end_date: string | null; tenant: { tenant_name: string } | null } | null;
+  contract_unit: { unit: { unit_code: string; floor_label: string | null; asset: { asset_name: string } | null } | null } | null;
+};
 type ContractUnitOption = {
   lease_contract_unit_id: string;
   lease_contract_id?: string;
@@ -736,6 +741,11 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [contracts, setContracts] = useState<ContractOption[]>([]);
   const [workflowCandidates, setWorkflowCandidates] = useState<WorkflowContractCandidate[]>([]);
+  const [workflowLinks, setWorkflowLinks] = useState<LinkedContract[]>([]);
+  const [workflowLinksRecordId, setWorkflowLinksRecordId] = useState<string | null>(null);
+  const [verifiedLinkIds, setVerifiedLinkIds] = useState<string[]>([]);
+  const [confirmedFields, setConfirmedFields] = useState<Record<string, boolean>>({});
+  const [reconciliationNote, setReconciliationNote] = useState('');
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [historicalCandidates, setHistoricalCandidates] = useState<HistoricalContractCandidate[]>([]);
   const [historicalCandidateLoading, setHistoricalCandidateLoading] = useState(false);
@@ -806,12 +816,15 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     } else { setSnapshotDate('2026-08-31'); setSnapshotFile(''); setSnapshotSheet(''); setSnapshotRow(''); setSnapshotResult('rent_roll_only'); }
   }, [selectedId]);
   useEffect(() => { setTerminationScope('contract'); setTerminationUnitIds([]); }, [selectedId]);
+  useEffect(() => {
+    setVerifiedLinkIds([]); setConfirmedFields({}); setReconciliationNote('');
+  }, [selectedId]);
 
   const filtered = useMemo(() => requests.filter((request) => {
     const matchesStatus = filter === 'all' || request.status === filter;
     const matchesType = typeFilter === 'all' || requestTypeGroup(request) === typeFilter;
     const matchesSource = sourceFilter === 'all' || request.source_type === sourceFilter;
-    const text = `${request.title} ${request.summary ?? ''} ${JSON.stringify(request.source_payload)}`.toLocaleLowerCase();
+    const text = `${request.title} ${request.summary ?? ''} ${request.source_record?.ringi_number ?? ''} ${JSON.stringify(request.source_payload)}`.toLocaleLowerCase();
     return matchesStatus && matchesType && matchesSource && (!search.trim() || text.includes(search.trim().toLocaleLowerCase()));
   }), [filter, requests, search, sourceFilter, typeFilter]);
   useEffect(() => {
@@ -832,6 +845,8 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const editable = selected?.status === 'open' || selected?.status === 'in_review' || selected?.status === 'on_hold';
   const reviewOnly = selected ? isReviewOnlyImport(selected) : false;
   const isAppsuiteContractRequest = selected ? ['contract_create', 'contract_update', 'contract_terminate', 'approval_cancel', 'contract_cancellation_review'].includes(selected.request_type) : false;
+  const isLinkedContractCreate = selected?.request_type === 'contract_create' && workflowLinksRecordId === selected.source_appsuite_record_id && workflowLinks.length > 0;
+  const isContractCreateLinkLoading = selected?.request_type === 'contract_create' && !!selected.source_appsuite_record_id && workflowLinksRecordId !== selected.source_appsuite_record_id;
   const isParkingFeeRequest = selected?.request_type === 'parking_fee_setup';
   const isContractDeadlineRequest = selected ? ['contract_term_type_confirmation', 'contract_renewal_due', 'fixed_term_contract_end'].includes(selected.request_type) : false;
   const selectedContract = selected?.lease_contract_id ? contracts.find((contract) => contract.lease_contract_id === selected.lease_contract_id) : undefined;
@@ -847,6 +862,23 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       setWorkflowCandidates((data ?? []) as WorkflowContractCandidate[]);
     });
   }, [isAppsuiteContractRequest, selected?.source_appsuite_record_id]);
+
+  useEffect(() => {
+    const recordId = selected?.request_type === 'contract_create' ? selected.source_appsuite_record_id : null;
+    if (!supabase || !recordId) { setWorkflowLinks([]); setWorkflowLinksRecordId(null); return; }
+    setWorkflowLinks([]); setWorkflowLinksRecordId(null);
+    let cancelled = false;
+    void supabase.from('workflow_contract_link')
+      .select('workflow_contract_link_id, lease_contract_id, lease_contract_unit_id, contract:lease_contract(contract_start_date, contract_end_date, tenant:tenant_master(tenant_name)), contract_unit:lease_contract_unit(unit:unit_master(unit_code, floor_label, asset:asset_master(asset_name)))')
+      .eq('appsuite_record_id', recordId)
+      .then(({ data, error: linkError }) => {
+        if (cancelled) return;
+        if (linkError) { setError(`既存契約リンクを読み込めませんでした: ${linkError.message}`); return; }
+        setWorkflowLinks((data ?? []) as unknown as LinkedContract[]);
+        setWorkflowLinksRecordId(recordId);
+      });
+    return () => { cancelled = true; };
+  }, [selected?.source_appsuite_record_id, selected?.request_type, selected?.row_version]);
 
   useEffect(() => {
     const recordId = selected?.source_appsuite_record_id;
@@ -918,6 +950,27 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     setWorking(false);
     if (linkError) { setError(`契約リンクを確定できませんでした: ${linkError.message}`); return; }
     setMessage('契約リンクを確定しました。契約処理とレントロール確認を続けてください。');
+    await loadRequests();
+  };
+
+  const completeLinkedContract = async () => {
+    if (!selected || !supabase || !isLinkedContractCreate) return;
+    const fields = ['tenant', 'property', 'unit', 'period'];
+    if (workflowLinks.some((link) => !verifiedLinkIds.includes(link.workflow_contract_link_id)) ||
+        fields.some((field) => !confirmedFields[field]) || !reconciliationNote.trim()) {
+      setError('全契約リンクと契約者・物件・区画・期間を照合し、判断理由を記録してください。'); return;
+    }
+    setWorking(true); setError('');
+    const { error: completionError } = await supabase.rpc('complete_linked_contract_request', {
+      p_change_request_id: selected.change_request_id,
+      p_expected_row_version: selected.row_version,
+      p_verified_link_ids: verifiedLinkIds,
+      p_confirmed_fields: Object.fromEntries(fields.map((field) => [field, confirmedFields[field]])),
+      p_note: reconciliationNote.trim(),
+    });
+    setWorking(false);
+    if (completionError) { setError(`既存契約との照合を確定できませんでした: ${completionError.message}`); return; }
+    setMessage('既存契約との照合を記録し、対応依頼を完了しました。');
     await loadRequests();
   };
 
@@ -1045,7 +1098,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       <main className="change-request-detail">{selected ? <>
         <header className="change-detail-heading"><div><p className="section-kicker">{selected.source_type === 'initial_import' ? 'INITIAL IMPORT' : selected.source_type}</p><h3>{selected.title}</h3><p>{selected.summary || '取込内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><div className="change-detail-tools"><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span>{editable && !isContractDeadlineRequest ? <button className="secondary-button" onClick={() => void recheckSelected()} disabled={working || rechecking}>{rechecking ? '再チェック中…' : '再チェック'}</button> : null}</div></header>
         <IssueContext request={selected} />
-        {isAppsuiteContractRequest && <section className="change-card historical-contract-candidates">
+        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <section className="change-card historical-contract-candidates">
           <h4>過去契約履歴候補</h4>
           <p>過去スナップショットを連続期間にまとめた候補です。ここで紐付けても、現行契約・請求・解約処理は変更しません。</p>
           {historicalCandidateLoading ? <p className="muted">過去スナップショット候補を取得中です…</p> : historicalCandidates.length === 0 ? <p className="muted">一致する過去契約履歴はありません。</p> : historicalCandidates.map((candidate) => <article key={candidate.historical_contract_key} className="historical-contract-candidate">
@@ -1055,7 +1108,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           </article>)}
         </section>}
         <AppsuiteSourceContext request={selected} />
-        {isAppsuiteContractRequest && editable && <details className="change-card historical-roll-check" open={historicalCandidates.length === 0}><summary>過去レントロール確認（手動確認・証跡）</summary><p>候補が見つからない場合や、Excelの確認結果を証跡として残す場合に使用します。</p><div className="change-item-editor">
+        {isAppsuiteContractRequest && editable && !isLinkedContractCreate && !isContractCreateLinkLoading && <details className="change-card historical-roll-check" open={historicalCandidates.length === 0}><summary>過去レントロール確認（手動確認・証跡）</summary><p>候補が見つからない場合や、Excelの確認結果を証跡として残す場合に使用します。</p><div className="change-item-editor">
           <label>基準日<input type="date" value={snapshotDate} onChange={(event) => setSnapshotDate(event.target.value)} /></label>
           <label>ファイル名<input value={snapshotFile} onChange={(event) => setSnapshotFile(event.target.value)} /></label>
           <label>シート名<input value={snapshotSheet} onChange={(event) => setSnapshotSheet(event.target.value)} /></label>
@@ -1063,7 +1116,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           <label>確認結果<select value={snapshotResult} onChange={(event) => setSnapshotResult(event.target.value as typeof snapshotResult)}><option value="rent_roll_only">レントロールに存在・contractなし</option><option value="not_found">レントロールにも存在しない</option><option value="uncertain">要追加確認</option></select></label>
           <button className="secondary-button" onClick={() => void saveSnapshotEvidence()} disabled={working}>確認証跡を保存</button>
         </div></details>}
-        {isAppsuiteContractRequest && <section className="change-card workflow-contract-candidates">
+        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <section className="change-card workflow-contract-candidates">
           <h4>契約候補</h4>
           <p>候補は自動確定されません。候補理由を確認して、対象契約を手動で確定してください。</p>
           {(selected.request_type === 'contract_terminate' || selected.request_type === 'contract_cancellation_review') && <div className="change-item-editor">
@@ -1094,9 +1147,23 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           </article>)}
           </details>}
         </section>}
+        {isLinkedContractCreate && <section className="change-card">
+          <h4>既存契約との照合・完了</h4>
+          <p>リンク済みの契約をすべて確認します。契約者・物件・区画・期間を原本と照合してください。ここでは契約データを新規作成しません。</p>
+          {workflowLinks.map((link) => <label key={link.workflow_contract_link_id} className="check">
+            <input type="checkbox" checked={verifiedLinkIds.includes(link.workflow_contract_link_id)} disabled={working || selected.status === 'applied'} onChange={(event) => setVerifiedLinkIds((current) => event.target.checked ? [...current, link.workflow_contract_link_id] : current.filter((id) => id !== link.workflow_contract_link_id))} />
+            {link.contract_unit?.unit?.asset?.asset_name ?? '物件未設定'} / {link.contract_unit?.unit?.floor_label ?? '階未設定'} / {link.contract_unit?.unit?.unit_code ?? '区画未設定'} / {link.contract?.tenant?.tenant_name ?? '契約者未設定'} / {link.contract?.contract_start_date ?? '開始日未設定'}〜{link.contract?.contract_end_date ?? '継続中'}
+          </label>)}
+          {selected.status !== 'applied' && <>
+            <div className="change-item-editor">{([['tenant', '契約者'], ['property', '物件'], ['unit', '区画'], ['period', '期間']] as const).map(([field, label]) => <label key={field} className="check"><input type="checkbox" checked={!!confirmedFields[field]} onChange={(event) => setConfirmedFields((current) => ({ ...current, [field]: event.target.checked }))} />{label}を照合済み</label>)}</div>
+            <label>照合結果・表記差などの判断理由<textarea value={reconciliationNote} onChange={(event) => setReconciliationNote(event.target.value)} placeholder="例：契約原本で4項目を照合。契約者の株式会社／(株)は同一法人の表記差。" /></label>
+            <ActionButton className="primary-button" onClick={() => void completeLinkedContract()} disabled={working || verifiedLinkIds.length !== workflowLinks.length || ['tenant', 'property', 'unit', 'period'].some((field) => !confirmedFields[field]) || !reconciliationNote.trim()} label={working ? '処理中…' : '既存契約との照合を確定して完了'} hint="照合結果と全リンクを記録し、対応依頼とAppSuiteの処理を完了します。" />
+          </>}
+        </section>}
         {isParkingFeeRequest ? <ParkingFeeRequestEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} onHold={() => setStatus('on_hold')} /> : null}
         {isContractDeadlineRequest && editable ? <ContractDeadlineRequestEditor key={`${selected.change_request_id}-${selected.row_version}-${selectedContract?.row_version ?? 'loading'}-${contractUnits.length}`} request={selected} contract={selectedContract} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} onHold={() => setStatus('on_hold')} /> : null}
-        {isAppsuiteContractRequest && (editable || selected.status === 'resolved') && <AppsuiteContractEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} properties={properties} tenants={tenants} units={units} contracts={contracts} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} />}
+        {isContractCreateLinkLoading && <p className="muted">既存契約リンクを確認中です…</p>}
+        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && (editable || selected.status === 'resolved') && <AppsuiteContractEditor key={`${selected.change_request_id}-${selected.row_version}`} request={selected} properties={properties} tenants={tenants} units={units} contracts={contracts} contractUnits={contractUnits} role={role} working={working} onWorking={setWorking} onError={setError} onSaved={async (nextMessage) => { setMessage(nextMessage); await loadRequests(); }} />}
         {!isAppsuiteContractRequest && !isParkingFeeRequest && !isContractDeadlineRequest && (reviewOnly ? <section className="change-card change-no-edit"><h4>契約条件の入力は不要です</h4><p>この依頼は、取込内容と元資料の一致を確認する作業です。確認した資料と結果を対応メモに残してください。</p></section> : <section className="change-card"><h4>反映する契約条件</h4><p>現在の値と反映予定の値を確認します。</p><div className="change-diff-table"><div className="change-diff-head"><span>項目</span><span>現在</span><span>反映予定</span></div>{domainItems.map((item) => <div key={item.change_request_item_id}><strong>{item.field_name || '未設定'}</strong><span>{prettyValue(item.current_value)}</span><span className="proposed-value">{prettyValue(item.proposed_value)}</span></div>)}</div></section>)}
         {editable && !reviewOnly && !isAppsuiteContractRequest && !isParkingFeeRequest && !isContractDeadlineRequest && <section className="change-card"><h4>契約条件を修正</h4><p>取込元と照合して対象区画が確定した場合のみ、賃料・面積・期間を入力します。候補は「物件｜棟｜階｜区画コード 区画名｜契約者」で表示します。</p><div className="change-item-editor"><label>対象区画
   <input value={itemUnitSearch} onChange={(event) => setItemUnitSearch(event.target.value)} placeholder="テナント名・区画コードで絞り込み" />
@@ -1107,7 +1174,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   </select>
 </label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
         <section className="change-card"><h4>対応メモ</h4><p>確認した資料、採用する区画・請求コード、判断理由を残してください。</p><div className="change-comments">{selected.comments?.length ? selected.comments.map((entry) => <div key={entry.change_request_comment_id}><strong>開発メンバー</strong><time>{formatDate(entry.created_at)}</time><p>{entry.body}</p></div>) : <p className="muted">まだメモはありません。</p>}</div>{editable && <div className="comment-composer"><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="例：原本Excelの〇シートと契約書を確認。4F A〜Cを1契約として扱う。" /><button className="secondary-button" onClick={() => void addComment()} disabled={working || !comment.trim()}>メモを追加</button></div>}</section>
-        {editable && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><ActionButton className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working} label="保留にする" hint="後で対応するため保留にします。データは変更されません。" /><ActionButton className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working} label="対象外にする" hint="この依頼を対応不要として終了します。データは変更されません。" /><ActionButton className="primary-button" onClick={() => void resolve()} disabled={working} label={working ? '処理中…' : '確認完了にする'} hint="確認内容を確定しますが、正本データはまだ変更されません。次に「内容を確定」で反映します。" /></footer> : selected.status === 'resolved' && selected.request_type !== 'approval_cancel' && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><p>最終確認後、正本へ反映します。</p><ActionButton className="primary-button" onClick={() => void apply()} disabled={working} label={working ? '処理中…' : '内容を確定'} hint="確認済みの内容を正本データへ反映します。この操作は取り消せません。" /></footer> : null}
+        {!isLinkedContractCreate && !isContractCreateLinkLoading && (editable && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><ActionButton className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working} label="保留にする" hint="後で対応するため保留にします。データは変更されません。" /><ActionButton className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working} label="対象外にする" hint="この依頼を対応不要として終了します。データは変更されません。" /><ActionButton className="primary-button" onClick={() => void resolve()} disabled={working} label={working ? '処理中…' : '確認完了にする'} hint="確認内容を確定しますが、正本データはまだ変更されません。次に「内容を確定」で反映します。" /></footer> : selected.status === 'resolved' && selected.request_type !== 'approval_cancel' && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><p>最終確認後、正本へ反映します。</p><ActionButton className="primary-button" onClick={() => void apply()} disabled={working} label={working ? '処理中…' : '内容を確定'} hint="確認済みの内容を正本データへ反映します。この操作は取り消せません。" /></footer> : null)}
       </> : <p className="change-empty">{filter === 'open' && !search.trim() && !loading ? 'すべての要確認案件を処理しました。' : '左側から対応依頼を選択してください。'}</p>}</main>
     </div>
   </section>;
