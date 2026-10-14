@@ -6474,6 +6474,7 @@ td small {
 .contract-workflow-table td:last-child {
   min-width: 220px;
 }
+.workflow-withdraw-button{display:block;margin-top:6px;color:#a04b43}.workflow-withdraw-button:hover{color:#7f302a;text-decoration:underline}
 .contract-workflow-link-panel {
   position: sticky;
   top: 12px;

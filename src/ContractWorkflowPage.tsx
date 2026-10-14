@@ -285,6 +285,17 @@ export function ContractWorkflowPage({
       await load();
     }
   };
+  const withdrawQueue = async (item: QueueItem) => {
+    if (!supabase) return;
+    const reason = window.prompt(`「${item.ringi_number ?? item.data_id}」を取下げとして契約業務フローから除外します。取消を確認した理由を入力してください。`);
+    if (!reason?.trim()) return;
+    if (!window.confirm('この稟議を取下げ扱いにします。未紐づけの稟議だけが対象です。実行しますか？')) return;
+    setSavingId(item.appsuite_record_id); setError('');
+    const result = await supabase.rpc('withdraw_contract_workflow', { p_appsuite_record_id: item.appsuite_record_id, p_reason: reason.trim() });
+    setSavingId(null);
+    if (result.error) setError(`稟議を取下げにできませんでした: ${result.error.message}`);
+    else { setNotice('稟議を取下げ扱いにし、契約業務フローから除外しました。'); setSelectedItem(null); setLinking(null); await load(); }
+  };
   const linkAndComplete = async () => {
     if (!supabase || !linking || !selectedContractId) return;
     setSavingId(linking.appsuite_record_id);
@@ -648,6 +659,9 @@ export function ContractWorkflowPage({
                             >
                               契約を紐付けて完了
                             </button>
+                          )}
+                          {canComplete && (
+                            <button className="text-button workflow-withdraw-button" disabled={!!savingId} onClick={() => void withdrawQueue(item)}>取下げとして除外</button>
                           )}
                         </td>
                       </tr>
