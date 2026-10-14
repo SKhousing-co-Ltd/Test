@@ -86,8 +86,11 @@ type ApprovalCandidate = {
   data_id: string;
   ringi_number: string | null;
   workflow_type: string | null;
+  approval_kind: string | null;
   tenant_name: string | null;
   approval_floor_label: string | null;
+  approval_unit_label: string | null;
+  approval_space_type: string | null;
   floor_match: boolean | null;
   is_linked: boolean;
   link_locked: boolean;
@@ -390,7 +393,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   const filteredApprovalCandidates = useMemo(() => {
     const normalized = approvalQuery.normalize('NFKC').toLocaleLowerCase('ja-JP').trim();
     if (!normalized) return approvalCandidates;
-    return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.tenant_name, candidate.approval_floor_label]
+    return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.approval_kind, candidate.tenant_name, candidate.approval_floor_label, candidate.approval_unit_label, candidate.approval_space_type]
       .filter(Boolean).join(' ').normalize('NFKC').toLocaleLowerCase('ja-JP').includes(normalized));
   }, [approvalCandidates, approvalQuery]);
   const approvalLinksChanged = useMemo(() => {
@@ -627,11 +630,12 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
 
             <div className="parking-contract-subsection"><strong>運用開始前の決裁済み稟議</strong><span>同じ物件の未処理稟議を駐車場契約へ紐づけます</span></div>
             <div className="parking-approval-panel">
-              <div className="parking-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・種別・テナント・階で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
+              <div className="parking-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・テナント・階・区画・稟議種別で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
               {approvalLoading ? <p className="parking-approval-empty">稟議候補を読み込んでいます。</p> : filteredApprovalCandidates.length === 0 ? <p className="parking-approval-empty">同じ物件の未処理稟議はありません。</p> : <div className="parking-approval-list">{filteredApprovalCandidates.map((candidate) => <label key={candidate.appsuite_record_id}>
                 <input type="checkbox" checked={selectedApprovalIds.includes(candidate.appsuite_record_id)} disabled={candidate.link_locked} onChange={(event) => setSelectedApprovalIds((current) => event.target.checked ? [...current, candidate.appsuite_record_id] : current.filter((id) => id !== candidate.appsuite_record_id))} />
-                <span><strong>{candidate.ringi_number || candidate.data_id}</strong><small>{candidate.workflow_type || '稟議種別未設定'}｜{candidate.tenant_name || 'テナント未設定'}</small></span>
-                <em>{candidate.floor_match === true ? '同じ階' : candidate.floor_match === false ? `別階（${candidate.approval_floor_label}）` : '階情報なし'}</em>
+                <span><strong>{candidate.ringi_number || candidate.data_id}</strong><small>テナント：{candidate.tenant_name || '未設定'}</small><small>稟議種別：{candidate.approval_kind || candidate.workflow_type || '未設定'}</small></span>
+                <span className="parking-approval-location"><small>階：{candidate.approval_floor_label || '未設定'}</small><small>区画：{candidate.approval_unit_label || '未設定'}</small><small>区分：{candidate.approval_space_type || '未設定'}</small></span>
+                <em>{candidate.floor_match === true ? '同じ階' : candidate.floor_match === false ? '別階' : '階情報なし'}</em>
                 {candidate.link_locked ? <em className="locked">紐づけ済み</em> : null}
               </label>)}</div>}
               <div className="parking-approval-note">紐づけると契約業務フローも完了し、レントロールの契約詳細にも表示されます。</div>

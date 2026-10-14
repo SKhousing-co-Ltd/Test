@@ -17,6 +17,9 @@ begin
   if public.appsuite_contract_floor('{"floor_label":"10F"}'::jsonb) <> '10F' then
     raise exception 'AppSuite文字列形式の階情報を取得できていません';
   end if;
+  if public.appsuite_contract_property('{"ビル名称":{"val":"三共四ツ橋ビル"}}'::jsonb) <> '三共四ツ橋ビル' then raise exception 'AppSuite原文のビル名称を取得できていません'; end if;
+  if public.appsuite_contract_unit_label('{"号室":{"val":"501"}}'::jsonb) <> '501' then raise exception 'AppSuite原文の区画を取得できていません'; end if;
+  if public.appsuite_contract_space_type('{"契約区分":{"val":"駐車場"}}'::jsonb) <> '駐車場' then raise exception 'AppSuite原文の区分を取得できていません'; end if;
 end $$;
 
 select '1..1';

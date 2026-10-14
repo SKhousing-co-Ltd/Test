@@ -17,10 +17,13 @@ type ApprovalCandidate = {
   data_id: string;
   ringi_number: string | null;
   workflow_type: string | null;
+  approval_kind: string | null;
   approval_status: string | null;
   property_name: string | null;
   tenant_name: string | null;
   approval_floor_label: string | null;
+  approval_unit_label: string | null;
+  approval_space_type: string | null;
   source_updated_at: string | null;
   floor_match: boolean | null;
   is_linked: boolean;
@@ -100,7 +103,7 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
   const filteredApprovalCandidates = useMemo(() => {
     const query = approvalQuery.trim().toLocaleLowerCase('ja-JP');
     if (!query) return approvalCandidates;
-    return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.tenant_name, candidate.approval_floor_label]
+    return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.approval_kind, candidate.tenant_name, candidate.approval_floor_label, candidate.approval_unit_label, candidate.approval_space_type]
       .filter(Boolean).join(' ').toLocaleLowerCase('ja-JP').includes(query));
   }, [approvalCandidates, approvalQuery]);
 
@@ -206,12 +209,13 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
       : <input type={field.type ?? 'text'} min={field.type === 'number' ? '0' : undefined} step={field.key === 'leased_area_sqm' ? '0.01' : field.type === 'number' ? '1' : undefined} value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} />}</label>)}</div>
     <section className="contract-approval-links">
       <div className="contract-detail-section-heading"><div><h3>運用開始前の決裁済み稟議との紐づけ</h3><p>{contract.property_name}の未処理稟議を表示しています。階情報を照合できた稟議を先頭に表示し、複数選択できます。</p></div></div>
-      <div className="contract-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・種別・テナント・階で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
+      <div className="contract-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・テナント・階・区画・稟議種別で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
       {approvalsLoading ? <p className="contract-approval-empty">稟議候補を読み込んでいます。</p> : filteredApprovalCandidates.length === 0 ? <p className="contract-approval-empty">同じビルの決裁済み稟議はありません。</p> : <div className="contract-approval-list">
         {filteredApprovalCandidates.map((candidate) => <label key={candidate.appsuite_record_id} className={candidate.floor_match ? 'floor-match' : ''}>
           <input type="checkbox" checked={selectedApprovalIds.includes(candidate.appsuite_record_id)} disabled={candidate.link_locked} onChange={(event) => setSelectedApprovalIds((current) => event.target.checked ? [...current, candidate.appsuite_record_id] : current.filter((id) => id !== candidate.appsuite_record_id))} />
-          <span className="contract-approval-main"><strong>{candidate.ringi_number || candidate.data_id}</strong><small>{candidate.workflow_type || '稟議種別未設定'}｜{candidate.tenant_name || 'テナント未設定'}</small></span>
-          <span className="contract-approval-floor">{candidate.floor_match === true ? '同じ階' : candidate.floor_match === false ? `別階（${candidate.approval_floor_label}）` : '階情報なし'}</span>
+          <span className="contract-approval-main"><strong>{candidate.ringi_number || candidate.data_id}</strong><small>テナント：{candidate.tenant_name || '未設定'}</small><small>稟議種別：{candidate.approval_kind || candidate.workflow_type || '未設定'}</small></span>
+          <span className="contract-approval-location"><small>階：{candidate.approval_floor_label || '未設定'}</small><small>区画：{candidate.approval_unit_label || '未設定'}</small><small>区分：{candidate.approval_space_type || '未設定'}</small></span>
+          <span className="contract-approval-floor">{candidate.floor_match === true ? '同じ階' : candidate.floor_match === false ? '別階' : '階情報なし'}</span>
           {candidate.link_locked && <span className="contract-approval-locked">業務フローで紐づけ済み</span>}
         </label>)}
       </div>}
