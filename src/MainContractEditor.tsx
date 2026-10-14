@@ -123,6 +123,7 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
 
   const saveApprovalLinks = async () => {
     if (!supabase || !approvalLinksChanged) return;
+    if (!window.confirm('選択した稟議を契約へ紐づけ、契約業務フローを完了します。完了した稟議は業務フロー一覧から消えます。実行しますか？')) return;
     setApprovalsSaving(true); setError(''); setApprovalMessage('');
     const { error: linkError } = await supabase.rpc('set_contract_approval_links', {
       p_lease_contract_id: contract.lease_contract_id,
@@ -130,7 +131,7 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
     });
     setApprovalsSaving(false);
     if (linkError) { setError(`稟議を紐づけできませんでした: ${linkError.message}`); return; }
-    setApprovalMessage('稟議の紐づけを保存しました。');
+    setApprovalMessage('稟議を紐づけ、契約業務フローを完了しました。');
     await loadApprovalCandidates();
   };
 
@@ -204,7 +205,7 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
       }}><option value="">選択してください</option><option value="ordinary">普通賃貸借</option><option value="fixed_term">定期賃貸借</option></select>
       : <input type={field.type ?? 'text'} min={field.type === 'number' ? '0' : undefined} step={field.key === 'leased_area_sqm' ? '0.01' : field.type === 'number' ? '1' : undefined} value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} />}</label>)}</div>
     <section className="contract-approval-links">
-      <div className="contract-detail-section-heading"><div><h3>決裁済み稟議との紐づけ</h3><p>{contract.property_name}の稟議を表示しています。階情報を照合できた稟議を先頭に表示します。複数選択できます。</p></div></div>
+      <div className="contract-detail-section-heading"><div><h3>運用開始前の決裁済み稟議との紐づけ</h3><p>{contract.property_name}の未処理稟議を表示しています。階情報を照合できた稟議を先頭に表示し、複数選択できます。</p></div></div>
       <div className="contract-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・種別・テナント・階で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
       {approvalsLoading ? <p className="contract-approval-empty">稟議候補を読み込んでいます。</p> : filteredApprovalCandidates.length === 0 ? <p className="contract-approval-empty">同じビルの決裁済み稟議はありません。</p> : <div className="contract-approval-list">
         {filteredApprovalCandidates.map((candidate) => <label key={candidate.appsuite_record_id} className={candidate.floor_match ? 'floor-match' : ''}>
@@ -215,7 +216,8 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
         </label>)}
       </div>}
       {approvalMessage && <p className="contract-approval-message">{approvalMessage}</p>}
-      <div className="contract-approval-actions"><button type="button" className="secondary-button" disabled={!approvalLinksChanged || approvalsSaving} onClick={() => void saveApprovalLinks()}>{approvalsSaving ? '保存中…' : '稟議の紐づけを保存'}</button></div>
+      <p className="contract-approval-warning">紐づけると契約業務フローも完了し、対象稟議は業務フロー一覧から消えます。</p>
+      <div className="contract-approval-actions"><button type="button" className="secondary-button" disabled={!approvalLinksChanged || approvalsSaving} onClick={() => void saveApprovalLinks()}>{approvalsSaving ? '処理中…' : '紐づけて業務フローを完了'}</button></div>
     </section>
     {error && <p className="contract-detail-error">{error}</p>}
     <div className="contract-editor-actions"><button type="button" className="secondary-button" onClick={onCancel}>キャンセル</button><button type="button" className="primary-button" disabled={diffs.length === 0} onClick={startConfirmation}>変更内容を確認</button></div>
