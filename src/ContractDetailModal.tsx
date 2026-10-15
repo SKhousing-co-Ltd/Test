@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Dialog } from './components/Dialog';
 import { MainContractEditor } from './MainContractEditor';
+import { ParkingDetailModal } from './ParkingDetailModal';
+import type { ParkingCurrentRow } from './ParkingPage';
 import type { ContractCapabilities } from './lib/contract-capabilities';
 import { productCategoryLabel, normalizeProductCategory } from './lib/product-categories';
 import { supabase } from './lib/supabase';
@@ -82,6 +84,31 @@ type ParkingContract = {
   relationship_source: 'fee_history' | 'contract_header' | 'tenant_property_candidate';
 };
 
+type LinkedApproval = {
+  appsuite_record_id: string;
+  app_id: string;
+  data_id: string;
+  ringi_number: string | null;
+  workflow_type: string | null;
+  approval_status: string | null;
+  source_updated_at: string | null;
+  confirmed_at: string | null;
+  target_label: string;
+};
+
+type ContractUnitMergeCandidate = {
+  lease_contract_unit_id: string;
+  source_lease_contract_id: string;
+  unit_code: string;
+  unit_name: string | null;
+  floor_label: string | null;
+  unit_type: string;
+  lease_start_date: string | null;
+  lease_end_date: string | null;
+  contract_start_date: string | null;
+  contract_end_date: string | null;
+};
+
 export type ContractDetailResponse = {
   as_of_date: string;
   contract: ContractDetail;
@@ -126,6 +153,19 @@ export function Field({ label, value }: { label: string; value: string }) {
   return <div className="contract-detail-field"><span>{label}</span><strong>{value}</strong></div>;
 }
 
+const appsuiteRecordUrl = (appId: string, dataId: string) =>
+  `https://sk-housing.dn-cloud.com/cgi-bin/dneo/appsuite.cgi?cmd=cdbbrowse&app_id=${encodeURIComponent(appId)}#view_id=2&id=${encodeURIComponent(dataId)}`;
+
+function openAppsuiteRecord(event: React.MouseEvent<HTMLAnchorElement>, url: string) {
+  event.preventDefault();
+  const popup = window.open(url, 'desknets-workflow', 'popup,width=1280,height=900,resizable=yes,scrollbars=yes');
+  if (!popup) window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function one<T>(value: T | T[] | null): T | null {
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
 function ParkingRows({ rows, candidate = false, canEdit }: { rows: ParkingContract[]; candidate?: boolean; canEdit: boolean }) {
   const navigate = useNavigate();
   const [workingId, setWorkingId] = useState('');
@@ -164,11 +204,19 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
   const [detail, setDetail] = useState<ContractDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [approvalError, setApprovalError] = useState('');
+  const [linkedApprovals, setLinkedApprovals] = useState<LinkedApproval[]>([]);
   const [editing, setEditing] = useState(false);
+  const [parkingEditorRow, setParkingEditorRow] = useState<ParkingCurrentRow | null>(null);
+  const [parkingEditorLoading, setParkingEditorLoading] = useState(false);
+  const [mergeCandidates, setMergeCandidates] = useState<ContractUnitMergeCandidate[]>([]);
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [mergingId, setMergingId] = useState('');
 
   const load = useCallback(async (cancelled: () => boolean = () => false) => {
       setLoading(true);
       setError('');
+      setApprovalError('');
       if (!supabase || !capabilities.canViewContract) {
         setError('契約情報を閲覧する権限がありません。');
         setLoading(false);
@@ -183,15 +231,71 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         setError(`契約情報を取得できませんでした: ${loadError.message}`);
       } else {
         setDetail(data as ContractDetailResponse);
+        const loadedDetail = data as ContractDetailResponse;
+        const contractId = loadedDetail.contract.lease_contract_id;
+        if ((loadedDetail.contract.unit_type === 'parking' && capabilities.canEditParkingContract) || (loadedDetail.contract.unit_type !== 'parking' && capabilities.canEditContract)) {
+          const { data: mergeRows, error: mergeError } = await supabase.rpc('list_contract_unit_merge_candidates', { p_target_lease_contract_id: contractId });
+          if (!mergeError) setMergeCandidates((mergeRows ?? []) as ContractUnitMergeCandidate[]);
+        } else setMergeCandidates([]);
+        const relatedParkingContractIds = loadedDetail.related_parking_contracts.map((item) => item.lease_contract_id);
+        const targetContractIds = [...new Set([contractId, ...relatedParkingContractIds])];
+        const { data: linkRows, error: linkError } = await supabase
+          .from('workflow_contract_link')
+          .select('workflow_contract_link_id, lease_contract_id, confirmed_at, appsuite_record:appsuite_record(appsuite_record_id, app_id, data_id, ringi_number, workflow_type, approval_status, source_updated_at)')
+          .in('lease_contract_id', targetContractIds)
+          .order('confirmed_at', { ascending: false });
+        if (cancelled()) return;
+        if (linkError) {
+          setApprovalError(`紐づいている稟議を取得できませんでした: ${linkError.message}`);
+          setLinkedApprovals([]);
+        } else {
+          const unique = new Map<string, LinkedApproval>();
+          for (const row of linkRows ?? []) {
+            const record = one(row.appsuite_record) as Omit<LinkedApproval, 'confirmed_at' | 'target_label'> | null;
+            if (record && !unique.has(record.appsuite_record_id)) unique.set(record.appsuite_record_id, { ...record, confirmed_at: row.confirmed_at, target_label: row.lease_contract_id === contractId ? 'この契約' : '駐車場契約' });
+          }
+          setLinkedApprovals([...unique.values()]);
+        }
       }
       setLoading(false);
-  }, [asOfDate, capabilities.canViewContract, leaseContractUnitId]);
+  }, [asOfDate, capabilities.canEditContract, capabilities.canEditParkingContract, capabilities.canViewContract, leaseContractUnitId]);
 
   useEffect(() => {
     let cancelled = false;
     void load(() => cancelled);
     return () => { cancelled = true; };
   }, [load]);
+
+  const openParkingEditor = async () => {
+    if (!supabase || !detail?.contract) return;
+    setParkingEditorLoading(true);
+    setError('');
+    const { data, error: parkingError } = await supabase.rpc('parking_list_at_date', {
+      p_property_id: detail.contract.property_id,
+      p_as_of_date: asOfDate,
+    });
+    setParkingEditorLoading(false);
+    if (parkingError) { setError(`駐車場詳細を取得できませんでした: ${parkingError.message}`); return; }
+    const parkingRow = ((data ?? []) as unknown as ParkingCurrentRow[])
+      .find((row) => row.lease_contract_unit_id === leaseContractUnitId);
+    if (!parkingRow) { setError('駐車場台帳に対応する契約区画が見つかりませんでした。'); return; }
+    setParkingEditorRow(parkingRow);
+  };
+
+  const mergeContractUnit = async (candidate: ContractUnitMergeCandidate) => {
+    if (!supabase || !detail?.contract || mergeLoading) return;
+    const label = [candidate.floor_label, candidate.unit_name || candidate.unit_code].filter(Boolean).join(' ');
+    const action = detail.contract.unit_type === 'parking' ? '同一契約内の増車' : '同一契約区画';
+    if (!window.confirm(`${label}を「${detail.contract.tenant_name}」の${action}としてまとめます。区画の料金・契約期間は維持されます。実行しますか？`)) return;
+    setMergeLoading(true); setMergingId(candidate.lease_contract_unit_id); setError('');
+    const { error: mergeError } = await supabase.rpc('merge_contract_unit_into_contract', {
+      p_target_lease_contract_id: detail.contract.lease_contract_id,
+      p_source_lease_contract_unit_id: candidate.lease_contract_unit_id,
+    });
+    setMergeLoading(false); setMergingId('');
+    if (mergeError) { setError(`区画を同一契約へまとめられませんでした: ${mergeError.message}`); return; }
+    await load(); onChanged?.();
+  };
 
   const contract = detail?.contract;
   return <Dialog title="契約詳細" onClose={onClose} className="contract-detail-dialog">
@@ -202,7 +306,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       <section className="contract-detail-summary">
         <header>
           <div><p className="section-kicker">{contract.unit_type === 'parking' ? 'PARKING CONTRACT' : 'MAIN CONTRACT'}</p><h3>{contract.tenant_name}</h3><p>{contract.property_name}｜{contract.floor_label || '階未設定'}｜{contract.unit_name || contract.unit_code}</p></div>
-          <div className="contract-detail-badges"><span className={`contract-detail-status ${contract.contract_status}`}>{statusLabels[contract.contract_status] ?? contract.contract_status}</span>{capabilities.canEditContract && contract.unit_type !== 'parking' ? <button type="button" className="primary-button compact" onClick={() => setEditing(true)}>契約を編集</button> : <span className="contract-view-only">閲覧専用</span>}</div>
+          <div className="contract-detail-badges"><span className={`contract-detail-status ${contract.contract_status}`}>{statusLabels[contract.contract_status] ?? contract.contract_status}</span>{capabilities.canEditContract && contract.unit_type !== 'parking' ? <button type="button" className="primary-button compact" onClick={() => setEditing(true)}>契約を編集</button> : capabilities.canEditParkingContract && contract.unit_type === 'parking' ? <button type="button" className="primary-button compact" disabled={parkingEditorLoading} onClick={() => void openParkingEditor()}>{parkingEditorLoading ? '読み込み中…' : '駐車場詳細を編集'}</button> : <span className="contract-view-only">閲覧専用</span>}</div>
         </header>
         <div className="contract-detail-grid">
           <Field label="物件" value={contract.property_name} />
@@ -230,6 +334,29 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       </section>
 
       <section>
+        <div className="contract-detail-section-heading"><div><h3>紐づいている稟議</h3><p>契約業務フローまたは運用開始前の紐づけ作業で、この契約に関連付けた決裁済み稟議です。</p></div></div>
+        {approvalError ? <p className="contract-detail-inline-error">{approvalError}</p> : linkedApprovals.length === 0 ? <p className="contract-detail-empty">紐づいている稟議はありません。</p> : <div className="contract-detail-table-wrap"><table className="contract-detail-table contract-approval-detail-table">
+          <thead><tr><th>稟議番号</th><th>対象</th><th>稟議種別</th><th>決裁状況</th><th>稟議更新日</th><th>紐づけ日時</th></tr></thead>
+          <tbody>{linkedApprovals.map((approval) => {
+            const url = appsuiteRecordUrl(approval.app_id, approval.data_id);
+            return <tr key={approval.appsuite_record_id}><td><a href={url} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, url)}>{approval.ringi_number || approval.data_id}</a><small>AppSuite ID: {approval.data_id}</small></td><td><span className="contract-approval-target">{approval.target_label}</span></td><td>{approval.workflow_type || '—'}</td><td>{approval.approval_status || '—'}</td><td>{approval.source_updated_at ? new Date(approval.source_updated_at).toLocaleString('ja-JP') : '—'}</td><td>{approval.confirmed_at ? new Date(approval.confirmed_at).toLocaleString('ja-JP') : '—'}</td></tr>;
+          })}</tbody>
+        </table></div>}
+      </section>
+
+      {((contract.unit_type === 'parking' && capabilities.canEditParkingContract) || (contract.unit_type !== 'parking' && capabilities.canEditContract)) && mergeCandidates.length > 0 && <section className="contract-detail-candidates">
+        <div className="contract-detail-section-heading"><div><h3>{contract.unit_type === 'parking' ? '同一契約へ増車できる車室' : '同一契約へまとめられる区画'}</h3><p>同じテナント・同じ物件で、別の契約レコードになっている{contract.unit_type === 'parking' ? '駐車場契約' : '区画'}です。</p></div></div>
+        <div className="contract-detail-table-wrap"><table className="contract-detail-table">
+          <thead><tr><th>区画</th><th>種別</th><th>区画利用期間</th><th>別契約の期間</th><th>操作</th></tr></thead>
+          <tbody>{mergeCandidates.map((candidate) => <tr key={candidate.lease_contract_unit_id}>
+            <td><strong>{[candidate.floor_label, candidate.unit_name || candidate.unit_code].filter(Boolean).join(' ')}</strong><small>{candidate.unit_code}</small></td>
+            <td>{productCategoryLabel[normalizeProductCategory(candidate.unit_type)]}</td><td>{date(candidate.lease_start_date)} ～ {date(candidate.lease_end_date)}</td><td>{date(candidate.contract_start_date)} ～ {date(candidate.contract_end_date)}</td>
+            <td><button type="button" className="secondary-button compact" disabled={mergeLoading} onClick={() => void mergeContractUnit(candidate)}>{mergingId === candidate.lease_contract_unit_id ? '処理中…' : contract.unit_type === 'parking' ? '同一契約へ増車' : '同一契約へまとめる'}</button></td>
+          </tr>)}</tbody>
+        </table></div>
+      </section>}
+
+      <section>
         <div className="contract-detail-section-heading"><div><h3>同一契約の区画</h3><p>契約ヘッダーではなく、契約区画ID単位で表示しています。</p></div></div>
         <div className="contract-detail-table-wrap"><table className="contract-detail-table">
           <thead><tr><th>区画</th><th>種別</th><th>面積</th><th>賃料</th><th>共益費</th><th>契約期間</th></tr></thead>
@@ -251,5 +378,6 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       </section>}
       </>}
     </div>}
+    {parkingEditorRow && <ParkingDetailModal row={parkingEditorRow} canManage={capabilities.canEditParkingContract} onClose={() => setParkingEditorRow(null)} onSaved={async () => { setParkingEditorRow(null); await load(); onChanged?.(); }} />}
   </Dialog>;
 }

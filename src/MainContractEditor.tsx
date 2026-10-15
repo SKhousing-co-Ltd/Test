@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ContractDetail } from './ContractDetailModal';
 import { productCategories, productCategoryLabel, type ProductCategory } from './lib/product-categories';
 import { supabase } from './lib/supabase';
@@ -11,6 +11,24 @@ type EditorProps = {
 };
 
 type FormState = Record<string, string>;
+type ApprovalCandidate = {
+  appsuite_record_id: string;
+  app_id: string;
+  data_id: string;
+  ringi_number: string | null;
+  workflow_type: string | null;
+  approval_kind: string | null;
+  approval_status: string | null;
+  property_name: string | null;
+  tenant_name: string | null;
+  approval_floor_label: string | null;
+  approval_unit_label: string | null;
+  approval_space_type: string | null;
+  source_updated_at: string | null;
+  floor_match: boolean | null;
+  is_linked: boolean;
+  link_locked: boolean;
+};
 type EditableField = {
   key: string;
   label: string;
@@ -63,6 +81,13 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
   const [error, setError] = useState('');
   const [tenantQuery, setTenantQuery] = useState('');
   const [tenantOptions, setTenantOptions] = useState<Array<{ tenant_id: string; tenant_name: string; external_tenant_code: string | null }>>([]);
+  const [approvalCandidates, setApprovalCandidates] = useState<ApprovalCandidate[]>([]);
+  const [selectedApprovalIds, setSelectedApprovalIds] = useState<string[]>([]);
+  const [savedApprovalIds, setSavedApprovalIds] = useState<string[]>([]);
+  const [approvalQuery, setApprovalQuery] = useState('');
+  const [approvalsLoading, setApprovalsLoading] = useState(true);
+  const [approvalsSaving, setApprovalsSaving] = useState(false);
+  const [approvalMessage, setApprovalMessage] = useState('');
   const selectedLeaseTerm = form.lease_term_type as 'ordinary' | 'fixed_term' | '';
   const visibleFields = useMemo(() => fields.filter((field) => !field.leaseTerm || field.leaseTerm === selectedLeaseTerm), [selectedLeaseTerm]);
   const diffs = useMemo(() => fields.flatMap((field) => {
@@ -70,6 +95,48 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
     const after = normalize(field, form[field.key]);
     return String(before ?? '') === String(after ?? '') ? [] : [{ field, before, after }];
   }), [contract, form]);
+  const approvalLinksChanged = useMemo(() => {
+    const selected = [...selectedApprovalIds].sort();
+    const saved = [...savedApprovalIds].sort();
+    return selected.length !== saved.length || selected.some((id, index) => id !== saved[index]);
+  }, [savedApprovalIds, selectedApprovalIds]);
+  const filteredApprovalCandidates = useMemo(() => {
+    const query = approvalQuery.trim().toLocaleLowerCase('ja-JP');
+    if (!query) return approvalCandidates;
+    return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.approval_kind, candidate.tenant_name, candidate.approval_floor_label, candidate.approval_unit_label, candidate.approval_space_type]
+      .filter(Boolean).join(' ').toLocaleLowerCase('ja-JP').includes(query));
+  }, [approvalCandidates, approvalQuery]);
+
+  const loadApprovalCandidates = async () => {
+    if (!supabase) return;
+    setApprovalsLoading(true);
+    const { data, error: approvalError } = await supabase.rpc('list_contract_approval_link_candidates', {
+      p_lease_contract_id: contract.lease_contract_id,
+    });
+    setApprovalsLoading(false);
+    if (approvalError) { setError(`稟議候補を取得できませんでした: ${approvalError.message}`); return; }
+    const candidates = (data ?? []) as ApprovalCandidate[];
+    const linkedIds = candidates.filter((candidate) => candidate.is_linked).map((candidate) => candidate.appsuite_record_id);
+    setApprovalCandidates(candidates);
+    setSelectedApprovalIds(linkedIds);
+    setSavedApprovalIds(linkedIds);
+  };
+
+  useEffect(() => { void loadApprovalCandidates(); }, [contract.lease_contract_id]);
+
+  const saveApprovalLinks = async () => {
+    if (!supabase || !approvalLinksChanged) return;
+    if (!window.confirm('選択した稟議を契約へ紐づけ、契約業務フローを完了します。完了した稟議は業務フロー一覧から消えます。実行しますか？')) return;
+    setApprovalsSaving(true); setError(''); setApprovalMessage('');
+    const { error: linkError } = await supabase.rpc('set_contract_approval_links', {
+      p_lease_contract_id: contract.lease_contract_id,
+      p_appsuite_record_ids: selectedApprovalIds,
+    });
+    setApprovalsSaving(false);
+    if (linkError) { setError(`稟議を紐づけできませんでした: ${linkError.message}`); return; }
+    setApprovalMessage('稟議を紐づけ、契約業務フローを完了しました。');
+    await loadApprovalCandidates();
+  };
 
   const save = async () => {
     if (!supabase || !reason.trim() || diffs.length === 0) return;
@@ -140,6 +207,22 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
         setForm({ ...form, lease_term_type: leaseTerm, ...(leaseTerm === 'ordinary' ? { contract_end_date: '' } : { renewal_due_date: '' }) });
       }}><option value="">選択してください</option><option value="ordinary">普通賃貸借</option><option value="fixed_term">定期賃貸借</option></select>
       : <input type={field.type ?? 'text'} min={field.type === 'number' ? '0' : undefined} step={field.key === 'leased_area_sqm' ? '0.01' : field.type === 'number' ? '1' : undefined} value={form[field.key]} onChange={(event) => setForm({ ...form, [field.key]: event.target.value })} />}</label>)}</div>
+    <section className="contract-approval-links">
+      <div className="contract-detail-section-heading"><div><h3>運用開始前の決裁済み稟議との紐づけ</h3><p>{contract.property_name}の未処理稟議を表示しています。階情報を照合できた稟議を先頭に表示し、複数選択できます。</p></div></div>
+      <div className="contract-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・テナント・階・区画・稟議種別で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
+      {approvalsLoading ? <p className="contract-approval-empty">稟議候補を読み込んでいます。</p> : filteredApprovalCandidates.length === 0 ? <p className="contract-approval-empty">同じビルの決裁済み稟議はありません。</p> : <div className="contract-approval-list">
+        {filteredApprovalCandidates.map((candidate) => <label key={candidate.appsuite_record_id} className={candidate.floor_match ? 'floor-match' : ''}>
+          <input type="checkbox" checked={selectedApprovalIds.includes(candidate.appsuite_record_id)} disabled={candidate.link_locked} onChange={(event) => setSelectedApprovalIds((current) => event.target.checked ? [...current, candidate.appsuite_record_id] : current.filter((id) => id !== candidate.appsuite_record_id))} />
+          <span className="contract-approval-main"><strong>{candidate.ringi_number || candidate.data_id}</strong><small>テナント：{candidate.tenant_name || '未設定'}</small><small>稟議種別：{candidate.approval_kind || candidate.workflow_type || '未設定'}</small></span>
+          <span className="contract-approval-location"><small>階：{candidate.approval_floor_label || '未設定'}</small><small>区画：{candidate.approval_unit_label || '未設定'}</small><small>区分：{candidate.approval_space_type || '未設定'}</small></span>
+          <span className="contract-approval-floor">{candidate.floor_match === true ? '同じ階' : candidate.floor_match === false ? '別階' : '階情報なし'}</span>
+          {candidate.link_locked && <span className="contract-approval-locked">業務フローで紐づけ済み</span>}
+        </label>)}
+      </div>}
+      {approvalMessage && <p className="contract-approval-message">{approvalMessage}</p>}
+      <p className="contract-approval-warning">紐づけると契約業務フローも完了し、対象稟議は業務フロー一覧から消えます。</p>
+      <div className="contract-approval-actions"><button type="button" className="secondary-button" disabled={!approvalLinksChanged || approvalsSaving} onClick={() => void saveApprovalLinks()}>{approvalsSaving ? '処理中…' : '紐づけて業務フローを完了'}</button></div>
+    </section>
     {error && <p className="contract-detail-error">{error}</p>}
     <div className="contract-editor-actions"><button type="button" className="secondary-button" onClick={onCancel}>キャンセル</button><button type="button" className="primary-button" disabled={diffs.length === 0} onClick={startConfirmation}>変更内容を確認</button></div>
   </section>;

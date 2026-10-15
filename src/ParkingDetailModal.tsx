@@ -81,6 +81,20 @@ type ContractDocumentDetail = {
   latest_formal_output_revision_id: string | null;
   updated_at: string;
 };
+type ApprovalCandidate = {
+  appsuite_record_id: string;
+  data_id: string;
+  ringi_number: string | null;
+  workflow_type: string | null;
+  approval_kind: string | null;
+  tenant_name: string | null;
+  approval_floor_label: string | null;
+  approval_unit_label: string | null;
+  approval_space_type: string | null;
+  floor_match: boolean | null;
+  is_linked: boolean;
+  link_locked: boolean;
+};
 type FacilityLookup = {
   parking_facility_id: string;
   facility_name: string;
@@ -168,6 +182,12 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   const [relatedSpaces, setRelatedSpaces] = useState<RelatedParkingSpace[]>([]);
   const [contractDocument, setContractDocument] = useState<ContractDocumentDetail | null>(null);
   const [parkingTemplateReady, setParkingTemplateReady] = useState(false);
+  const [approvalCandidates, setApprovalCandidates] = useState<ApprovalCandidate[]>([]);
+  const [selectedApprovalIds, setSelectedApprovalIds] = useState<string[]>([]);
+  const [savedApprovalIds, setSavedApprovalIds] = useState<string[]>([]);
+  const [approvalQuery, setApprovalQuery] = useState('');
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [approvalSaving, setApprovalSaving] = useState(false);
   const [tenantQuery, setTenantQuery] = useState('');
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -198,6 +218,21 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   const occupied = row.space_status === 'occupied' && Boolean(row.lease_contract_id && row.lease_contract_unit_id);
   const spaceStatusLabel = unavailable ? '使用不可' : occupied ? '契約中' : '空き';
   const spaceStatusClass = unavailable ? 'unavailable' : occupied ? 'occupied' : 'vacant';
+
+  const loadApprovalCandidates = async () => {
+    if (!supabase || !row.lease_contract_id) { setApprovalCandidates([]); return; }
+    setApprovalLoading(true);
+    const { data, error } = await supabase.rpc('list_contract_approval_link_candidates', { p_lease_contract_id: row.lease_contract_id });
+    setApprovalLoading(false);
+    if (error) { setMessage(`稟議候補を読み込めませんでした: ${error.message}`); return; }
+    const candidates = (data ?? []) as ApprovalCandidate[];
+    const linked = candidates.filter((candidate) => candidate.is_linked).map((candidate) => candidate.appsuite_record_id);
+    setApprovalCandidates(candidates);
+    setSelectedApprovalIds(linked);
+    setSavedApprovalIds(linked);
+  };
+
+  useEffect(() => { void loadApprovalCandidates(); }, [row.lease_contract_id]);
 
   useEffect(() => {
     if (!supabase) {
@@ -355,6 +390,17 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     () => mainContracts.filter((contract) => contract.tenant_id === form.tenant_id),
     [form.tenant_id, mainContracts],
   );
+  const filteredApprovalCandidates = useMemo(() => {
+    const normalized = approvalQuery.normalize('NFKC').toLocaleLowerCase('ja-JP').trim();
+    if (!normalized) return approvalCandidates;
+    return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.approval_kind, candidate.tenant_name, candidate.approval_floor_label, candidate.approval_unit_label, candidate.approval_space_type]
+      .filter(Boolean).join(' ').normalize('NFKC').toLocaleLowerCase('ja-JP').includes(normalized));
+  }, [approvalCandidates, approvalQuery]);
+  const approvalLinksChanged = useMemo(() => {
+    const selectedIds = [...selectedApprovalIds].sort();
+    const savedIds = [...savedApprovalIds].sort();
+    return selectedIds.length !== savedIds.length || selectedIds.some((id, index) => id !== savedIds[index]);
+  }, [savedApprovalIds, selectedApprovalIds]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -425,6 +471,21 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     setSaving(false);
     setEditing(false);
     setMessage('保存しました。');
+  };
+
+  const saveApprovalLinks = async () => {
+    if (!supabase || !row.lease_contract_id || !approvalLinksChanged || approvalSaving) return;
+    if (!window.confirm('選択した稟議を駐車場契約へ紐づけ、契約業務フローを完了します。実行しますか？')) return;
+    setApprovalSaving(true);
+    setMessage('');
+    const { error } = await supabase.rpc('set_contract_approval_links', {
+      p_lease_contract_id: row.lease_contract_id,
+      p_appsuite_record_ids: selectedApprovalIds,
+    });
+    setApprovalSaving(false);
+    if (error) { setMessage(`稟議を紐づけできませんでした: ${error.message}`); return; }
+    setMessage('稟議を駐車場契約へ紐づけ、契約業務フローを完了しました。');
+    await loadApprovalCandidates();
   };
 
   const tenantName = tenants.find((tenant) => tenant.tenant_id === form.tenant_id)?.tenant_name ?? row.tenant_name ?? '—';
@@ -565,6 +626,20 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
                 <button className="secondary-button" disabled={!canOpenParkingDocument} onClick={() => row.lease_contract_id && navigate(`/contracts/${row.lease_contract_id}/document`)}>{canOpenParkingDocument ? '駐車場契約書を開く' : '駐車場契約書ひな型 準備中'}</button>
                 {form.parking_scope === 'internal' && form.main_lease_contract_id ? <button className="secondary-button" onClick={() => navigate(`/contracts/${form.main_lease_contract_id}/document`)}>主契約の契約書を開く</button> : null}
               </div>
+            </div>
+
+            <div className="parking-contract-subsection"><strong>運用開始前の決裁済み稟議</strong><span>同じ物件の未処理稟議を駐車場契約へ紐づけます</span></div>
+            <div className="parking-approval-panel">
+              <div className="parking-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・テナント・階・区画・稟議種別で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
+              {approvalLoading ? <p className="parking-approval-empty">稟議候補を読み込んでいます。</p> : filteredApprovalCandidates.length === 0 ? <p className="parking-approval-empty">同じ物件の未処理稟議はありません。</p> : <div className="parking-approval-list">{filteredApprovalCandidates.map((candidate) => <label key={candidate.appsuite_record_id}>
+                <input type="checkbox" checked={selectedApprovalIds.includes(candidate.appsuite_record_id)} disabled={candidate.link_locked} onChange={(event) => setSelectedApprovalIds((current) => event.target.checked ? [...current, candidate.appsuite_record_id] : current.filter((id) => id !== candidate.appsuite_record_id))} />
+                <span><strong>{candidate.ringi_number || candidate.data_id}</strong><small>テナント：{candidate.tenant_name || '未設定'}</small><small>稟議種別：{candidate.approval_kind || candidate.workflow_type || '未設定'}</small></span>
+                <span className="parking-approval-location"><small>階：{candidate.approval_floor_label || '未設定'}</small><small>区画：{candidate.approval_unit_label || '未設定'}</small><small>区分：{candidate.approval_space_type || '未設定'}</small></span>
+                <em>{candidate.floor_match === true ? '同じ階' : candidate.floor_match === false ? '別階' : '階情報なし'}</em>
+                {candidate.link_locked ? <em className="locked">紐づけ済み</em> : null}
+              </label>)}</div>}
+              <div className="parking-approval-note">紐づけると契約業務フローも完了し、レントロールの契約詳細にも表示されます。</div>
+              <div className="parking-approval-actions"><button className="secondary-button" disabled={!canManage || !approvalLinksChanged || approvalSaving} onClick={() => void saveApprovalLinks()}>{approvalSaving ? '処理中…' : '紐づけて業務フローを完了'}</button></div>
             </div>
           </> : null}
         </section>
