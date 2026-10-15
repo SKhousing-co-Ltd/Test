@@ -1,0 +1,4 @@
+-- The linked database records migration version 20261015020000 as
+-- generalize_explicit_contract_relations, but its original SQL is not present
+-- in repository history. Keep the applied version represented locally so
+-- Supabase migration checks can compare histories without reapplying it.
