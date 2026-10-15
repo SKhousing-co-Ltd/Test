@@ -1,15 +1,4 @@
-import { adminClient, changed, corsHeaders, enrichRingiNumbers, fetchRecords, json } from '../_shared/appsuite.ts';
-
-function errorMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === 'object') {
-    const value = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
-    const parts = [value.message, value.details, value.hint, value.code].filter((part): part is string => typeof part === 'string' && part.length > 0);
-    if (parts.length) return parts.join(' | ');
-    try { return JSON.stringify(error); } catch { return 'Unknown object error'; }
-  }
-  return String(error);
-}
+import { adminClient, changed, corsHeaders, enrichRingiNumbers, errorMessage, fetchRecords, fetchStoredAppsuiteRecords, json, upsertAppsuiteRecords } from '../_shared/appsuite.ts';
 
 async function syncApplication(appId: string) {
   const admin = adminClient();
@@ -20,20 +9,16 @@ async function syncApplication(appId: string) {
 
   try {
     const records = await fetchRecords(appId);
-    const { data: stored, error } = await admin.from('appsuite_record')
-      .select('data_id, revision, raw_payload, is_present, ringi_number').eq('app_id', appId);
-    if (error) throw error;
-    const existing = new Map((stored ?? []).map((row) => [row.data_id, row]));
+    const stored = await fetchStoredAppsuiteRecords(admin, appId);
+    const existing = new Map(stored.map((row) => [row.data_id, row]));
     const inserted = records.filter((record) => !existing.has(record.data_id)).length;
     const updated = records.filter((record) => existing.has(record.data_id) && changed(record, existing.get(record.data_id))).length;
     const unchanged = records.length - inserted - updated;
     const sourceIds = new Set(records.map((record) => record.data_id));
-    const missing = (stored ?? []).filter((row) => row.is_present && !sourceIds.has(row.data_id)).map((row) => row.data_id);
+    const missing = stored.filter((row) => row.is_present && !sourceIds.has(row.data_id)).map((row) => row.data_id);
     const enrichedRecords = await enrichRingiNumbers(records, existing);
     const now = new Date().toISOString();
-    const { error: upsertError } = await admin.from('appsuite_record')
-      .upsert(enrichedRecords.map((record) => ({ ...record, is_present: true, last_seen_at: now })), { onConflict: 'app_id,data_id' });
-    if (upsertError) throw upsertError;
+    await upsertAppsuiteRecords(admin, enrichedRecords, now);
     if (missing.length) {
       const { error: missingError } = await admin.from('appsuite_record')
         .update({ is_present: false }).eq('app_id', appId).in('data_id', missing);

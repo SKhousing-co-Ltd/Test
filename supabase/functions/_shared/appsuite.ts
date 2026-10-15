@@ -24,6 +24,37 @@ export function adminClient() {
   return createClient(Deno.env.get('SUPABASE_URL')!, serviceRoleKey);
 }
 
+export function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const value = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    const parts = [value.message, value.details, value.hint, value.code].filter((part): part is string => typeof part === 'string' && part.length > 0);
+    if (parts.length) return parts.join(' | ');
+    try { return JSON.stringify(error); } catch { return 'Unknown object error'; }
+  }
+  return String(error);
+}
+
+export async function upsertAppsuiteRecords(admin: ReturnType<typeof adminClient>, records: AppsuiteRecord[], now: string) {
+  for (let offset = 0; offset < records.length; offset += 100) {
+    const batch = records.slice(offset, offset + 100).map((record) => ({ ...record, is_present: true, last_seen_at: now }));
+    const { error } = await admin.from('appsuite_record').upsert(batch, { onConflict: 'app_id,data_id' });
+    if (error) throw error;
+  }
+}
+
+export async function fetchStoredAppsuiteRecords(admin: ReturnType<typeof adminClient>, appId: string): Promise<StoredAppsuiteRecord[]> {
+  const records: StoredAppsuiteRecord[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await admin.from('appsuite_record')
+      .select('data_id, revision, raw_payload, is_present, ringi_number')
+      .eq('app_id', appId).order('data_id').range(offset, offset + 999);
+    if (error) throw error;
+    records.push(...(data ?? []));
+    if (!data || data.length < 1000) return records;
+  }
+}
+
 export async function requireActiveUser(request: Request) {
   const userClient = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: request.headers.get('Authorization') ?? '' } } });
   const { data: { user } } = await userClient.auth.getUser();
@@ -58,7 +89,11 @@ function value(payload: Record<string, unknown>, key: string): string | null {
   return typeof field.val === 'string' ? field.val.trim() || null : String(field.val);
 }
 
-function workflowType(name: string | null) {
+function workflowType(name: string | null, appId: string) {
+  if (appId === '87') return '修繕発注稟議';
+  if (['23', '63', '65', '66', '67', '72', '78'].includes(appId)) return '新規契約';
+  if (['24', '69', '77', '79', '83', '84', '85', '143'].includes(appId)) return '契約内容変更';
+  if (appId === '100') return '決裁済み稟議取消';
   if (!name) return 'その他';
   if (/定期借家.*(?:まき直し|巻き直し)|(?:まき直し|巻き直し).*定期借家/.test(name)) return '定期借家まき直し稟議';
   if (name.includes('新規契約稟議')) return '新規契約稟議';
@@ -82,7 +117,7 @@ export async function fetchRecords(appId: string): Promise<AppsuiteRecord[]> {
       const requirement = value(payload, '申請の要件');
       const dataId = value(payload, 'データID');
       if (!dataId) continue;
-      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: value(payload, '稟議番号'), raw_payload: payload });
+      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement, appId), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: value(payload, '稟議番号'), raw_payload: payload });
     }
   }
   return results;
@@ -112,5 +147,15 @@ export async function enrichRingiNumbers(records: AppsuiteRecord[], existing: Ma
 }
 
 export function changed(source: AppsuiteRecord, stored?: { revision: string | null; raw_payload: unknown; is_present: boolean }) {
-  return !stored || !stored.is_present || source.revision !== stored.revision || JSON.stringify(source.raw_payload) !== JSON.stringify(stored.raw_payload);
+  return !stored || !stored.is_present || source.revision !== stored.revision ||
+    JSON.stringify(sortJsonKeys(source.raw_payload)) !== JSON.stringify(sortJsonKeys(stored.raw_payload));
+}
+
+function sortJsonKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonKeys);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, field]) => [key, sortJsonKeys(field)]));
+  }
+  return value;
 }
