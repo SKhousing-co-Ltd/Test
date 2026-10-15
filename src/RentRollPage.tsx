@@ -175,6 +175,35 @@ function summarizeRows(targetRows: RentRollRow[]) {
   };
 }
 
+function sumRentRollColumns(targetRows: RentRollRow[]) {
+  return targetRows.reduce(
+    (totals, row) => ({
+      area: totals.area + (row.area ?? 0),
+      rent: totals.rent + row.rent,
+      commonCharge: totals.commonCharge + row.commonCharge,
+      rentCommonTotal: totals.rentCommonTotal + row.rentCommonTotal,
+      parkingAmount: totals.parkingAmount + row.parkingAmount,
+      otherMonthlyAmount: totals.otherMonthlyAmount + row.otherMonthlyAmount,
+      deposit: totals.deposit + row.deposit,
+      securityDeposit: totals.securityDeposit + row.securityDeposit,
+      keyMoney: totals.keyMoney + row.keyMoney,
+      renewalFee: totals.renewalFee + row.renewalFee,
+    }),
+    {
+      area: 0,
+      rent: 0,
+      commonCharge: 0,
+      rentCommonTotal: 0,
+      parkingAmount: 0,
+      otherMonthlyAmount: 0,
+      deposit: 0,
+      securityDeposit: 0,
+      keyMoney: 0,
+      renewalFee: 0,
+    },
+  );
+}
+
 function floorOrder(label: string): number {
   const normalized = label.normalize("NFKC").trim().toUpperCase();
   const basement = normalized.match(/^B(\d+)/);
@@ -614,6 +643,10 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   ]);
 
   const summary = useMemo(() => summarizeRows(filteredRows), [filteredRows]);
+  const columnTotals = useMemo(
+    () => sumRentRollColumns(filteredRows),
+    [filteredRows],
+  );
   const overallSummary = useMemo(() => summarizeRows(rows), [rows]);
   const productCounts = useMemo(
     () =>
@@ -1084,6 +1117,25 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   </tr>
                 ))}
             </tbody>
+            {!loadingRows && filteredRows.length > 0 && (
+              <tfoot>
+                <tr className="rent-roll-total-row">
+                  <th colSpan={11} scope="row">
+                    表示中の合計（{numberFormatter.format(filteredRows.length)}件）
+                  </th>
+                  <td className="numeric">{numberFormatter.format(columnTotals.area)}</td>
+                  <td className="numeric emphasis">{formatCurrency(columnTotals.rent)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.commonCharge)}</td>
+                  <td className="numeric emphasis">{formatCurrency(columnTotals.rentCommonTotal)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.parkingAmount)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.otherMonthlyAmount)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.deposit)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.securityDeposit)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.keyMoney)}</td>
+                  <td className="numeric">{formatCurrency(columnTotals.renewalFee)}</td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>

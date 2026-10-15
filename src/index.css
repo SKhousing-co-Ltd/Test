@@ -3750,6 +3750,17 @@ td small {
 .rent-roll-table tbody tr:hover {
   background: #f7fbff;
 }
+.rent-roll-table tfoot th,
+.rent-roll-table tfoot td {
+  border-top: 2px solid #cbd8e6;
+  border-bottom: 0;
+  color: #233f61;
+  background: #eef5fc;
+  font-weight: 800;
+}
+.rent-roll-table tfoot th {
+  text-align: right;
+}
 .rent-roll-table td.numeric,
 .rent-roll-table th:nth-child(n + 10) {
   text-align: right;

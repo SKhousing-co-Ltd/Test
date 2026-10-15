@@ -67,7 +67,7 @@ export type ContractUnit = {
   lease_end_date: string | null;
 };
 
-type ParkingContract = {
+type RelatedContract = {
   lease_contract_unit_id: string;
   lease_contract_id: string;
   contract_status: string;
@@ -76,12 +76,17 @@ type ParkingContract = {
   unit_id: string;
   unit_code: string;
   unit_name: string | null;
+  floor_label?: string | null;
+  unit_type?: string | null;
   space_number: string | null;
   parking_scope: 'internal' | 'external' | null;
   monthly_parking_fee?: number | null;
+  monthly_amount?: number | null;
+  monthly_common_charge_amount?: number | null;
   effective_from?: string | null;
   effective_to?: string | null;
-  relationship_source: 'fee_history' | 'contract_header' | 'tenant_property_candidate';
+  relationship_source: 'fee_history' | 'contract_header' | 'contract_relation' | 'tenant_property_candidate';
+  relationship_direction?: 'main' | 'related';
 };
 
 type LinkedApproval = {
@@ -113,8 +118,9 @@ export type ContractDetailResponse = {
   as_of_date: string;
   contract: ContractDetail;
   contract_units: ContractUnit[];
-  related_parking_contracts: ParkingContract[];
-  parking_candidates: ParkingContract[];
+  related_contracts: RelatedContract[];
+  related_parking_contracts: RelatedContract[];
+  parking_candidates: RelatedContract[];
 };
 
 type ContractDetailModalProps = {
@@ -166,11 +172,11 @@ function one<T>(value: T | T[] | null): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-function ParkingRows({ rows, candidate = false, canEdit }: { rows: ParkingContract[]; candidate?: boolean; canEdit: boolean }) {
+function RelatedContractRows({ rows, candidate = false, canEditParking }: { rows: RelatedContract[]; candidate?: boolean; canEditParking: boolean }) {
   const navigate = useNavigate();
   const [workingId, setWorkingId] = useState('');
-  const openParking = async (row: ParkingContract) => {
-    if (!canEdit || !supabase) return;
+  const openParking = async (row: RelatedContract) => {
+    if (!canEditParking || !supabase || row.unit_type !== 'parking') return;
     setWorkingId(row.lease_contract_unit_id);
     if (row.monthly_parking_fee == null) {
       const { error } = await supabase.rpc('enqueue_parking_fee_change_request', {
@@ -186,16 +192,16 @@ function ParkingRows({ rows, candidate = false, canEdit }: { rows: ParkingContra
     setWorkingId('');
     navigate(`/parking?contractUnit=${row.lease_contract_unit_id}`);
   };
-  if (rows.length === 0) return <p className="contract-detail-empty">該当する駐車場契約はありません。</p>;
+  if (rows.length === 0) return <p className="contract-detail-empty">明示的に紐づく契約はありません。</p>;
   return <div className="contract-detail-table-wrap"><table className="contract-detail-table">
-    <thead><tr><th>車室</th><th>内外</th><th>月額駐車料</th><th>契約期間</th><th>関係</th>{canEdit && <th>操作</th>}</tr></thead>
+    <thead><tr><th>区画・設備</th><th>商品区分</th><th>月額</th><th>契約期間</th><th>関係</th>{canEditParking && <th>操作</th>}</tr></thead>
     <tbody>{rows.map((row) => <tr key={`${row.relationship_source}-${row.lease_contract_unit_id}`}>
-      <td><strong>{row.space_number || row.unit_name || row.unit_code}</strong><small>{row.unit_code}</small></td>
-      <td>{row.parking_scope === 'internal' ? '内部' : row.parking_scope === 'external' ? '外部' : '—'}</td>
-      <td className="numeric">{money(row.monthly_parking_fee)}</td>
+      <td><strong>{[row.floor_label, row.space_number || row.unit_name || row.unit_code].filter(Boolean).join(' ')}</strong><small>{row.unit_code}</small></td>
+      <td>{productCategoryLabel[normalizeProductCategory(row.unit_type || 'parking')]}</td>
+      <td className="numeric">{money(row.unit_type === 'parking' ? row.monthly_parking_fee : row.monthly_amount)}</td>
       <td>{date(row.lease_start_date)} ～ {date(row.lease_end_date)}</td>
-      <td>{candidate ? <span className="contract-relation candidate">未確定候補</span> : row.relationship_source === 'fee_history' ? <span className="contract-relation confirmed">料金履歴で確定</span> : <span className="contract-relation linked">契約ヘッダーで紐付け</span>}</td>
-      {canEdit && <td><button type="button" className="secondary-button compact" disabled={workingId === row.lease_contract_unit_id} onClick={() => void openParking(row)}>{row.monthly_parking_fee == null ? '駐車料を登録' : '駐車場台帳で編集'}</button></td>}
+      <td>{candidate ? <span className="contract-relation candidate">未確定候補</span> : row.relationship_source === 'fee_history' ? <span className="contract-relation confirmed">料金履歴で確定</span> : row.relationship_source === 'contract_header' ? <span className="contract-relation linked">契約ヘッダーで紐付け</span> : <span className="contract-relation linked">{row.relationship_direction === 'main' ? '主契約' : '明示的な紐付け'}</span>}</td>
+      {canEditParking && <td>{row.unit_type === 'parking' ? <button type="button" className="secondary-button compact" disabled={workingId === row.lease_contract_unit_id} onClick={() => void openParking(row)}>{row.monthly_parking_fee == null ? '駐車料を登録' : '駐車場台帳で編集'}</button> : '—'}</td>}
     </tr>)}</tbody>
   </table></div>;
 }
@@ -237,8 +243,9 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           const { data: mergeRows, error: mergeError } = await supabase.rpc('list_contract_unit_merge_candidates', { p_target_lease_contract_id: contractId });
           if (!mergeError) setMergeCandidates((mergeRows ?? []) as ContractUnitMergeCandidate[]);
         } else setMergeCandidates([]);
-        const relatedParkingContractIds = loadedDetail.related_parking_contracts.map((item) => item.lease_contract_id);
-        const targetContractIds = [...new Set([contractId, ...relatedParkingContractIds])];
+        const relatedContracts = loadedDetail.related_contracts ?? loadedDetail.related_parking_contracts ?? [];
+        const relatedContractLabels = new Map(relatedContracts.map((item) => [item.lease_contract_id, `${productCategoryLabel[normalizeProductCategory(item.unit_type || 'parking')]}契約`]));
+        const targetContractIds = [...new Set([contractId, ...relatedContracts.map((item) => item.lease_contract_id)])];
         const { data: linkRows, error: linkError } = await supabase
           .from('workflow_contract_link')
           .select('workflow_contract_link_id, lease_contract_id, confirmed_at, appsuite_record:appsuite_record(appsuite_record_id, app_id, data_id, ringi_number, workflow_type, approval_status, source_updated_at)')
@@ -252,7 +259,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           const unique = new Map<string, LinkedApproval>();
           for (const row of linkRows ?? []) {
             const record = one(row.appsuite_record) as Omit<LinkedApproval, 'confirmed_at' | 'target_label'> | null;
-            if (record && !unique.has(record.appsuite_record_id)) unique.set(record.appsuite_record_id, { ...record, confirmed_at: row.confirmed_at, target_label: row.lease_contract_id === contractId ? 'この契約' : '駐車場契約' });
+            if (record && !unique.has(record.appsuite_record_id)) unique.set(record.appsuite_record_id, { ...record, confirmed_at: row.confirmed_at, target_label: row.lease_contract_id === contractId ? 'この契約' : relatedContractLabels.get(row.lease_contract_id) ?? '関連契約' });
           }
           setLinkedApprovals([...unique.values()]);
         }
@@ -368,13 +375,13 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
       </section>
 
       <section>
-        <div className="contract-detail-section-heading"><div><h3>明示的に紐づく駐車場契約</h3><p>駐車料履歴または駐車場契約ヘッダーで関係が確認できる契約です。</p></div></div>
-        <ParkingRows rows={detail.related_parking_contracts} canEdit={capabilities.canEditParkingContract} />
+        <div className="contract-detail-section-heading"><div><h3>明示的に紐づく契約</h3><p>駐車場・駐輪場・看板・アンテナ・その他を含む、主契約と関連付けた契約です。</p></div></div>
+        <RelatedContractRows rows={detail.related_contracts ?? detail.related_parking_contracts ?? []} canEditParking={capabilities.canEditParkingContract} />
       </section>
 
       {detail.parking_candidates.length > 0 && <section className="contract-detail-candidates">
         <div className="contract-detail-section-heading"><div><h3>同一テナント・同一物件の未紐付け候補</h3><p>名称一致だけでは関連契約と確定しません。確認対象として分離表示しています。</p></div></div>
-        <ParkingRows rows={detail.parking_candidates} candidate canEdit={capabilities.canEditParkingContract} />
+        <RelatedContractRows rows={detail.parking_candidates.map((item) => ({ ...item, unit_type: item.unit_type || 'parking' }))} candidate canEditParking={capabilities.canEditParkingContract} />
       </section>}
       </>}
     </div>}
