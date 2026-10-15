@@ -1,0 +1,483 @@
+.change-thread-workbench {
+  gap: 14px;
+  color: #23344d;
+}
+
+.change-validation-pending {
+  border-color: #e7c98a;
+  background: #fffaf0;
+}
+
+.change-validation-pending h4 {
+  margin: 0 0 6px;
+  color: #805b12;
+}
+
+.change-validation-pending p,
+.change-validation-pending ul {
+  margin: 6px 0;
+}
+
+.change-validation-pending li {
+  margin: 3px 0;
+}
+
+.change-thread-page-heading {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.change-thread-page-heading > div:first-child > p:last-child {
+  margin: 0;
+  color: #718198;
+  font-size: 13px;
+}
+
+.thread-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.thread-work-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.thread-work-stat {
+  display: grid;
+  min-height: 74px;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid #e0e8f1;
+  border-radius: 9px;
+  padding: 10px 13px;
+  background: #fff;
+}
+
+.thread-work-stat > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.thread-work-stat strong {
+  color: #243b59;
+  font-size: 23px;
+  line-height: 1.1;
+}
+
+.thread-work-stat small {
+  color: #8492a5;
+  font-size: 10px;
+}
+
+.thread-work-stat.primary {
+  border-color: #8bb7f4;
+  background: #f5f9ff;
+}
+
+.thread-work-stat.primary strong {
+  color: #1763bd;
+}
+
+.thread-work-stat.archived {
+  background: #f8fafc;
+}
+
+.thread-work-stat i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d4942c;
+}
+
+.thread-work-stat .review-dot { background: #4587cc; }
+.thread-work-stat .hold-dot { background: #9874ad; }
+.thread-work-stat .archive-dot { background: #9aa8b8; }
+
+.thread-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e2e9f1;
+  border-radius: 9px;
+  padding: 10px;
+  background: #fff;
+}
+
+.thread-toolbar select,
+.thread-search-field input {
+  box-sizing: border-box;
+  min-height: 36px;
+  border: 1px solid #d5dfeb;
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: #fff;
+  color: #34465f;
+  font: inherit;
+  font-size: 12px;
+}
+
+.thread-search-field {
+  display: flex;
+  flex: 1 1 280px;
+  align-items: center;
+  gap: 6px;
+  min-width: 200px;
+  border: 1px solid #d5dfeb;
+  border-radius: 6px;
+  padding-left: 9px;
+  color: #8492a5;
+}
+
+.thread-search-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+}
+
+.thread-sort-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.thread-archive-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e5eaf0;
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: #f8fafc;
+  color: #68788e;
+  font-size: 11px;
+}
+
+.thread-archive-bar .secondary-button,
+.thread-page-actions .secondary-button {
+  min-height: 34px;
+  font-size: 11px;
+}
+
+.thread-workbench-layout {
+  grid-template-columns: minmax(310px, 0.82fr) minmax(500px, 1.55fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.thread-request-list,
+.thread-request-detail {
+  min-width: 0;
+  box-shadow: 0 2px 8px rgb(25 45 72 / 4%);
+}
+
+.change-workbench .thread-request-list {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  height: min(76vh, calc(100vh - 190px));
+  min-height: 360px;
+  max-height: calc(100vh - 24px);
+  flex-direction: column;
+}
+
+.thread-request-list > header {
+  align-items: center;
+  padding: 12px 13px;
+}
+
+.thread-request-list > header h3 {
+  margin: 0 0 3px;
+  color: #2b405c;
+  font-size: 13px;
+}
+
+.thread-request-list > header p {
+  margin: 0;
+  color: #8290a3;
+  font-size: 10px;
+}
+
+.thread-refresh-button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dbe4ee;
+  border-radius: 6px;
+  background: #fff;
+  color: #55708f;
+  cursor: pointer;
+  font-size: 17px;
+}
+
+.change-workbench .thread-request-rows {
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+  padding: 5px;
+  background: #f7f9fc;
+}
+
+.thread-request-rows .thread-request-card {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 5px;
+  border: 1px solid #e5ebf2;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fff;
+  color: #30435e;
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-request-rows .thread-request-card:hover { border-color: #a9c7ef; }
+.thread-request-rows .thread-request-card.selected {
+  border-color: #7eace8;
+  background: #f0f6ff;
+  box-shadow: inset 3px 0 #367ed0;
+}
+
+.thread-request-card-top,
+.thread-request-card-footer,
+.thread-request-parties {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.thread-request-card-top { justify-content: space-between; }
+.thread-request-card-top time,
+.thread-request-card-footer small {
+  color: #8794a6;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.thread-request-rows .thread-request-type {
+  color: #71849c;
+  font-size: 10px;
+}
+
+.thread-request-rows .thread-request-card > strong {
+  overflow: hidden;
+  color: #2d405b;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+}
+
+.thread-request-rows .thread-request-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #65758a;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.thread-request-parties {
+  overflow: hidden;
+  color: #60758d;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.thread-request-parties b { color: #95a1b0; font-weight: 600; }
+.thread-request-parties i { color: #b0bac7; font-style: normal; }
+.thread-request-parties { text-overflow: ellipsis; }
+.thread-request-card-footer { justify-content: space-between; }
+
+.thread-list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #e7edf3;
+  padding: 9px 10px;
+  color: #78879a;
+  font-size: 10px;
+}
+
+.thread-list-pagination > div,
+.thread-list-pagination > div > span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.thread-list-pagination button {
+  min-width: 27px;
+  height: 27px;
+  border: 1px solid #dce5ef;
+  border-radius: 5px;
+  background: #fff;
+  color: #52667e;
+  cursor: pointer;
+}
+
+.thread-list-pagination button.active {
+  border-color: #2c73c9;
+  background: #2c73c9;
+  color: #fff;
+}
+
+.thread-list-pagination button:disabled { opacity: .45; cursor: default; }
+.thread-list-pagination i { padding: 0 2px; color: #96a3b2; font-style: normal; }
+
+.change-workbench .thread-request-detail { max-height: none; overflow: visible; align-self: start; }
+.thread-request-detail > .change-detail-heading { position: relative; background: #fff; }
+.thread-request-detail .change-detail-heading h3 { margin: 7px 0 4px; color: #2a3e59; font-size: 17px; }
+.thread-request-detail .change-detail-heading p { margin: 0; color: #687a91; font-size: 11px; line-height: 1.6; }
+.thread-request-detail .change-detail-heading p span { display: inline-block; margin-left: 6px; color: #96a2b1; }
+
+.thread-detail-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: #708096; font-size: 10px; }
+.thread-detail-labels > span:not(.change-status) { border-radius: 4px; padding: 3px 6px; background: #f0f3f7; }
+
+.thread-related-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border-bottom: 1px solid #e8edf3;
+  padding: 12px 15px;
+  background: #f8fafc;
+}
+
+.thread-related-context > div { display: grid; gap: 3px; min-width: 0; }
+.thread-related-context > div > span { color: #8290a3; font-size: 10px; }
+.thread-related-context > div > strong { overflow-wrap: anywhere; color: #3f526b; font-size: 11px; }
+
+.thread-case-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e8edf3;
+  padding: 9px 15px;
+  background: #fff;
+}
+
+.thread-ringi,
+.thread-case-links nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-ringi > span,
+.thread-case-links nav > span { color: #8290a3; font-size: 10px; }
+.thread-ringi > small { color: #96a2b1; font-size: 9px; }
+.thread-ringi > a,
+.thread-case-links nav > a { color: #2468b1; font-size: 11px; font-weight: 700; text-decoration: none; }
+.thread-ringi > a:hover,
+.thread-case-links nav > a:hover { text-decoration: underline; }
+.thread-ringi > strong { color: #3f526b; font-size: 11px; }
+
+.thread-request-detail .change-dev-details .change-json-editor {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
+}
+.thread-request-detail .thread-linked-workflow-check {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid #e3eaf2;
+  border-radius: 7px;
+  background: #fbfcfe;
+  color: #52657d;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.thread-request-detail .thread-linked-workflow-check > span { min-width: 0; overflow-wrap: anywhere; }
+.thread-request-detail .thread-linked-workflow-check input,
+.thread-request-detail .thread-confirmation-check input { flex: 0 0 auto; margin: 1px 0 0; }
+.thread-confirmation-checks {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 13px 0;
+}
+.thread-request-detail .thread-confirmation-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #e3eaf2;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #52657d;
+  font-size: 11px;
+  line-height: 1.4;
+}
+@media (max-width: 720px) {
+  .thread-confirmation-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.thread-history-card { border-top: 1px solid #e8edf3; }
+.thread-history-heading { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.thread-history-heading h4 { margin: 0 0 3px; color: #33465f; font-size: 13px; }
+.thread-history-heading p { margin: 0; color: #8290a3; font-size: 10px; }
+.thread-history-heading > span { border-radius: 99px; padding: 4px 8px; background: #f0f4f8; color: #63748a; font-size: 10px; }
+.thread-history-timeline { display: grid; gap: 0; margin: 13px 0; }
+.thread-history-entry { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; position: relative; padding-bottom: 13px; }
+.thread-history-entry:not(:last-child)::before { position: absolute; top: 15px; bottom: -2px; left: 8px; width: 1px; background: #dce5ef; content: ''; }
+.thread-history-entry > i { z-index: 1; display: grid; width: 17px; height: 17px; place-items: center; border-radius: 50%; background: #e8f1fc; color: #3778c2; font-size: 9px; font-style: normal; }
+.thread-history-entry.comment > i { background: #eef2f6; color: #708198; }
+.thread-history-entry > div { min-width: 0; }
+.thread-history-entry header { display: flex; justify-content: space-between; gap: 8px; }
+.thread-history-entry header strong { color: #40536c; font-size: 11px; }
+.thread-history-entry time { flex: 0 0 auto; color: #94a0af; font-size: 9px; }
+.thread-history-entry p { margin: 4px 0 0; color: #65758a; font-size: 11px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thread-comment-composer { display: grid; gap: 8px; border-top: 1px solid #e8edf3; padding-top: 12px; }
+.thread-comment-composer textarea { box-sizing: border-box; width: 100%; min-height: 76px; resize: vertical; }
+.thread-comment-composer button { justify-self: end; }
+
+@media (max-width: 1100px) {
+  .thread-workbench-layout { grid-template-columns: minmax(280px, .8fr) minmax(400px, 1.2fr); }
+  .thread-work-stats { grid-template-columns: repeat(3, minmax(110px, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .change-thread-page-heading { align-items: flex-start; flex-direction: column; }
+  .thread-page-actions { justify-content: flex-start; }
+  .thread-work-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .thread-workbench-layout { grid-template-columns: minmax(0, 1fr); }
+  .change-workbench .thread-request-list { position: static; height: auto; min-height: 0; max-height: none; }
+  .change-workbench .thread-request-rows { max-height: 48vh; flex: initial; }
+  .thread-request-detail > .change-detail-heading { position: static; }
+  .thread-archive-bar { align-items: flex-start; flex-direction: column; }
+  .thread-toolbar > select { flex: 1 1 135px; }
+  .thread-sort-field { flex: 1 1 100%; justify-content: space-between; }
+  .thread-sort-field select { flex: 1; }
+}
+
+@media (max-width: 430px) {
+  .thread-work-stats { gap: 6px; }
+  .thread-work-stat { min-height: 65px; padding: 8px; }
+  .thread-list-pagination { align-items: flex-start; flex-direction: column; }
+  .thread-list-pagination > div { align-self: flex-end; }
+}
