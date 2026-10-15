@@ -1,2 +1,0 @@
--- Production migration history marker.
--- The implementation was already applied to the linked production database.
