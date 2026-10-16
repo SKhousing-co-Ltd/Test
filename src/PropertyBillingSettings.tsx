@@ -4,7 +4,6 @@ import type { BillingProperty } from "./TenantBillingControls";
 import { PropertyBillingChargeTypeSettings } from "./PropertyBillingChargeTypeSettings";
 import { BillingCodeAllocationSettings } from "./BillingCodeAllocationSettings";
 import { InvoiceSplitSettings } from "./InvoiceSplitSettings";
-import { TenantOrderSettings } from "./TenantOrderSettings";
 import "./PropertyBillingSettings.css";
 
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string; utility_kind?: string | null };
@@ -71,7 +70,7 @@ export function PropertyBillingSettings({
   canEdit: boolean;
 }) {
   const [tab, setTab] = useState<
-    "types" | "items" | "patterns" | "allocations" | "invoiceSplits" | "tenantOrder"
+    "types" | "items" | "patterns" | "allocations" | "invoiceSplits"
   >("types");
   const [types, setTypes] = useState<ChargeType[]>([]);
   const [enabled, setEnabled] = useState<string[]>([]);
@@ -363,12 +362,6 @@ export function PropertyBillingSettings({
         >
           請求書分割設定
         </button>
-        <button
-          className={tab === "tenantOrder" ? "active" : ""}
-          onClick={() => setTab("tenantOrder")}
-        >
-          テナント並び順
-        </button>
       </div>
       {tab === "types" && (
         <PropertyBillingChargeTypeSettings
@@ -634,9 +627,6 @@ export function PropertyBillingSettings({
       )}
       {tab === "invoiceSplits" && (
         <InvoiceSplitSettings propertyId={propertyId} lineItems={items} canEdit={canEdit} />
-      )}
-      {tab === "tenantOrder" && (
-        <TenantOrderSettings propertyId={propertyId} canEdit={canEdit} />
       )}
     </section>
   );

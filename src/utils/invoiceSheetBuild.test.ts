@@ -2,7 +2,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildInvoiceSheet } from './invoiceSheet.ts';
+import { buildInvoiceSheet, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow } from './invoiceSheet.ts';
+
+const invoiceRow = (invoiceKey: string, tenantId: string, line: string, invoiceNumber = ''): InvoiceRow => {
+  const values = Array.from({ length: 21 }, () => ''); values[0] = invoiceNumber; values[11] = line;
+  return { id: `${invoiceKey}-${line}`, invoiceKey, values, chargeType: '', tenantId, tenantName: tenantId, floor: '' };
+};
+
+test('請求書カードを移動すると明細をまとめたまま請求書番号を上から振り直す', () => {
+  const rows = [invoiceRow('a', 'A', '賃料', '1'), invoiceRow('a', 'A', '水道代'), invoiceRow('b', 'B', '賃料', '2')];
+  const reordered = reorderInvoiceCards(rows, ['b', 'a']);
+  assert.deepEqual(reordered.map((row) => [row.invoiceKey, row.values[0], row.values[11]]), [
+    ['b', '1', '賃料'], ['a', '2', '賃料'], ['a', '', '水道代'],
+  ]);
+});
+
+test('保存済みテナント順を請求書カードへ反映し、同じテナントの複数請求書は元の順を保つ', () => {
+  const rows = [invoiceRow('a1', 'A', '賃料', '1'), invoiceRow('a2', 'A', '水道代', '2'), invoiceRow('b', 'B', '賃料', '3')];
+  const reordered = orderInvoiceCardsByTenants(rows, ['B', 'A']);
+  assert.deepEqual(reordered.map((row) => [row.invoiceKey, row.values[0]]), [['b', '1'], ['a1', '2'], ['a2', '3']]);
+});
 
 // Supabase のクエリを真似た最小の偽クライアントです。テーブルごとに決めた行を返します。
 function fakeClient(tables: Record<string, unknown[]>, rentRoll: unknown[]): SupabaseClient {

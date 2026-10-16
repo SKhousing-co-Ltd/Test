@@ -1,5 +1,5 @@
 // テナント請求の各画面で使う、テナントの並び順です。
-// 請求設定の「テナント並び順」で保存した順番を優先し、まだ保存していないテナントは次のように差し込みます。
+// 入金明細・請求明細・請求書作成で保存した共通順を優先し、まだ保存していないテナントは次のように差し込みます。
 //   1. 並び順が決まっているテナントと同じ区画に入居しているテナントは、そのテナントのすぐ下に置く
 //   2. それ以外は、レントロールの並び（階順）で前後のテナントを見て、その位置に置く
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -81,4 +81,20 @@ export async function loadSavedTenantOrder(client: SupabaseClient, assetId: stri
   const { data, error } = await client.from('asset_billing_tenant_order').select('tenant_id, sort_order').eq('asset_id', assetId);
   if (error) { console.warn(`テナント並び順を読み込めませんでした: ${error.message}`); return []; }
   return (data ?? []) as SavedTenantOrder[];
+}
+
+// 明細画面で変更した順番を、テナント請求全体の共通順として保存します。
+// 同じテナントに複数の請求書がある場合は最初の請求書の位置を使い、今回の明細に居ない
+// テナントは既存順の末尾に残します（過去月など一部のテナントだけの明細で順番を失わないためです）。
+export async function saveTenantOrder(client: SupabaseClient, assetId: string, tenantIds: string[]): Promise<void> {
+  const visible = [...new Set(tenantIds.filter(Boolean))];
+  if (!visible.length) return;
+  const existing = (await loadSavedTenantOrder(client, assetId)).sort((left, right) => left.sort_order - right.sort_order);
+  const visibleSet = new Set(visible);
+  const ordered = [...visible, ...existing.map((row) => row.tenant_id).filter((tenantId) => !visibleSet.has(tenantId))];
+  const { error } = await client.from('asset_billing_tenant_order').upsert(
+    ordered.map((tenant_id, sort_order) => ({ asset_id: assetId, tenant_id, sort_order })),
+    { onConflict: 'asset_id,tenant_id' },
+  );
+  if (error) throw new Error(`テナント並び順を保存できませんでした: ${error.message}`);
 }

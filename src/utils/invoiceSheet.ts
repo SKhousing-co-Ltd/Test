@@ -27,6 +27,32 @@ export type PeriodPattern = { billing_period_pattern_id: string; pattern_name: s
 // chargeType は入金明細・請求明細でどの請求種別の列に入れるか、tenantId・tenantName・floor は明細の行の見出しに使います。
 export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string };
 
+// 請求書を1つのカードとして並べ替えます。カード内の明細順は変えず、請求書番号は上から振り直します。
+export function reorderInvoiceCards(rows: InvoiceRow[], invoiceKeys: string[]): InvoiceRow[] {
+  const groups = new Map<string, InvoiceRow[]>();
+  for (const row of rows) groups.set(row.invoiceKey, [...(groups.get(row.invoiceKey) ?? []), row]);
+  const currentKeys = [...groups.keys()];
+  const requested = [...new Set(invoiceKeys)].filter((key) => groups.has(key));
+  const requestedSet = new Set(requested);
+  const orderedKeys = [...requested, ...currentKeys.filter((key) => !requestedSet.has(key))];
+  const ordered = orderedKeys.flatMap((key) => groups.get(key) ?? []);
+  const written = new Set<string>();
+  let invoiceNumber = 0;
+  return ordered.map((row) => {
+    const values = [...row.values];
+    if (!written.has(row.invoiceKey)) { written.add(row.invoiceKey); invoiceNumber += 1; values[0] = String(invoiceNumber); }
+    else values[0] = '';
+    return { ...row, values };
+  });
+}
+
+export function orderInvoiceCardsByTenants(rows: InvoiceRow[], tenantIds: string[]): InvoiceRow[] {
+  const rank = new Map(tenantIds.map((tenantId, index) => [tenantId, index]));
+  const cards = [...new Map(rows.map((row) => [row.invoiceKey, row])).values()];
+  cards.sort((left, right) => (rank.get(left.tenantId) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right.tenantId) ?? Number.MAX_SAFE_INTEGER));
+  return reorderInvoiceCards(rows, cards.map((row) => row.invoiceKey));
+}
+
 // CSV出力時の列順です。請求書番号は画面生成時に請求書単位で採番し、編集はできません。
 export const csvHeaders = ['請求書番号', '発行先コード', '会社名', '件名', '入金期限', '今回請求金額（税抜）', '今回消費税額', '今回請求金額（税込）', '締日', '備考', '明細項目１', '明細項目２', '数量', '単位', '単価', '金額', '消費税額', '請求金額', '税区分', '税率', '備考'];
 export const emptyValues = () => Array.from({ length: csvHeaders.length }, () => '');
@@ -184,7 +210,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   const periodPatternByRow: Record<string, string> = {};
   const rows: InvoiceRow[] = [];
   let invoiceNumber = 0;
-  // 請求書は請求設定のテナント並び順で並べ、その順に請求書番号を振ります。同じテナントの請求書はレントロールの順のままです。
+  // 請求書は各明細画面で保存したテナント並び順で並べ、その順に請求書番号を振ります。同じテナントの請求書はレントロールの順のままです。
   const compareTenant = tenantComparator(orderTenants((rentRollResult.data ?? []) as RentRollSource[], savedOrder));
   const tenantOfKey = (key: string) => key.slice(0, key.indexOf(':'));
   const duePatternByInvoice: Record<string, string> = {};
