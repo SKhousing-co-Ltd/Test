@@ -68,6 +68,8 @@ class RentRollRecord:
     bicycle_count: int | None = None
     source_unit_discriminator: str = ""
     source_contract_discriminator: str = ""
+    area_tsubo: float | None = None
+    source_notes: str | None = None
 
 
 def normalize_text(value: Any) -> str:
@@ -95,7 +97,7 @@ def tenant_codes(value: str | None) -> list[str]:
     def is_placeholder(code: str) -> bool:
         return bool(re.fullmatch(r"[-－―—ー−]+", code))
     return list(dict.fromkeys(
-        code for part in re.split(r"[\n/]", value)
+        code for part in re.split(r"[\n/・]", value)
         if (code := normalize_identifier(part)) and not is_placeholder(code)
     ))
 
@@ -249,6 +251,9 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
         if sheet.title == "中之島":
             read_nakanoshima_sheet(sheet, records, issues)
             continue
+        if sheet.title in {"神戸", "福島"}:
+            read_twin_building_sheet(sheet, records, issues)
+            continue
         if sheet.title in SPECIAL_LAYOUT_SHEETS:
             issues.append(ImportIssue(sheet.title, None, "layout_not_supported", "棟・住居用の専用レイアウトのため、設定を追加するまで自動取込の対象外です。"))
             continue
@@ -336,6 +341,78 @@ def read_workbook(path: Path, selected_sheet_names: set[str] | None = None) -> t
         for record in group:
             record.source_contract_discriminator = record.contract_start_date or f"row-{record.source_row_number}"
     return records, issues
+
+
+def read_twin_building_sheet(sheet: Any, records: list[RentRollRecord], issues: list[ImportIssue]) -> None:
+    """Read the two stacked-header rent rolls for the Kobe and Fukushima buildings.
+
+    These sheets use fixed columns and include section/summary rows between
+    rentable units. Parking and antenna rows are preserved as source records;
+    their current-ledger mappings still require reconciliation.
+    """
+    property_names = {"神戸": "三共神戸ツインビル", "福島": "三共福島ビル"}
+    property_name = property_names[sheet.title]
+    inherited_wing: str | None = None
+    inherited_floor: str | None = None
+    other_monthly_columns = [21] if sheet.title == "神戸" else [21, 22]
+    for row_number, row in enumerate(sheet.iter_rows(min_row=4, values_only=True), start=4):
+        unit_code = normalize_identifier(cell(row, 5))
+        if not unit_code:
+            continue
+        if "合計" in unit_code or unit_code.startswith(("〈", "《", "【")):
+            continue
+
+        source_status = normalize_text(cell(row, 1))
+        wing = normalize_text(cell(row, 3))
+        floor = normalize_text(cell(row, 4))
+        if wing:
+            inherited_wing = wing
+        if floor:
+            inherited_floor = floor
+        tenant_name = normalize_text(cell(row, 7)) or None
+        area_sqm = as_number(cell(row, 8))
+        # The row labelled only "H" is a building-level subtotal, not a unit.
+        if unit_code == "H" and area_sqm is None:
+            continue
+        # Blank spacer rows and unlabelled formula/summary rows are not records.
+        if not tenant_name and not source_status:
+            continue
+
+        unit_type = infer_unit_type(unit_code)
+        is_ancillary = unit_type in {"parking", "antenna", "signage", "bicycle_parking"}
+        floor_label = floor or (None if is_ancillary else inherited_floor)
+        wing_code = wing or (None if is_ancillary else inherited_wing)
+        tenant_code = normalize_text(cell(row, 6)) or None
+        source_notes_column = 25 if sheet.title == "神戸" else 27
+        renewal_terms_column = 26 if sheet.title == "神戸" else 28
+        payment_terms_column = 27 if sheet.title == "神戸" else 29
+        records.append(RentRollRecord(
+            source_sheet_name=sheet.title,
+            source_row_number=row_number,
+            property_name=property_name,
+            source_status=source_status,
+            wing_code=wing_code,
+            floor_label=floor_label,
+            unit_code=unit_code,
+            unit_type=unit_type,
+            tenant_code=tenant_code,
+            tenant_name=tenant_name,
+            area_sqm=area_sqm,
+            monthly_rent_amount=as_number(cell(row, 10)),
+            monthly_common_charge_amount=as_number(cell(row, 12)),
+            monthly_parking_amount=as_number(cell(row, 18)),
+            other_monthly_amount=sum_columns(row, other_monthly_columns),
+            deposit_amount=as_number(cell(row, 16)),
+            security_deposit_amount=None,
+            key_money_amount=None,
+            renewal_fee_amount=None,
+            contract_start_date=as_date(cell(row, 23 if sheet.title == "神戸" else 25)),
+            contract_end_date=as_date(cell(row, 24 if sheet.title == "神戸" else 26)),
+            renewal_terms=normalize_text(cell(row, renewal_terms_column)) or None,
+            payment_terms=normalize_text(cell(row, payment_terms_column)) or None,
+            source_notes=normalize_text(cell(row, source_notes_column)) or None,
+            area_tsubo=as_number(cell(row, 9)),
+        ))
 
 
 def read_nakanoshima_sheet(sheet: Any, records: list[RentRollRecord], issues: list[ImportIssue]) -> None:
@@ -626,6 +703,8 @@ where unit.property_id in (
     on source_property.property_name = asset.asset_name
 )
 and (
+  unit.unit_type in (select distinct unit_type from rent_roll_stage)
+  and
   coalesce(unit.source_discriminator, '') <> ''
   or exists (
     select 1
@@ -917,8 +996,17 @@ def main() -> int:
     parser.add_argument("--comparison-sql", type=Path, help="Write SQL that stores every source row for reconciliation without changing contract data.")
     parser.add_argument("--as-of-date", help="Comparison date in YYYY-MM-DD format. Required with --comparison-sql.")
     parser.add_argument("--sheet", action="append", dest="sheet_names", help="Import only the named worksheet. Repeat to select multiple sheets.")
+    parser.add_argument("--unit-type", action="append", dest="unit_types", help="Import only the named unit type. Repeat to select multiple types.")
     args = parser.parse_args()
     records, issues = read_workbook(args.workbook, set(args.sheet_names) if args.sheet_names else None)
+    if args.unit_types:
+        selected_types = set(args.unit_types)
+        invalid_types = selected_types - {"office", "residential", "parking", "warehouse", "antenna", "signage", "bicycle_parking", "other"}
+        if invalid_types:
+            parser.error(f"Unsupported unit type(s): {', '.join(sorted(invalid_types))}")
+        records = [record for record in records if record.unit_type in selected_types]
+        record_rows = {(record.source_sheet_name, record.source_row_number) for record in records}
+        issues = [issue for issue in issues if issue.source_row_number is None or (issue.source_sheet_name, issue.source_row_number) in record_rows]
     report = {
         "source_file": args.workbook.name,
         "record_count": len(records),

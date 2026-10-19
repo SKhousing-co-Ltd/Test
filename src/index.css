@@ -6240,6 +6240,25 @@ td small {
   justify-content: space-between;
   gap: 18px;
 }
+.contract-workflow-views {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid #dfe6ed;
+}
+.contract-workflow-views button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 0 12px 10px;
+  background: transparent;
+  color: #718198;
+  font-size: 13px;
+  font-weight: 700;
+}
+.contract-workflow-views button.active {
+  border-bottom-color: #3274b8;
+  color: #2f679b;
+}
 .contract-workflow-hero {
   padding: 18px 20px;
   border: 1px solid #dfe8f2;
@@ -6503,4 +6522,127 @@ td small {
   top: 12px;
   z-index: 10;
   box-shadow: 0 10px 26px rgb(30 57 87 / 16%);
+}
+
+/* Contract workflow layout aligned with the approved workflow mockup. */
+.contract-workflow-page {
+  display: grid;
+  gap: 16px;
+  color: #263b52;
+}
+.contract-workflow-views {
+  gap: 20px;
+  margin-bottom: 0;
+}
+.contract-workflow-views button {
+  padding: 0 3px 11px;
+  font-size: 12px;
+}
+.contract-workflow-hero {
+  padding: 18px 20px;
+  border-color: #e4eaf0;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgb(34 54 76 / 3%);
+}
+.contract-workflow-hero h2 {
+  color: #233a53;
+  font-size: 22px;
+}
+.contract-workflow-hero p {
+  line-height: 1.6;
+}
+.contract-workflow-steps {
+  overflow: hidden;
+  border-radius: 8px;
+}
+.contract-workflow-panel {
+  overflow: hidden;
+  border-color: #e4eaf0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 5px rgb(34 54 76 / 3%);
+}
+.contract-workflow-panel-heading {
+  padding: 13px 16px;
+}
+.contract-workflow-panel-heading h3 {
+  font-size: 13px;
+}
+.contract-workflow-table {
+  min-width: 1130px;
+  table-layout: fixed;
+}
+.contract-workflow-table th {
+  padding: 10px 12px;
+  background: #f8fafc;
+  color: #758499;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.contract-workflow-table td {
+  padding: 11px 12px;
+  color: #52677e;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.contract-workflow-table tr td:first-child strong {
+  color: #2e455d;
+  font-size: 11px;
+}
+.contract-workflow-table td small {
+  font-size: 10px;
+  line-height: 1.5;
+}
+.contract-workflow-table th:last-child,
+.contract-workflow-table td:last-child {
+  min-width: 190px;
+  width: 190px;
+}
+.workflow-action-group {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 9px;
+}
+.workflow-action-group .workflow-complete-button {
+  width: auto;
+  white-space: nowrap;
+}
+.workflow-action-group .text-button {
+  grid-column: auto;
+  justify-self: auto;
+  white-space: nowrap;
+}
+.contract-workflow-progress-toolbar {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #edf1f4;
+  background: #fff;
+}
+.contract-workflow-progress-toolbar .contract-workflow-search {
+  width: min(380px, 50%);
+}
+.contract-workflow-progress-toolbar select {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #dce4ec;
+  border-radius: 6px;
+  background: #fff;
+  color: #53677f;
+  font: inherit;
+  font-size: 11px;
+}
+.contract-workflow-progress-toolbar input {
+  height: 34px;
+}
+@media (max-width: 640px) {
+  .contract-workflow-progress-toolbar {
+    flex-direction: column;
+  }
+  .contract-workflow-progress-toolbar .contract-workflow-search {
+    width: 100%;
+  }
 }
