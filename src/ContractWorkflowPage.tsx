@@ -78,6 +78,10 @@ const statusLabel: Record<string, string> = {
   ambiguous: "候補複数",
   ready_to_process: "処理可能",
 };
+const chunkIds = (ids: string[], size = 100) =>
+  Array.from({ length: Math.ceil(ids.length / size) }, (_, index) =>
+    ids.slice(index * size, (index + 1) * size),
+  );
 export function ContractWorkflowPage({
   canComplete,
   role,
@@ -104,6 +108,7 @@ export function ContractWorkflowPage({
   const [isProgressOpen, setIsProgressOpen] = useState(true);
   const load = async () => {
     if (!supabase) return;
+    const client = supabase;
     setLoading(true);
     const [queue, contractRows] = await Promise.all([
       supabase.rpc("list_contract_workflow_queue"),
@@ -122,16 +127,21 @@ export function ContractWorkflowPage({
     else {
       const rows = (contractRows.data ?? []) as unknown as Contract[];
       const ids = rows.map((row) => row.lease_contract_id);
-      const [progressRows, skipRows] = ids.length
-        ? await Promise.all([
-            supabase.from("contract_workflow_progress").select("lease_contract_id, rent_roll_status, rent_roll_completed_at").in("lease_contract_id", ids),
-            supabase.from("contract_workflow_stage_skip").select("lease_contract_id, stage_no, reason, skipped_at").in("lease_contract_id", ids),
-          ])
-        : [{ data: [], error: null }, { data: [], error: null }];
-      if (progressRows.error || skipRows.error) setError(`工程の進捗を読み込めませんでした: ${progressRows.error?.message ?? skipRows.error?.message}`);
-      const progress = new Map((progressRows.data ?? []).map((row) => [row.lease_contract_id, row]));
+      const idChunks = chunkIds(ids);
+      const [progressResults, skipResults] = await Promise.all([
+        Promise.all(idChunks.map((idChunk) =>
+          client.from("contract_workflow_progress").select("lease_contract_id, rent_roll_status, rent_roll_completed_at").in("lease_contract_id", idChunk),
+        )),
+        Promise.all(idChunks.map((idChunk) =>
+          client.from("contract_workflow_stage_skip").select("lease_contract_id, stage_no, reason, skipped_at").in("lease_contract_id", idChunk),
+        )),
+      ]);
+      const progressError = progressResults.find((result) => result.error)?.error;
+      const skipError = skipResults.find((result) => result.error)?.error;
+      if (progressError || skipError) setError(`工程の進捗を読み込めませんでした: ${progressError?.message ?? skipError?.message}`);
+      const progress = new Map(progressResults.flatMap((result) => result.data ?? []).map((row) => [row.lease_contract_id, row]));
       const skips = new Map<string, Array<{ stage_no: number; reason: string; skipped_at: string }>>();
-      for (const row of skipRows.data ?? []) skips.set(row.lease_contract_id, [...(skips.get(row.lease_contract_id) ?? []), row]);
+      for (const row of skipResults.flatMap((result) => result.data ?? [])) skips.set(row.lease_contract_id, [...(skips.get(row.lease_contract_id) ?? []), row]);
       setContracts(rows.map((row) => ({ ...row, workflow_progress: progress.get(row.lease_contract_id) ?? null, workflow_skips: skips.get(row.lease_contract_id) ?? [] })));
     }
     setLoading(false);
