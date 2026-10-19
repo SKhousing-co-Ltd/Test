@@ -32,6 +32,8 @@ const applicationType = (item: QueueItem) =>
   (item.ringi_number ?? item.data_id).split("-")[1] ?? "その他";
 type Contract = {
   lease_contract_id: string;
+  updated_at: string | null;
+  workflow_type: string | null;
   contract_type: string | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
@@ -54,6 +56,34 @@ const currentStage = (contract: Contract) => {
   if (!contract.contract_document_completed_at && !skipped.has(3)) return 3;
   if (!contract.btob_registered_at && !skipped.has(4)) return 4;
   return 5;
+};
+const renderStageCell = (contract: Contract, stage: number) => {
+  const skipped = contract.workflow_skips?.some((row) => row.stage_no === stage) ?? false;
+  const completed = stage === 1
+    ? true
+    : stage === 2
+      ? !!contract.contract_content_reviewed_at
+      : stage === 3
+        ? !!contract.contract_document_completed_at
+        : stage === 4
+          ? !!contract.btob_registered_at
+          : contract.workflow_progress?.rent_roll_status === "reflected";
+  const current = !completed && !skipped && currentStage(contract) === stage;
+  const label = skipped ? "スキップ済" : completed ? (stage === 1 ? "承認済・データ作成済" : "完了") : current ? ["", "", "内容確認中", "契約書作成中", "BtoB対応待ち", "自動反映待ち"][stage] : "未着手";
+  const detail = skipped
+    ? "理由を記録済"
+    : stage === 1
+      ? "AppSuite"
+      : stage === 2
+        ? "総務経理"
+        : stage === 3
+          ? "作成担当"
+          : stage === 4
+            ? "BtoB登録"
+            : "契約情報の登録後";
+  return <div className={`workflow-stage-cell ${skipped ? "skipped" : completed ? "done" : current ? "current" : "pending"}`}>
+    <strong><i />{label}</strong><small>{detail}</small>
+  </div>;
 };
 
 let selectedAppSuiteAppId = "65";
@@ -94,6 +124,7 @@ export function ContractWorkflowPage({
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [query, setQuery] = useState("");
   const [progressQuery, setProgressQuery] = useState("");
+  const [progressTypeFilter, setProgressTypeFilter] = useState("all");
   const [progressStageFilter, setProgressStageFilter] = useState("all");
   const [applicationTypeFilter, setApplicationTypeFilter] = useState("all");
   const [candidateQuery, setCandidateQuery] = useState("");
@@ -113,25 +144,40 @@ export function ContractWorkflowPage({
     if (!supabase) return;
     const client = supabase;
     setLoading(true);
-    const [queue, contractRows] = await Promise.all([
-      supabase.rpc("list_contract_workflow_queue"),
-      supabase
-        .from("lease_contract")
-        .select(
-          "lease_contract_id, contract_type, contract_start_date, contract_end_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(unit:unit_master!inner(unit_code, unit_name, asset:asset_master(asset_name)))",
-        )
+    const [queue, workflowLinks] = await Promise.all([
+      client.rpc("list_contract_workflow_queue"),
+      client
+        .from("workflow_contract_link")
+        .select("lease_contract_id, appsuite_record_id, updated_at")
         .order("updated_at", { ascending: false }),
     ]);
     if (queue.error)
       setError(`AppSuiteキューを読み込めませんでした: ${queue.error.message}`);
     else setItems((queue.data ?? []) as QueueItem[]);
-    if (contractRows.error)
-      setError(`契約状況を読み込めませんでした: ${contractRows.error.message}`);
+    if (workflowLinks.error)
+      setError(`契約業務フローの対象を読み込めませんでした: ${workflowLinks.error.message}`);
     else {
-      const rows = (contractRows.data ?? []) as unknown as Contract[];
-      const ids = rows.map((row) => row.lease_contract_id);
+      const appSuiteIds = Array.from(new Set((workflowLinks.data ?? []).map((row) => row.appsuite_record_id)));
+      const appSuiteResults = await Promise.all(chunkIds(appSuiteIds).map((idChunk) =>
+        client.from("appsuite_record").select("appsuite_record_id, workflow_completed_at, workflow_type").in("appsuite_record_id", idChunk),
+      ));
+      const appSuiteError = appSuiteResults.find((result) => result.error)?.error;
+      if (appSuiteError) setError(`AppSuite連携情報を読み込めませんでした: ${appSuiteError.message}`);
+      const completedAppSuiteIds = new Set(appSuiteResults.flatMap((result) => result.data ?? []).filter((record) => !!record.workflow_completed_at).map((record) => record.appsuite_record_id));
+      const completedLinks = (workflowLinks.data ?? []).filter((link) => completedAppSuiteIds.has(link.appsuite_record_id));
+      const ids = Array.from(new Set(completedLinks.map((row) => row.lease_contract_id)));
+      const workflowTypes = new Map<string, string>();
+      const workflowTypeByAppSuiteId = new Map(appSuiteResults.flatMap((result) => result.data ?? []).map((record) => [record.appsuite_record_id, record.workflow_type]));
+      for (const link of completedLinks) {
+        const workflowType = workflowTypeByAppSuiteId.get(link.appsuite_record_id);
+        if (!workflowTypes.has(link.lease_contract_id) && workflowType)
+          workflowTypes.set(link.lease_contract_id, workflowType);
+      }
       const idChunks = chunkIds(ids);
-      const [progressResults, skipResults] = await Promise.all([
+      const [contractResults, progressResults, skipResults] = await Promise.all([
+        Promise.all(idChunks.map((idChunk) =>
+          client.from("lease_contract").select("lease_contract_id, updated_at, contract_type, contract_start_date, contract_end_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(unit:unit_master!inner(unit_code, unit_name, asset:asset_master(asset_name)))").in("lease_contract_id", idChunk).order("updated_at", { ascending: false }),
+        )),
         Promise.all(idChunks.map((idChunk) =>
           client.from("contract_workflow_progress").select("lease_contract_id, rent_roll_status, rent_roll_completed_at").in("lease_contract_id", idChunk),
         )),
@@ -139,13 +185,15 @@ export function ContractWorkflowPage({
           client.from("contract_workflow_stage_skip").select("lease_contract_id, stage_no, reason, skipped_at").in("lease_contract_id", idChunk),
         )),
       ]);
+      const contractError = contractResults.find((result) => result.error)?.error;
       const progressError = progressResults.find((result) => result.error)?.error;
       const skipError = skipResults.find((result) => result.error)?.error;
-      if (progressError || skipError) setError(`工程の進捗を読み込めませんでした: ${progressError?.message ?? skipError?.message}`);
+      if (contractError || progressError || skipError) setError(`契約業務フローを読み込めませんでした: ${contractError?.message ?? progressError?.message ?? skipError?.message}`);
+      const rows = contractResults.flatMap((result) => (result.data ?? []) as unknown as Contract[]);
       const progress = new Map(progressResults.flatMap((result) => result.data ?? []).map((row) => [row.lease_contract_id, row]));
       const skips = new Map<string, Array<{ stage_no: number; reason: string; skipped_at: string }>>();
       for (const row of skipResults.flatMap((result) => result.data ?? [])) skips.set(row.lease_contract_id, [...(skips.get(row.lease_contract_id) ?? []), row]);
-      setContracts(rows.map((row) => ({ ...row, workflow_progress: progress.get(row.lease_contract_id) ?? null, workflow_skips: skips.get(row.lease_contract_id) ?? [] })));
+      setContracts(rows.map((row) => ({ ...row, workflow_type: workflowTypes.get(row.lease_contract_id) ?? null, workflow_progress: progress.get(row.lease_contract_id) ?? null, workflow_skips: skips.get(row.lease_contract_id) ?? [] })));
     }
     setLoading(false);
   };
@@ -189,7 +237,8 @@ export function ContractWorkflowPage({
       if (!popup) window.open(anchor.href, "_blank", "noopener,noreferrer");
     };
     document.addEventListener("click", openAppSuiteWindow);
-    return () => document.removeEventListener("click", openAppSuiteWindow);
+
+  return () => document.removeEventListener("click", openAppSuiteWindow);
   }, []);
   const filteredQueue = useMemo(() => {
     const value = query.trim().toLocaleLowerCase("ja-JP");
@@ -228,15 +277,30 @@ export function ContractWorkflowPage({
         contract.contract_units?.map((unit) => unit.unit?.unit_code).join(" "),
         contract.tenant?.tenant_name,
         contract.contract_type,
+        contract.workflow_type,
       ].some((field) => field?.toLocaleLowerCase("ja-JP").includes(value));
       const stage = currentStage(contract);
-      return matchesText && (progressStageFilter === "all" || stage === Number(progressStageFilter));
+      const matchesType = progressTypeFilter === "all" || (contract.workflow_type ?? contract.contract_type ?? "不明") === progressTypeFilter;
+      return matchesText && matchesType && (progressStageFilter === "all" || stage === Number(progressStageFilter));
     });
-  }, [activeContracts, progressQuery, progressStageFilter]);
+  }, [activeContracts, progressQuery, progressStageFilter, progressTypeFilter]);
+  const contractTypes = useMemo(
+    () => Array.from(new Set(activeContracts.map((contract) => contract.workflow_type ?? contract.contract_type ?? "不明"))).sort(),
+    [activeContracts],
+  );
   const completedContracts = useMemo(
     () => contracts.filter((contract) => !!contract.workflow_progress?.rent_roll_status),
     [contracts],
   );
+  const monthCompletedCount = completedContracts.filter((contract) => {
+    const completedAt = contract.workflow_progress?.rent_roll_completed_at;
+    if (!completedAt) return false;
+    const date = new Date(completedAt);
+    const now = new Date();
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  }).length;
+  const activeStageCount = new Set(activeContracts.map(currentStage)).size;
+  const btobWaitingCount = activeContracts.filter((contract) => currentStage(contract) === 4).length;
   const filteredCandidates = useMemo(() => {
     const value = candidateQuery.trim().toLocaleLowerCase("ja-JP");
     if (!value) return candidates;
@@ -416,49 +480,8 @@ export function ContractWorkflowPage({
       p_reason: reason.trim(),
     }, "工程をスキップ");
   };
-  return (
-    <section className="contract-workflow-page">
-      <nav className="contract-workflow-views" aria-label="契約業務フローの表示">
-        <button className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>契約後進捗</button>
-        <button className={view === "applications" ? "active" : ""} onClick={() => setView("applications")}>申請処理・変更解約</button>
-      </nav>
-      {view === "applications" ? <ChangeRequestWorkbenchPage role={role} /> : <>
-      <section className="contract-workflow-hero">
-        <div>
-          <p className="section-kicker">CONTRACT WORKFLOW</p>
-          <h2>契約業務フロー</h2>
-          <p>
-            決裁済みの申請を確認し、契約情報・契約書・BtoB登録を順番に完了します。
-          </p>
-        </div>
-        <a className="secondary-button" href="/appsuite-sync">
-          AppSuite同期を確認
-        </a>
-      </section>
-      <ol className="contract-workflow-steps">
-        <li className="done">
-          <b>1</b>
-          <span>AppSuite承認</span>
-        </li>
-        <li>
-          <b>2</b>
-          <span>契約内容確認</span>
-        </li>
-        <li>
-          <b>3</b>
-          <span>契約書作成</span>
-        </li>
-        <li>
-          <b>4</b>
-          <span>BtoB登録</span>
-        </li>
-        <li>
-          <b>5</b>
-          <span>レントロール反映</span>
-        </li>
-      </ol>
-      {error && <p className="contract-workflow-message error">{error}</p>}
-      {notice && <p className="contract-workflow-message">{notice}</p>}
+
+  const appSuiteSection = <>
       {selectedItem && (
         <section className="contract-workflow-detail">
           <header>
@@ -752,6 +775,33 @@ export function ContractWorkflowPage({
           </>
         )}
       </section>
+      </>;
+  return (
+    <section className="contract-workflow-page">
+      <section className="contract-workflow-hero">
+        <div>
+          <p className="section-kicker">CONTRACT OPERATIONS</p>
+          <h2>契約業務フロー</h2>
+          <p>申請から契約登録、BtoB対応、レントロール反映までの進捗を確認します。</p>
+        </div>
+        <div className="contract-workflow-head-actions">
+          <button className="secondary-button" onClick={() => void load()}>↻ 更新</button>
+          <button className="primary-button" onClick={() => setView("applications")}>申請処理を確認 →</button>
+        </div>
+      </section>
+      <section className="contract-workflow-metrics" aria-label="契約業務の集計">
+        <div className="metric blue"><span>進行中の案件</span><strong>{activeContracts.length}<small>件</small></strong></div>
+        <div className="metric amber"><span>進行中の工程</span><strong>{activeStageCount}<small>工程</small></strong></div>
+        <div className="metric"><span>BtoB対応待ち</span><strong>{btobWaitingCount}<small>件</small></strong></div>
+        <div className="metric green"><span>今月の完了</span><strong>{monthCompletedCount}<small>件</small></strong></div>
+      </section>
+      <nav className="contract-workflow-views" aria-label="契約業務フローの表示">
+        <button className={view === "progress" ? "active" : ""} onClick={() => setView("progress")}>契約後進捗 <span className="workflow-tab-count">{activeContracts.length}</span></button>
+        <button className={view === "applications" ? "active" : ""} onClick={() => setView("applications")}>申請処理 <span className="workflow-tab-count">{filteredQueue.length + items.filter((item) => !isNewContractWorkflow(item)).length}</span></button>
+      </nav>
+      {error && <p className="contract-workflow-message error">{error}</p>}
+      {notice && <p className="contract-workflow-message">{notice}</p>}
+      {view === "applications" ? <>{appSuiteSection}<ChangeRequestWorkbenchPage role={role} /></> : <>
       <section className="contract-workflow-panel">
         <header className="contract-workflow-panel-heading">
           <div>
@@ -777,7 +827,14 @@ export function ContractWorkflowPage({
                 <input value={progressQuery} onChange={(event) => setProgressQuery(event.target.value)} placeholder="物件名・区画・テナント名" />
               </label>
               <label className="contract-workflow-search">
-                進行中の工程
+                業務種別
+                <select value={progressTypeFilter} onChange={(event) => setProgressTypeFilter(event.target.value)}>
+                  <option value="all">すべての業務</option>
+                  {contractTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label className="contract-workflow-search">
+                進捗
                 <select value={progressStageFilter} onChange={(event) => setProgressStageFilter(event.target.value)}>
                   <option value="all">すべて</option>
                   <option value="2">契約内容確認</option>
@@ -791,70 +848,34 @@ export function ContractWorkflowPage({
               <table className="contract-workflow-table">
                 <thead>
                   <tr>
-                    <th>物件・区画・テナント</th>
-                    <th>契約種別</th>
-                    <th>進行中の工程</th>
-                    <th>① AppSuite</th>
+                    <th>案件</th>
+                    <th>① 承認・データ作成</th>
                     <th>② 内容確認</th>
-                    <th>③ 契約書</th>
-                    <th>④ BtoB</th>
+                    <th>③ 契約書作成</th>
+                    <th>④ BtoB対応</th>
                     <th>⑤ レントロール</th>
-                    <th>操作</th>
+                    <th>詳細</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredContracts.map((contract) => (
                     <tr key={contract.lease_contract_id}>
                       <td>
+                        <span className={`workflow-type-mark ${(contract.workflow_type ?? "").includes("解約") ? "cancel" : (contract.workflow_type ?? "").includes("変更") ? "change" : "new"}`}>{contract.workflow_type ?? contract.contract_type ?? "契約"}</span>
                         <strong>{contract.contract_units?.[0]?.unit?.asset?.asset_name ?? "物件未設定"}</strong>
                         <small>
                           {(contract.contract_units ?? [])
                             .map((unit) => unit.unit?.unit_code)
                             .filter(Boolean)
-                            .join(", ") || "区画未設定"}　/　{contract.tenant?.tenant_name ?? "テナント未設定"}
+                            .join(", ") || "区画未設定"}　・　{contract.tenant?.tenant_name ?? "テナント未設定"}
                         </small>
+                        <span className="workflow-row-progress">{currentStage(contract)}/5 工程目 ・ 更新 {formatDateTime(contract.updated_at)}</span>
                       </td>
-                      <td>{contract.contract_type ?? "—"}</td>
-                      <td><strong>{contract.workflow_progress?.rent_roll_status ? "完了" : ["", "", "契約内容確認", "契約書作成", "BtoB対応", "レントロール反映"][currentStage(contract)]}</strong></td>
-                      <td><span className="workflow-check complete">契約データ作成済</span></td>
-                      <td>
-                        <span
-                          className={
-                            contract.contract_content_reviewed_at || contract.workflow_skips?.some((skip) => skip.stage_no === 2)
-                              ? "workflow-check complete"
-                              : "workflow-check"
-                          }
-                        >
-                          {contract.workflow_skips?.some((skip) => skip.stage_no === 2) ? "スキップ済" : contract.contract_content_reviewed_at
-                            ? `完了 ${formatDateTime(contract.contract_content_reviewed_at)}`
-                            : "未着手"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={
-                            contract.contract_document_completed_at || contract.workflow_skips?.some((skip) => skip.stage_no === 3)
-                              ? "workflow-check complete"
-                              : "workflow-check"
-                          }
-                        >
-                          {contract.workflow_skips?.some((skip) => skip.stage_no === 3) ? "スキップ済" : contract.contract_document_completed_at
-                            ? `完了 ${formatDateTime(contract.contract_document_completed_at)}`
-                            : "未着手"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={
-                            contract.btob_registered_at || contract.workflow_skips?.some((skip) => skip.stage_no === 4)
-                              ? "workflow-check complete"
-                              : "workflow-check"
-                          }
-                        >
-                          {contract.workflow_skips?.some((skip) => skip.stage_no === 4) ? "スキップ済" : contract.btob_registered_at ? "完了" : "未着手"}
-                        </span>
-                      </td>
-                      <td><span className={`workflow-check ${contract.workflow_progress?.rent_roll_status ? "complete" : ""}`}>{contract.workflow_progress?.rent_roll_status === "reflected" ? "反映済" : contract.workflow_progress?.rent_roll_status === "skipped" ? "スキップ済" : "未反映"}</span></td>
+                      <td>{renderStageCell(contract, 1)}</td>
+                      <td>{renderStageCell(contract, 2)}</td>
+                      <td>{renderStageCell(contract, 3)}</td>
+                      <td>{renderStageCell(contract, 4)}</td>
+                      <td>{renderStageCell(contract, 5)}</td>
                       <td>
                         {canComplete && (
                           <div className="workflow-action-group">

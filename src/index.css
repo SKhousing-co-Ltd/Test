@@ -6646,3 +6646,135 @@ td small {
     width: 100%;
   }
 }
+
+.contract-workflow-head-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.contract-workflow-head-actions button {
+  white-space: nowrap;
+}
+.contract-workflow-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.contract-workflow-metrics .metric {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  min-height: 68px;
+  padding: 11px 14px 11px 16px;
+  border: 1px solid #e4eaf0;
+  border-radius: 7px;
+  background: #fff;
+}
+.contract-workflow-metrics .metric::before {
+  position: absolute;
+  top: 11px;
+  bottom: 11px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: #8ba0b7;
+  content: "";
+}
+.contract-workflow-metrics .metric.blue::before { background: #4787bd; }
+.contract-workflow-metrics .metric.amber::before { background: #d79a3b; }
+.contract-workflow-metrics .metric.green::before { background: #4a9c76; }
+.contract-workflow-metrics .metric span {
+  color: #718198;
+  font-size: 10px;
+  font-weight: 700;
+}
+.contract-workflow-metrics .metric strong {
+  color: #253c55;
+  font-size: 20px;
+  line-height: 1.2;
+}
+.contract-workflow-metrics .metric small {
+  margin-left: 5px;
+  color: #8291a3;
+  font-size: 10px;
+  font-weight: 500;
+}
+.contract-workflow-views {
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 0;
+}
+.workflow-tab-count {
+  margin-left: 5px;
+  border-radius: 10px;
+  padding: 2px 7px;
+  background: #edf2f6;
+  color: #677b91;
+  font-size: 10px;
+}
+.contract-workflow-views button.active .workflow-tab-count {
+  background: #e6f1fa;
+  color: #326e9f;
+}
+.contract-workflow-table th:first-child,
+.contract-workflow-table td:first-child { width: 245px; }
+.contract-workflow-table th:not(:first-child):not(:last-child),
+.contract-workflow-table td:not(:first-child):not(:last-child) { width: 145px; }
+.contract-workflow-table th:last-child,
+.contract-workflow-table td:last-child { width: 130px; min-width: 130px; }
+.contract-workflow-table td:first-child .workflow-type-mark {
+  display: inline-block;
+  margin: 0 6px 5px 0;
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: #eaf4fb;
+  color: #3271a5;
+  font-size: 9px;
+  font-weight: 800;
+}
+.contract-workflow-table td:first-child .workflow-type-mark.change { background: #fff4df; color: #906116; }
+.contract-workflow-table td:first-child .workflow-type-mark.cancel { background: #fff0ef; color: #9e4d4d; }
+.workflow-row-progress {
+  display: block;
+  margin-top: 6px;
+  color: #8492a3;
+  font-size: 9px;
+}
+.workflow-stage-cell {
+  min-width: 115px;
+  color: #8190a0;
+}
+.workflow-stage-cell strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8996a5;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.workflow-stage-cell i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #c9d2dc;
+}
+.workflow-stage-cell small {
+  display: block;
+  margin: 4px 0 0 13px;
+  color: #91a0af;
+  font-size: 9px;
+}
+.workflow-stage-cell.done strong { color: #34795f; }
+.workflow-stage-cell.done i { background: #43a27b; }
+.workflow-stage-cell.current strong { color: #2d6799; font-weight: 800; }
+.workflow-stage-cell.current i { background: #4287bc; box-shadow: 0 0 0 3px #e5f1fa; }
+.workflow-stage-cell.skipped strong { color: #8b6a31; }
+.workflow-stage-cell.skipped i { background: #d5a343; }
+.workflow-action-group { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+.workflow-action-group .text-button { font-size: 10px; }
+@media (max-width: 800px) {
+  .contract-workflow-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contract-workflow-hero { align-items: flex-start; flex-direction: column; }
+}
