@@ -6240,6 +6240,25 @@ td small {
   justify-content: space-between;
   gap: 18px;
 }
+.contract-workflow-views {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid #dfe6ed;
+}
+.contract-workflow-views button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 0 12px 10px;
+  background: transparent;
+  color: #718198;
+  font-size: 13px;
+  font-weight: 700;
+}
+.contract-workflow-views button.active {
+  border-bottom-color: #3274b8;
+  color: #2f679b;
+}
 .contract-workflow-hero {
   padding: 18px 20px;
   border: 1px solid #dfe8f2;
