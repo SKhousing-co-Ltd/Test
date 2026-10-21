@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ContractDetailModal } from "./ContractDetailModal";
-import { RentRollReconciliationPanel } from "./RentRollReconciliationPanel";
 import type { ContractCapabilities } from "./lib/contract-capabilities";
 import {
   allProductCategories,
@@ -392,6 +391,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const [snapshotDates, setSnapshotDates] = useState<string[]>([]);
   const [utilityColumns, setUtilityColumns] = useState<UtilityColumn[]>([]);
   const [utilityValues, setUtilityValues] = useState<Record<string, Record<string, { value: number; taxMode: string }>>>({});
+  const [tableScrollPosition, setTableScrollPosition] = useState<"left" | "middle" | "right">("left");
+  const tableWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!propertyId || !supabase) { setUtilityColumns([]); setUtilityValues({}); return; }
@@ -911,27 +912,36 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                 : `${numberFormatter.format(filteredRows.length)} / ${numberFormatter.format(rows.length)} 区画を表示`}
             </p>
           </div>
+          <div className="rent-roll-table-controls" aria-label="一覧のスクロール操作">
+            <span>{tableScrollPosition === "left" ? "左端" : tableScrollPosition === "right" ? "右端" : "中央"}を表示中</span>
+            <button type="button" className="secondary-button" onClick={() => tableWrapRef.current?.scrollBy({ left: -640, behavior: "smooth" })} aria-label="表を左へ移動">← 左へ</button>
+            <button type="button" className="secondary-button" onClick={() => tableWrapRef.current?.scrollBy({ left: 640, behavior: "smooth" })} aria-label="表を右へ移動">右へ →</button>
+            <button type="button" className="secondary-button" onClick={() => tableWrapRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>先頭行へ</button>
+          </div>
         </div>
         <div
+          ref={tableWrapRef}
           className="rent-roll-table-wrap"
           role="region"
-          aria-label="レントロール一覧。縦横にスクロールできます"
+          aria-label={"レントロール一覧" + (viewMode === "snapshot" ? "。過去スナップショット" : "") + "。表内で縦横にスクロールできます。左側の区画情報は固定表示されます"}
           tabIndex={0}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            const maxScroll = element.scrollWidth - element.clientWidth;
+            setTableScrollPosition(element.scrollLeft < 8 ? "left" : element.scrollLeft >= maxScroll - 8 ? "right" : "middle");
+          }}
         >
           <table className="rent-roll-table">
             <thead>
               <tr>
-                <th>状態</th>
-                <th>商品</th>
-                <th>種別</th>
-                <th>階</th>
-                <th>室・枠</th>
-                <th>内外</th>
-                <th>契約形態</th>
+                <th className="rent-roll-pinned rent-roll-pinned-1">状態</th>
+                <th className="rent-roll-pinned rent-roll-pinned-2">商品</th>
+                <th className="rent-roll-pinned rent-roll-pinned-3">種別</th>
+                <th className="rent-roll-pinned rent-roll-pinned-4">階</th>
+                <th className="rent-roll-pinned rent-roll-pinned-5">室・枠</th>
                 <th>契約期間</th>
-                <th>テナント名</th>
-                <th>暗証番号</th>
-                <th>車両</th>
+                <th>契約形態</th>
+                <th className="rent-roll-pinned rent-roll-pinned-tenant">テナント名</th>
                 <th>面積㎡</th>
                 <th>賃料</th>
                 <th>共益費</th>
@@ -942,19 +952,23 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                 <th>保証金</th>
                 <th>礼金</th>
                 <th>更新料</th>
+                <th>内外</th>
+                <th>暗証番号</th>
+                <th>車両</th>
+                {viewMode === "snapshot" && <th>操作</th>}
               </tr>
             </thead>
             <tbody>
               {loadingRows && (
                 <tr>
-                  <td colSpan={21} className="rent-roll-empty">
+                  <td colSpan={viewMode === "snapshot" ? 22 : 21} className="rent-roll-empty">
                     レントロールを読み込んでいます。
                   </td>
                 </tr>
               )}
               {!loadingRows && filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={21} className="rent-roll-empty">
+                  <td colSpan={viewMode === "snapshot" ? 22 : 21} className="rent-roll-empty">
                     条件に一致する区画はありません。
                   </td>
                 </tr>
@@ -969,7 +983,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                         : undefined
                     }
                   >
-                    <td>
+                    <td className="rent-roll-pinned rent-roll-pinned-1">
                       <span className={`rent-roll-status ${row.status}`}>
                         {statusLabel[row.status]}
                       </span>
@@ -985,22 +999,22 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                         </small>
                       ) : null}
                     </td>
-                    <td>
+                    <td className="rent-roll-pinned rent-roll-pinned-2">
                       <span
                         className={`rent-roll-product-badge ${row.productCategory}`}
                       >
                         {productCategoryLabel[row.productCategory]}
                       </span>
                     </td>
-                    <td>
+                    <td className="rent-roll-pinned rent-roll-pinned-3">
                       <span
                         className={`unit-type-badge ${row.unitType === "parking" ? "parking" : ""}`}
                       >
                         {row.unitType === "parking" ? "駐車場" : "貸室等"}
                       </span>
                     </td>
-                    <td>{row.floor || "—"}</td>
-                    <td>
+                    <td className="rent-roll-pinned rent-roll-pinned-4">{row.floor || "—"}</td>
+                    <td className="rent-roll-pinned rent-roll-pinned-5">
                       <strong>
                         {row.parkingSpaceNumber
                           ? `枠 ${row.parkingSpaceNumber}`
@@ -1012,16 +1026,9 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                         </small>
                       )}
                     </td>
-                    <td>
-                      {row.parkingScope === "internal"
-                        ? "内部"
-                        : row.parkingScope === "external"
-                          ? "外部"
-                          : "—"}
-                    </td>
-                    <td>{row.leaseTermLabel}</td>
                     <td>{row.contractPeriod}</td>
-                    <td>
+                    <td>{row.leaseTermLabel}</td>
+                    <td className="rent-roll-pinned rent-roll-pinned-tenant" title={row.tenantName || undefined}>
                       {row.tenantName &&
                       row.leaseContractUnitId &&
                       capabilities.canViewContract ? (
@@ -1040,10 +1047,6 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                         row.tenantName || "—"
                       )}
                     </td>
-                    <td className="access-code">
-                      {row.parkingAccessCode || "—"}
-                    </td>
-                    <td>{row.parkingVehicle || "—"}</td>
                     <td className="numeric">
                       {row.area == null
                         ? "—"
@@ -1072,6 +1075,17 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                     <td className="numeric">
                       {formatCurrency(row.renewalFee)}
                     </td>
+                    <td>
+                      {row.parkingScope === "internal"
+                        ? "内部"
+                        : row.parkingScope === "external"
+                          ? "外部"
+                          : "—"}
+                    </td>
+                    <td className="access-code">
+                      {row.parkingAccessCode || "—"}
+                    </td>
+                    <td>{row.parkingVehicle || "—"}</td>
                     {viewMode === "snapshot" && row.status !== "vacant" && (
                       <td>
                         <button
@@ -1113,14 +1127,14 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                           契約化
                         </button>
                       </td>
-                    )}
+                    )}{viewMode === "snapshot" && row.status === "vacant" && <td />}
                   </tr>
                 ))}
             </tbody>
             {!loadingRows && filteredRows.length > 0 && (
               <tfoot>
                 <tr className="rent-roll-total-row">
-                  <th colSpan={11} scope="row">
+                  <th colSpan={8} scope="row">
                     表示中の合計（{numberFormatter.format(filteredRows.length)}件）
                   </th>
                   <td className="numeric">{numberFormatter.format(columnTotals.area)}</td>
@@ -1133,18 +1147,14 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   <td className="numeric">{formatCurrency(columnTotals.securityDeposit)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.keyMoney)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.renewalFee)}</td>
+                  <td colSpan={3} />
+                  {viewMode === "snapshot" && <td />}
                 </tr>
               </tfoot>
             )}
           </table>
         </div>
       </div>
-      {capabilities.canViewAuditData && (
-        <RentRollReconciliationPanel
-          selectedPropertyName={selectedProperty?.propertyName}
-          canManage={capabilities.canEditContract}
-        />
-      )}
       {selectedLeaseContractUnitId && (
         <ContractDetailModal
           leaseContractUnitId={selectedLeaseContractUnitId}

@@ -3496,25 +3496,62 @@ td small {
 }
 
 /* Rent roll */
+.page-content:has(.rent-roll-page) {
+  max-width: none;
+  padding: 18px clamp(18px, 2.5vw, 36px) 32px;
+}
 .rent-roll-page {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 .rent-roll-heading h2 {
-  margin: 4px 0 6px;
+  margin: 2px 0 4px;
   color: #263851;
-  font-size: 23px;
+  font-size: 21px;
 }
 .rent-roll-heading p:not(.section-kicker) {
   margin: 0;
   color: #748399;
   font-size: 12px;
 }
+.rent-roll-mode-switch {
+  display: flex;
+  gap: 4px;
+  width: fit-content;
+  margin: 0 0 1px;
+  border-bottom: 1px solid #dce4ed;
+}
+.rent-roll-mode-switch button {
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 8px 14px;
+  color: #74859b;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rent-roll-mode-switch button.active {
+  border-bottom-color: #3484d8;
+  color: #225f9e;
+}
+.rent-roll-mode-switch button:focus-visible {
+  outline: 2px solid #3484d8;
+  outline-offset: -2px;
+}
+.rent-roll-snapshot-banner {
+  margin: -4px 0 0;
+  color: #64758c;
+  font-size: 11px;
+}
 .rent-roll-toolbar {
   display: flex;
   align-items: end;
-  gap: 12px;
-  padding: 13px 15px;
+  gap: 10px;
+  padding: 9px 12px;
   border: 1px solid #e2e8f0;
   border-radius: 9px;
   background: #fff;
@@ -3531,7 +3568,7 @@ td small {
   min-width: 140px;
   border: 1px solid #d7e0eb;
   border-radius: 6px;
-  padding: 9px 10px;
+  padding: 7px 9px;
   color: #3f5069;
   background: #fff;
   font: inherit;
@@ -3547,8 +3584,8 @@ td small {
 }
 .rent-roll-product-filter {
   display: grid;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 7px;
+  padding: 9px 13px;
   border: 1px solid #dfe7f0;
   border-radius: 9px;
   background: #fff;
@@ -3596,7 +3633,7 @@ td small {
   gap: 7px;
   border: 1px solid #dfe6ee;
   border-radius: 7px;
-  padding: 9px 10px;
+  padding: 6px 8px;
   color: #607087;
   background: #fafbfd;
   font-size: 11px;
@@ -3625,7 +3662,7 @@ td small {
 }
 .rent-roll-selected-products {
   display: flex;
-  min-height: 23px;
+  min-height: 17px;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
@@ -3663,7 +3700,7 @@ td small {
   gap: 11px;
 }
 .rent-roll-metrics > div {
-  padding: 15px 17px;
+  padding: 10px 14px;
   border: 1px solid #e1e7ef;
   border-radius: 9px;
   background: #fff;
@@ -3710,6 +3747,23 @@ td small {
   color: #8290a3;
   font-size: 11px;
 }
+.rent-roll-table-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.rent-roll-table-controls > span {
+  margin-right: 3px;
+  color: #8290a3;
+  font-size: 10px;
+}
+.rent-roll-table-controls .secondary-button {
+  min-height: 32px;
+  padding: 6px 9px;
+  font-size: 10px;
+}
 .rent-roll-table-wrap {
   max-height: clamp(420px, 68vh, 760px);
   overflow: auto;
@@ -3725,6 +3779,7 @@ td small {
   min-width: 1900px;
   border-collapse: separate;
   border-spacing: 0;
+  table-layout: fixed;
   font-size: 12px;
 }
 .rent-roll-table th,
@@ -3747,7 +3802,64 @@ td small {
   font-size: 11px;
   font-weight: 800;
 }
-.rent-roll-table tbody tr:hover {
+.rent-roll-table .rent-roll-pinned {
+  position: sticky;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 1px 0 #e4eaf1;
+}
+.rent-roll-table th.rent-roll-pinned {
+  z-index: 4;
+  background: #f4f7fa;
+}
+.rent-roll-table .rent-roll-pinned-1 {
+  left: 0;
+  width: 112px;
+  min-width: 112px;
+}
+.rent-roll-table .rent-roll-pinned-2 {
+  left: 112px;
+  width: 92px;
+  min-width: 92px;
+}
+.rent-roll-table .rent-roll-pinned-3 {
+  left: 204px;
+  width: 90px;
+  min-width: 90px;
+}
+.rent-roll-table .rent-roll-pinned-4 {
+  left: 294px;
+  width: 66px;
+  min-width: 66px;
+}
+.rent-roll-table .rent-roll-pinned-5 {
+  left: 360px;
+  width: 126px;
+  min-width: 126px;
+}
+.rent-roll-table .rent-roll-pinned-tenant {
+  left: 486px;
+  width: 210px;
+  min-width: 210px;
+}
+.rent-roll-table th:nth-child(n + 6),
+.rent-roll-table td:nth-child(n + 6) {
+  width: 130px;
+}
+.rent-roll-table th:nth-child(6),
+.rent-roll-table td:nth-child(6) {
+  width: 190px;
+}
+.rent-roll-table th.rent-roll-pinned-tenant,
+.rent-roll-table td.rent-roll-pinned-tenant {
+  width: 210px;
+}
+.rent-roll-table th:nth-child(22),
+.rent-roll-table td:nth-child(22) {
+  width: 105px;
+}
+.rent-roll-table tbody tr:hover,
+.rent-roll-table tbody tr:hover .rent-roll-pinned {
   background: #f7fbff;
 }
 .rent-roll-table tfoot th,
@@ -3769,6 +3881,50 @@ td small {
 .rent-roll-table .emphasis {
   color: #285f9e;
   font-weight: 800;
+}
+@media (max-width: 1000px) {
+  .rent-roll-panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .rent-roll-table-controls {
+    justify-content: flex-start;
+  }
+  .rent-roll-table .rent-roll-pinned-1 {
+    width: 84px;
+    min-width: 84px;
+  }
+  .rent-roll-table .rent-roll-pinned-2 {
+    left: 84px;
+    width: 64px;
+    min-width: 64px;
+  }
+  .rent-roll-table .rent-roll-pinned-3 {
+    left: 148px;
+    width: 68px;
+    min-width: 68px;
+  }
+  .rent-roll-table .rent-roll-pinned-4 {
+    left: 216px;
+    width: 48px;
+    min-width: 48px;
+  }
+  .rent-roll-table .rent-roll-pinned-5 {
+    left: 264px;
+    width: 86px;
+    min-width: 86px;
+  }
+  .rent-roll-table .rent-roll-pinned-tenant {
+    position: static;
+    width: 130px;
+    min-width: 130px;
+    max-width: 130px;
+    box-shadow: none;
+  }
+  .rent-roll-table th.rent-roll-pinned-tenant {
+    position: static;
+  }
 }
 .rent-roll-status,
 .rent-roll-product-badge,
@@ -6645,4 +6801,136 @@ td small {
   .contract-workflow-progress-toolbar .contract-workflow-search {
     width: 100%;
   }
+}
+
+.contract-workflow-head-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+.contract-workflow-head-actions button {
+  white-space: nowrap;
+}
+.contract-workflow-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.contract-workflow-metrics .metric {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  min-height: 68px;
+  padding: 11px 14px 11px 16px;
+  border: 1px solid #e4eaf0;
+  border-radius: 7px;
+  background: #fff;
+}
+.contract-workflow-metrics .metric::before {
+  position: absolute;
+  top: 11px;
+  bottom: 11px;
+  left: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: #8ba0b7;
+  content: "";
+}
+.contract-workflow-metrics .metric.blue::before { background: #4787bd; }
+.contract-workflow-metrics .metric.amber::before { background: #d79a3b; }
+.contract-workflow-metrics .metric.green::before { background: #4a9c76; }
+.contract-workflow-metrics .metric span {
+  color: #718198;
+  font-size: 10px;
+  font-weight: 700;
+}
+.contract-workflow-metrics .metric strong {
+  color: #253c55;
+  font-size: 20px;
+  line-height: 1.2;
+}
+.contract-workflow-metrics .metric small {
+  margin-left: 5px;
+  color: #8291a3;
+  font-size: 10px;
+  font-weight: 500;
+}
+.contract-workflow-views {
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 0;
+}
+.workflow-tab-count {
+  margin-left: 5px;
+  border-radius: 10px;
+  padding: 2px 7px;
+  background: #edf2f6;
+  color: #677b91;
+  font-size: 10px;
+}
+.contract-workflow-views button.active .workflow-tab-count {
+  background: #e6f1fa;
+  color: #326e9f;
+}
+.contract-workflow-table th:first-child,
+.contract-workflow-table td:first-child { width: 245px; }
+.contract-workflow-table th:not(:first-child):not(:last-child),
+.contract-workflow-table td:not(:first-child):not(:last-child) { width: 145px; }
+.contract-workflow-table th:last-child,
+.contract-workflow-table td:last-child { width: 130px; min-width: 130px; }
+.contract-workflow-table td:first-child .workflow-type-mark {
+  display: inline-block;
+  margin: 0 6px 5px 0;
+  border-radius: 4px;
+  padding: 3px 6px;
+  background: #eaf4fb;
+  color: #3271a5;
+  font-size: 9px;
+  font-weight: 800;
+}
+.contract-workflow-table td:first-child .workflow-type-mark.change { background: #fff4df; color: #906116; }
+.contract-workflow-table td:first-child .workflow-type-mark.cancel { background: #fff0ef; color: #9e4d4d; }
+.workflow-row-progress {
+  display: block;
+  margin-top: 6px;
+  color: #8492a3;
+  font-size: 9px;
+}
+.workflow-stage-cell {
+  min-width: 115px;
+  color: #8190a0;
+}
+.workflow-stage-cell strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8996a5;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.workflow-stage-cell i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #c9d2dc;
+}
+.workflow-stage-cell small {
+  display: block;
+  margin: 4px 0 0 13px;
+  color: #91a0af;
+  font-size: 9px;
+}
+.workflow-stage-cell.done strong { color: #34795f; }
+.workflow-stage-cell.done i { background: #43a27b; }
+.workflow-stage-cell.current strong { color: #2d6799; font-weight: 800; }
+.workflow-stage-cell.current i { background: #4287bc; box-shadow: 0 0 0 3px #e5f1fa; }
+.workflow-stage-cell.skipped strong { color: #8b6a31; }
+.workflow-stage-cell.skipped i { background: #d5a343; }
+.workflow-action-group { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
+.workflow-action-group .text-button { font-size: 10px; }
+@media (max-width: 800px) {
+  .contract-workflow-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contract-workflow-hero { align-items: flex-start; flex-direction: column; }
 }
