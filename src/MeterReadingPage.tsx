@@ -796,7 +796,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     </div>}
 
     {tab === 'settings' && <div className="meter-panel meter-settings-panel">
-      <section className="meter-settings-block">
+      <section className="meter-settings-block" hidden>
         {building.categories.map((row) => <div key={row.id} className={`meter-category-config ${categoryClass(row.id)}${row.billable ? '' : ' meter-disabled'}`}>
           <div className="meter-category-head">
             <h5>{row.name}</h5>
