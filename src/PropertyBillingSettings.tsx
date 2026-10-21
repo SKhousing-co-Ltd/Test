@@ -345,12 +345,6 @@ export function PropertyBillingSettings({
           明細項目
         </button>
         <button
-          className={tab === "patterns" ? "active" : ""}
-          onClick={() => setTab("patterns")}
-        >
-          請求期間パターン
-        </button>
-        <button
           className={tab === "allocations" ? "active" : ""}
           onClick={() => setTab("allocations")}
         >

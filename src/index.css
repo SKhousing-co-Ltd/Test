@@ -3802,6 +3802,8 @@ td small {
   font-size: 11px;
   font-weight: 800;
 }
+.rent-roll-table thead tr:first-child th { top: 0; height: 38px; box-sizing: border-box; }
+.rent-roll-table thead tr:nth-child(2) th { top: 38px; height: 38px; box-sizing: border-box; z-index: 3; }
 .rent-roll-table .rent-roll-pinned {
   position: sticky;
   z-index: 1;
@@ -3858,6 +3860,23 @@ td small {
 .rent-roll-table td:nth-child(22) {
   width: 105px;
 }
+.rent-roll-table th.rent-roll-utility-group,
+.rent-roll-table th.rent-roll-utility-column { text-align: center; white-space: nowrap; }
+.rent-roll-table th.rent-roll-utility-group { text-align: center !important; }
+.rent-roll-table .rent-roll-utility-column.utility-basic,
+.rent-roll-table .rent-roll-utility-value.utility-basic { width: 130px; min-width: 130px; max-width: 130px; }
+.rent-roll-table .rent-roll-utility-column.utility-price,
+.rent-roll-table .rent-roll-utility-value.utility-price { width: 68px; min-width: 68px; max-width: 68px; }
+.rent-roll-table th.rent-roll-utility-group.utility-price-only { width: 68px; min-width: 68px; max-width: 68px; }
+.rent-roll-table .rent-roll-vehicle-cell { overflow: hidden; text-overflow: ellipsis; }
+.rent-roll-table .rent-roll-utility-group.utility-electric,
+.rent-roll-table .rent-roll-utility-column.utility-electric { background: #fff2b8; }
+.rent-roll-table .rent-roll-utility-group.utility-water,
+.rent-roll-table .rent-roll-utility-column.utility-water { background: #dff2fd; }
+.rent-roll-table .rent-roll-utility-group.utility-gas,
+.rent-roll-table .rent-roll-utility-column.utility-gas { background: #ffe3df; }
+.rent-roll-utility-value small { display: block; color: #738079; font-size: 10px; white-space: nowrap; }
+.meter-settings-block[hidden] { display: none !important; }
 .rent-roll-table tbody tr:hover,
 .rent-roll-table tbody tr:hover .rent-roll-pinned {
   background: #f7fbff;
