@@ -117,7 +117,7 @@ export async function fetchRecords(appId: string): Promise<AppsuiteRecord[]> {
       const requirement = value(payload, '申請の要件');
       const dataId = value(payload, 'データID');
       if (!dataId) continue;
-      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement, appId), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: value(payload, '稟議番号'), raw_payload: payload });
+      results.push({ app_id: appId, data_id: dataId, revision: value(payload, 'revision'), workflow_type: workflowType(requirement, appId), approval_status: value(payload, '決裁状況'), property_name: value(payload, '物件名') ?? value(payload, '建物名称'), tenant_name: value(payload, 'テナント名') ?? value(payload, '契約者名') ?? value(payload, '会社名'), source_created_at: value(payload, '登録日時'), source_updated_at: value(payload, '更新日時'), ringi_number: value(payload, '稟議番号'), raw_payload: payload });
     }
   }
   return results;

@@ -5696,6 +5696,11 @@ td small {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
 }
+.termination-contract-options {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px;
+}
 .termination-unit-option {
   display: flex;
   align-items: center;
