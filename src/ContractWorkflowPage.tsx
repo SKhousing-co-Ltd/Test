@@ -16,6 +16,16 @@ type QueueItem = {
   match_status: string;
   active_contract_count: number;
 };
+type TerminationWorkflow = {
+  appsuite_record_id: string;
+  change_request_id: string;
+  lease_contract_id: string;
+  termination_date: string;
+  target_scope: "contract" | "unit" | "parking";
+  lease_contract_unit_ids: string[];
+  contract_selections: Array<{ lease_contract_id: string; lease_contract_unit_ids: string[] }> | null;
+  started_at: string;
+};
 type Candidate = {
   lease_contract_id: string;
   tenant_name: string;
@@ -44,6 +54,7 @@ type Contract = {
   workflow_skips?: Array<{ stage_no: number; reason: string; skipped_at: string }> | null;
   tenant: { tenant_name: string } | null;
   contract_units: Array<{
+    lease_contract_unit_id: string;
     unit: { unit_code: string; unit_name: string | null; asset: { asset_name: string } | null } | null;
   }> | null;
 };
@@ -89,6 +100,8 @@ const renderStageCell = (contract: Contract, stage: number) => {
 let selectedAppSuiteAppId = "65";
 const appsuiteRecordUrl = (dataId: string) =>
   `https://sk-housing.dn-cloud.com/cgi-bin/dneo/appsuite.cgi?cmd=cdbbrowse&app_id=${encodeURIComponent(selectedAppSuiteAppId)}#view_id=2&id=${encodeURIComponent(dataId)}`;
+const terminationAppsuiteRecordUrl = (appId: string, dataId: string) =>
+  `https://sk-housing.dn-cloud.com/cgi-bin/dneo/appsuite.cgi?cmd=cdbbrowse&app_id=${encodeURIComponent(appId)}#view_id=2&id=${encodeURIComponent(dataId)}`;
 const formatDate = (value: string | null) =>
   value
     ? new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium" }).format(
@@ -122,6 +135,8 @@ export function ContractWorkflowPage({
   const [view, setView] = useState<"progress" | "applications">("progress");
   const [items, setItems] = useState<QueueItem[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [terminationWorkflows, setTerminationWorkflows] = useState<TerminationWorkflow[]>([]);
+  const [terminationRecordInfo, setTerminationRecordInfo] = useState<Record<string, { app_id: string; data_id: string; ringi_number: string | null; property_name: string | null; tenant_name: string | null }>>({});
   const [query, setQuery] = useState("");
   const [progressQuery, setProgressQuery] = useState("");
   const [progressTypeFilter, setProgressTypeFilter] = useState("all");
@@ -144,28 +159,43 @@ export function ContractWorkflowPage({
     if (!supabase) return;
     const client = supabase;
     setLoading(true);
-    const [queue, workflowLinks] = await Promise.all([
+    const [queue, workflowLinks, terminationResult] = await Promise.all([
       client.rpc("list_contract_workflow_queue"),
       client
         .from("workflow_contract_link")
         .select("lease_contract_id, appsuite_record_id, updated_at")
         .order("updated_at", { ascending: false }),
+      client.from("appsuite_termination_workflow")
+        .select("appsuite_record_id, change_request_id, lease_contract_id, termination_date, target_scope, lease_contract_unit_ids, contract_selections, started_at")
+        .eq("status", "in_progress")
+        .order("started_at", { ascending: false }),
     ]);
     if (queue.error)
       setError(`AppSuiteキューを読み込めませんでした: ${queue.error.message}`);
     else setItems((queue.data ?? []) as QueueItem[]);
+    if (terminationResult.error) setError(`解約手続き中の案件を読み込めませんでした: ${terminationResult.error.message}`);
+    const pendingTerminations = (terminationResult.data ?? []) as TerminationWorkflow[];
+    setTerminationWorkflows(pendingTerminations);
     if (workflowLinks.error)
       setError(`契約業務フローの対象を読み込めませんでした: ${workflowLinks.error.message}`);
     else {
-      const appSuiteIds = Array.from(new Set((workflowLinks.data ?? []).map((row) => row.appsuite_record_id)));
+      const appSuiteIds = Array.from(new Set([
+        ...(workflowLinks.data ?? []).map((row) => row.appsuite_record_id),
+        ...pendingTerminations.map((row) => row.appsuite_record_id),
+      ]));
       const appSuiteResults = await Promise.all(chunkIds(appSuiteIds).map((idChunk) =>
-        client.from("appsuite_record").select("appsuite_record_id, workflow_completed_at, workflow_type").in("appsuite_record_id", idChunk),
+        client.from("appsuite_record").select("appsuite_record_id, app_id, data_id, workflow_completed_at, workflow_type, ringi_number, property_name, tenant_name").in("appsuite_record_id", idChunk),
       ));
       const appSuiteError = appSuiteResults.find((result) => result.error)?.error;
       if (appSuiteError) setError(`AppSuite連携情報を読み込めませんでした: ${appSuiteError.message}`);
-      const completedAppSuiteIds = new Set(appSuiteResults.flatMap((result) => result.data ?? []).filter((record) => !!record.workflow_completed_at).map((record) => record.appsuite_record_id));
+      const appSuiteRecords = appSuiteResults.flatMap((result) => result.data ?? []);
+      setTerminationRecordInfo(Object.fromEntries(appSuiteRecords.map((record) => [record.appsuite_record_id, { app_id: record.app_id, data_id: record.data_id, ringi_number: record.ringi_number, property_name: record.property_name, tenant_name: record.tenant_name }])));
+      const completedAppSuiteIds = new Set(appSuiteRecords.filter((record) => !!record.workflow_completed_at).map((record) => record.appsuite_record_id));
       const completedLinks = (workflowLinks.data ?? []).filter((link) => completedAppSuiteIds.has(link.appsuite_record_id));
-      const ids = Array.from(new Set(completedLinks.map((row) => row.lease_contract_id)));
+      const pendingContractIds = pendingTerminations.flatMap((row) => row.contract_selections?.length
+        ? row.contract_selections.map((selection) => selection.lease_contract_id)
+        : [row.lease_contract_id]);
+      const ids = Array.from(new Set([...completedLinks.map((row) => row.lease_contract_id), ...pendingContractIds]));
       const workflowTypes = new Map<string, string>();
       const workflowTypeByAppSuiteId = new Map(appSuiteResults.flatMap((result) => result.data ?? []).map((record) => [record.appsuite_record_id, record.workflow_type]));
       for (const link of completedLinks) {
@@ -176,7 +206,7 @@ export function ContractWorkflowPage({
       const idChunks = chunkIds(ids);
       const [contractResults, progressResults, skipResults] = await Promise.all([
         Promise.all(idChunks.map((idChunk) =>
-          client.from("lease_contract").select("lease_contract_id, updated_at, contract_type, contract_start_date, contract_end_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(unit:unit_master!inner(unit_code, unit_name, asset:asset_master(asset_name)))").in("lease_contract_id", idChunk).order("updated_at", { ascending: false }),
+          client.from("lease_contract").select("lease_contract_id, updated_at, contract_type, contract_start_date, contract_end_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(lease_contract_unit_id, unit:unit_master!inner(unit_code, unit_name, asset:asset_master(asset_name)))").in("lease_contract_id", idChunk).order("updated_at", { ascending: false }),
         )),
         Promise.all(idChunks.map((idChunk) =>
           client.from("contract_workflow_progress").select("lease_contract_id, rent_roll_status, rent_roll_completed_at").in("lease_contract_id", idChunk),
@@ -199,7 +229,7 @@ export function ContractWorkflowPage({
   };
   useEffect(() => {
     void load();
-  }, []);
+  }, [view]);
   useEffect(() => {
     if (
       !candidates.some(
@@ -266,8 +296,10 @@ export function ContractWorkflowPage({
     [items],
   );
   const activeContracts = useMemo(
-    () => contracts.filter((contract) => !contract.workflow_progress?.rent_roll_status),
-    [contracts],
+    () => contracts.filter((contract) => !contract.workflow_progress?.rent_roll_status && !terminationWorkflows.some((workflow) => (workflow.contract_selections?.length
+      ? workflow.contract_selections.map((selection) => selection.lease_contract_id)
+      : [workflow.lease_contract_id]).includes(contract.lease_contract_id))),
+    [contracts, terminationWorkflows],
   );
   const filteredContracts = useMemo(() => {
     const value = progressQuery.trim().toLocaleLowerCase("ja-JP");
@@ -405,6 +437,23 @@ export function ContractWorkflowPage({
     if (result.error) setError(result.error.message);
     else {
       setNotice("AppSuiteワークフローを完了しました。");
+      await load();
+    }
+  };
+  const completeTermination = async (workflow: TerminationWorkflow) => {
+    if (!supabase) return;
+    const date = new Intl.DateTimeFormat("ja-JP").format(new Date(`${workflow.termination_date}T00:00:00`));
+    const contractCount = workflow.contract_selections?.length || 1;
+    if (!window.confirm(`解約日 ${date} を${contractCount}件の契約データとレントロールへ反映し、この解約手続きを完了しますか？`)) return;
+    setSavingId(workflow.appsuite_record_id);
+    setError("");
+    const result = await supabase.rpc("complete_appsuite_termination_workflow", {
+      p_appsuite_record_id: workflow.appsuite_record_id,
+    });
+    setSavingId(null);
+    if (result.error) setError(`解約内容を反映できませんでした: ${result.error.message}`);
+    else {
+      setNotice("解約日を契約データへ反映し、契約業務フローを完了しました。");
       await load();
     }
   };
@@ -790,7 +839,8 @@ export function ContractWorkflowPage({
         </div>
       </section>
       <section className="contract-workflow-metrics" aria-label="契約業務の集計">
-        <div className="metric blue"><span>進行中の案件</span><strong>{activeContracts.length}<small>件</small></strong></div>
+        <div className="metric blue"><span>進行中の案件</span><strong>{activeContracts.length + terminationWorkflows.length}<small>件</small></strong></div>
+        <div className="metric amber"><span>解約手続き中</span><strong>{terminationWorkflows.length}<small>件</small></strong></div>
         <div className="metric amber"><span>進行中の工程</span><strong>{activeStageCount}<small>工程</small></strong></div>
         <div className="metric"><span>BtoB対応待ち</span><strong>{btobWaitingCount}<small>件</small></strong></div>
         <div className="metric green"><span>今月の完了</span><strong>{monthCompletedCount}<small>件</small></strong></div>
@@ -802,6 +852,48 @@ export function ContractWorkflowPage({
       {error && <p className="contract-workflow-message error">{error}</p>}
       {notice && <p className="contract-workflow-message">{notice}</p>}
       {view === "applications" ? <>{appSuiteSection}<ChangeRequestWorkbenchPage role={role} /></> : <>
+      <section className="contract-workflow-panel termination-workflow-panel">
+        <header className="contract-workflow-panel-heading">
+          <div><h3>解約手続き中</h3><p>対応依頼で確認した解約を引き継いでいます。ここで反映するまで契約・レントロールの終了日は変更されません。</p></div>
+          <span>{terminationWorkflows.length}件</span>
+        </header>
+        <div className="table-wrap">
+          <table className="contract-workflow-table">
+            <thead><tr><th>稟議</th><th>対象契約</th><th>解約日</th><th>対象範囲</th><th>状態</th><th>操作</th></tr></thead>
+            <tbody>
+              {terminationWorkflows.map((workflow) => {
+                const record = terminationRecordInfo[workflow.appsuite_record_id];
+                const selections = workflow.contract_selections?.length
+                  ? workflow.contract_selections
+                  : [{ lease_contract_id: workflow.lease_contract_id, lease_contract_unit_ids: workflow.lease_contract_unit_ids }];
+                const selectedContracts = selections.map((selection) => ({
+                  selection,
+                  contract: contracts.find((entry) => entry.lease_contract_id === selection.lease_contract_id),
+                }));
+                const unitNames = selectedContracts.flatMap(({ selection, contract }) => (contract?.contract_units ?? [])
+                  .filter((entry) => workflow.target_scope === "contract" || selection.lease_contract_unit_ids.includes(entry.lease_contract_unit_id ?? ""))
+                  .map((entry) => entry.unit?.unit_code).filter(Boolean));
+                const contractLabels = selectedContracts.map(({ selection, contract }) => {
+                  const units = (contract?.contract_units ?? [])
+                    .filter((entry) => workflow.target_scope === "contract" || selection.lease_contract_unit_ids.includes(entry.lease_contract_unit_id ?? ""))
+                    .map((entry) => entry.unit?.unit_code).filter(Boolean);
+                  return `${contract?.tenant?.tenant_name ?? "契約"}（${units.join("、") || "区画未設定"}）`;
+                });
+                const propertyNames = Array.from(new Set(selectedContracts.flatMap(({ contract }) => (contract?.contract_units ?? []).map((entry) => entry.unit?.asset?.asset_name).filter(Boolean))));
+                return <tr key={workflow.appsuite_record_id}>
+                  <td>{record ? <a href={terminationAppsuiteRecordUrl(record.app_id, record.data_id)} target="_blank" rel="noreferrer">{record.ringi_number ?? record.data_id} ↗</a> : workflow.appsuite_record_id.slice(0, 8)}</td>
+                  <td><strong>{(record?.property_name ?? propertyNames.join("、")) || "物件未設定"}</strong><small>{contractLabels.join(" / ") || `${unitNames.join("、") || "区画未設定"} ／ ${record?.tenant_name ?? "テナント未設定"}`}</small></td>
+                  <td>{workflow.termination_date}</td>
+                  <td>{workflow.target_scope === "contract" ? `契約全体（${selections.length}契約）` : workflow.target_scope === "parking" ? `駐車場 ${unitNames.join("、")}` : `選択区画 ${unitNames.join("、")}`}</td>
+                  <td><span className="workflow-type-mark cancel">契約手続き中</span></td>
+                  <td>{canComplete && <button className="secondary-button workflow-complete-button" disabled={!!savingId} onClick={() => void completeTermination(workflow)}>{savingId === workflow.appsuite_record_id ? "反映中…" : `解約内容を${selections.length}件の契約へ反映`}</button>}</td>
+                </tr>;
+              })}
+              {!loading && !terminationWorkflows.length && <tr><td colSpan={6} className="contract-workflow-empty">解約手続き中の案件はありません。</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
       <section className="contract-workflow-panel">
         <header className="contract-workflow-panel-heading">
           <div>

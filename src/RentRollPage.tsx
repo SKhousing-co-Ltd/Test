@@ -64,6 +64,11 @@ type RentRollSource = {
     tenant_name: string;
     monthly_total_amount: number;
   }>;
+  pending_terminations?: Array<{
+    appsuite_record_id: string;
+    termination_date: string;
+    target_scope: "contract" | "unit" | "parking";
+  }>;
 };
 
 type RentRollRow = {
@@ -99,6 +104,8 @@ type RentRollRow = {
   sourceSheetName?: string;
   sourceRowNumber?: number | null;
   terminationScheduled?: boolean;
+  terminationInProgress?: boolean;
+  terminationDate?: string;
   snapshotAsOfDate?: string;
   incomingContracts?: RentRollSource["incoming_contracts"];
 };
@@ -218,6 +225,7 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
     source.unit_type === "parking" && source.space_status === "unavailable";
   const isParking = source.unit_type === "parking";
   const incomingContracts = source.incoming_contracts ?? [];
+  const pendingTermination = source.pending_terminations?.[0] ?? null;
   const leaseTermLabel = isParking
     ? "—"
     : source.lease_term_type === "ordinary"
@@ -242,7 +250,7 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
         source.leasing_status === "unavailable"
       ? source.leasing_status
       : source.lease_contract_id
-        ? isTerminationScheduled
+      ? isTerminationScheduled || !!pendingTermination
           ? "scheduled"
           : "occupied"
         : incomingContracts.length
@@ -292,6 +300,8 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
           .filter(Boolean)
           .join(" / "),
     incomingContracts,
+    terminationInProgress: !!pendingTermination,
+    terminationDate: pendingTermination?.termination_date,
   };
 }
 
@@ -985,8 +995,9 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   >
                     <td className="rent-roll-pinned rent-roll-pinned-1">
                       <span className={`rent-roll-status ${row.status}`}>
-                        {statusLabel[row.status]}
+                        {row.terminationInProgress ? "契約手続き中" : statusLabel[row.status]}
                       </span>
+                      {row.terminationInProgress && row.terminationDate ? <small className="rent-roll-incoming-note">解約日: {row.terminationDate}</small> : null}
                       {row.incomingContracts?.length ? (
                         <small className="rent-roll-incoming-note">
                           申込中:{" "}
