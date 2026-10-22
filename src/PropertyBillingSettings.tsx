@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "./lib/supabase";
-import type { BillingProperty } from "./TenantBillingControls";
-import { PropertyBillingChargeTypeSettings } from "./PropertyBillingChargeTypeSettings";
+import type { BillingPeriod, BillingProperty } from "./TenantBillingControls";
 import { BillingCodeAllocationSettings } from "./BillingCodeAllocationSettings";
 import { InvoiceSplitSettings } from "./InvoiceSplitSettings";
+import { MeterReadingPage } from "./MeterReadingPage";
 import "./PropertyBillingSettings.css";
 
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string; utility_kind?: string | null };
@@ -18,8 +18,6 @@ type LineItem = {
   period_rule_type: PeriodRule;
   billing_period_pattern_id: string | null;
   sort_order: number;
-  // 請求内容（電灯・空調など）。レントロールの単価列の見出しに使います。
-  billing_content: string | null;
   show_unit_price_in_rent_roll: boolean;
   // 既定単価・税区分です。契約区画に単価が無いテナント（新規のテナントなど）に使います。
   default_unit_price: number | null;
@@ -52,24 +50,24 @@ const dayLabel = (day: Day, offset: number) =>
 export function PropertyBillingSettings({
   propertyId,
   properties,
+  period,
   canEdit,
 }: {
   propertyId: string;
   properties: BillingProperty[];
+  period: BillingPeriod;
   canEdit: boolean;
 }) {
   const [tab, setTab] = useState<
-    "types" | "items" | "patterns" | "allocations" | "invoiceSplits"
-  >("types");
+    "items" | "meterSettings" | "patterns" | "allocations" | "invoiceSplits"
+  >("items");
   const [types, setTypes] = useState<ChargeType[]>([]);
-  const [enabled, setEnabled] = useState<string[]>([]);
   const [items, setItems] = useState<LineItem[]>([]);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [db, setDb] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
   const [name, setName] = useState("");
-  const [billingContent, setBillingContent] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [typeId, setTypeId] = useState("");
   const [patternName, setPatternName] = useState("");
@@ -86,9 +84,6 @@ export function PropertyBillingSettings({
   const [dropItemId, setDropItemId] = useState("");
   const [dropPatternId, setDropPatternId] = useState("");
   const property = properties.find((p) => p.asset_id === propertyId);
-  const enabledTypes = types.filter((type) =>
-    enabled.includes(type.billing_charge_type_id),
-  );
   useEffect(() => {
     const load = async () => {
       if (!propertyId) {
@@ -102,21 +97,16 @@ export function PropertyBillingSettings({
       setLoading(true);
       setNotice("");
       if (supabase) {
-        const [a, b, c, d] = await Promise.all([
+        const [typeResult, itemResult, patternResult] = await Promise.all([
           supabase
             .from("billing_charge_type")
             .select("billing_charge_type_id, charge_type_name, utility_kind")
             .eq("is_active", true)
             .order("sort_order"),
           supabase
-            .from("asset_billing_charge_type_setting")
-            .select("billing_charge_type_id")
-            .eq("asset_id", propertyId)
-            .eq("is_enabled", true),
-          supabase
             .from("asset_billing_line_item")
             .select(
-              "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
+              "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
             )
             .eq("asset_id", propertyId)
             .eq("is_active", true)
@@ -129,20 +119,18 @@ export function PropertyBillingSettings({
             .eq("asset_id", propertyId)
             .order("sort_order"),
         ]);
-        if (!a.error && !b.error && !c.error && !d.error) {
-          const active = (b.data ?? []).map((x) => x.billing_charge_type_id);
-          setTypes((a.data ?? []) as ChargeType[]);
-          setEnabled(active);
-          setItems((c.data ?? []) as LineItem[]);
-          setPatterns((d.data ?? []) as Pattern[]);
-          setTypeId(active[0] ?? "");
+        if (!typeResult.error && !itemResult.error && !patternResult.error) {
+          const availableTypes = (typeResult.data ?? []) as ChargeType[];
+          setTypes(availableTypes);
+          setItems((itemResult.data ?? []) as LineItem[]);
+          setPatterns((patternResult.data ?? []) as Pattern[]);
+          setTypeId(availableTypes[0]?.billing_charge_type_id ?? "");
           setDb(true);
           setLoading(false);
           return;
         }
       }
       setTypes([]);
-      setEnabled([]);
       setItems([]);
       setPatterns([]);
       setTypeId("");
@@ -159,11 +147,10 @@ export function PropertyBillingSettings({
       line_item_name: name.trim(),
       display_name: displayName.trim(),
       billing_charge_type_id: typeId,
-      billing_content: billingContent.trim() || null,
       ...(editingItemId ? {} : { sort_order: items.length + 1 }),
     };
     if (db && supabase && editingItemId) {
-      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode").single();
+      const { data, error } = await supabase.from("asset_billing_line_item").update(draft).eq("asset_billing_line_item_id", editingItemId).select("asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode").single();
       if (error) { setNotice(`明細項目を更新できませんでした: ${error.message}`); return; }
       setItems(items.map((item) => item.asset_billing_line_item_id === editingItemId ? data as LineItem : item)); setEditingItemId("");
     } else if (db && supabase) {
@@ -177,7 +164,7 @@ export function PropertyBillingSettings({
           billing_period_pattern_id: null,
         })
         .select(
-          "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, billing_content, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
+          "asset_billing_line_item_id, line_item_name, display_name, billing_charge_type_id, billing_kind, period_rule_type, billing_period_pattern_id, sort_order, show_unit_price_in_rent_roll, default_unit_price, default_tax_mode",
         )
         .single();
       if (error) {
@@ -188,7 +175,6 @@ export function PropertyBillingSettings({
     } else { setNotice("データベースに接続できないため、明細項目を登録できません。"); return; }
     setName("");
     setDisplayName("");
-    setBillingContent("");
     setNotice(editingItemId ? "明細項目を更新しました。" : "明細項目を登録しました。");
   };
   const removeItem = async (item: LineItem) => {
@@ -271,16 +257,16 @@ export function PropertyBillingSettings({
       )}
       <div className="property-billing-tabs">
         <button
-          className={tab === "types" ? "active" : ""}
-          onClick={() => setTab("types")}
-        >
-          請求種別
-        </button>
-        <button
           className={tab === "items" ? "active" : ""}
           onClick={() => setTab("items")}
         >
           明細項目
+        </button>
+        <button
+          className={tab === "meterSettings" ? "active" : ""}
+          onClick={() => setTab("meterSettings")}
+        >
+          検針設定
         </button>
         <button
           className={tab === "allocations" ? "active" : ""}
@@ -295,16 +281,6 @@ export function PropertyBillingSettings({
           請求書分割設定
         </button>
       </div>
-      {tab === "types" && (
-        <PropertyBillingChargeTypeSettings
-          propertyId={propertyId}
-          canEdit={canEdit}
-          onChange={(ids) => {
-            setEnabled(ids);
-            if (!ids.includes(typeId)) setTypeId(ids[0] ?? "");
-          }}
-        />
-      )}
       {tab === "items" && (
         <section className="property-billing-items">
           <div className="property-billing-items-heading">
@@ -330,7 +306,7 @@ export function PropertyBillingSettings({
                 onChange={(e) => setTypeId(e.target.value)}
               >
                 <option value="">選択してください</option>
-                {enabledTypes.map((x) => (
+                {types.map((x) => (
                   <option
                     key={x.billing_charge_type_id}
                     value={x.billing_charge_type_id}
@@ -340,13 +316,9 @@ export function PropertyBillingSettings({
                 ))}
               </select>
             </label>
-            <label>
-              請求内容
-              <input value={billingContent} placeholder="電灯・空調など" onChange={(e) => setBillingContent(e.target.value)} />
-            </label>
             <button
               className="primary-button"
-              disabled={!canEdit || !enabledTypes.length}
+              disabled={!canEdit || !types.length}
             >
               {editingItemId ? "更新" : "登録"}
             </button>
@@ -378,7 +350,7 @@ export function PropertyBillingSettings({
                       )?.charge_type_name ?? "—"}
                     </td>
                     <td>
-                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); setBillingContent(item.billing_content ?? ""); }}>編集</button>
+                      <button type="button" className="text-button" disabled={!canEdit} onClick={() => { setEditingItemId(item.asset_billing_line_item_id); setName(item.line_item_name); setDisplayName(item.display_name); setTypeId(item.billing_charge_type_id); }}>編集</button>
                       <button
                         className="tenant-billing-delete"
                         disabled={!canEdit}
@@ -398,6 +370,14 @@ export function PropertyBillingSettings({
             </table>
           </div>
         </section>
+      )}
+      {tab === "meterSettings" && (
+        <MeterReadingPage
+          propertyId={propertyId}
+          propertyName={property?.short_name || property?.asset_name || ""}
+          period={period}
+          settingsOnly
+        />
       )}
       {tab === "patterns" && (
         <section className="property-period-patterns">

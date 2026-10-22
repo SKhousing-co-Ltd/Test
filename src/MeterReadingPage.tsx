@@ -88,7 +88,7 @@ const patternMark = (index: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(i
 const emptyBuilding: BuildingConfig = { categories: [], subItems: [], surcharges: [], taxRate: 0.1 };
 type PeriodPattern = { billing_period_pattern_id: string; pattern_name: string; start_month_offset: number; start_day_type: string; start_meter_day_offset: number; end_month_offset: number; end_day_type: string; end_meter_day_offset: number };
 
-export function MeterReadingPage({ propertyId, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
+export function MeterReadingPage({ propertyId, period, settingsOnly = false }: { propertyId: string; propertyName: string; period: BillingPeriod; settingsOnly?: boolean }) {
   const [building, setBuildingState] = useState<BuildingConfig>(emptyBuilding);
   const [tenants, setTenantsState] = useState<TenantConfig[]>([]);
   const [meters, setMetersState] = useState<AssetMeter[]>([]);
@@ -104,7 +104,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [tab, setTab] = useState<string>('summary');
+  const [tab, setTab] = useState<string>(settingsOnly ? 'settings' : 'summary');
   const [subTab, setSubTab] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'input' | 'assign' | 'price'>('input');
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
@@ -427,12 +427,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
 
   return <section className="meter-page">
     <header className="meter-page-heading">
-      <div><p className="section-kicker">METER</p><h2>検針データ</h2></div>
+      <div><p className="section-kicker">METER</p><h2>{settingsOnly ? '検針設定' : '検針データ'}</h2></div>
       <div className="meter-date-fields">
-        <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
+        {!settingsOnly && <><label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
         <span className="meter-date-previous">前回検針日<b>{previousMeterDate ? previousMeterDate.replace(/-/g, '/') : '前月の検針データなし'}</b></span>
-        <span className="meter-date-previous">検針期間<b>{readingPeriodText}</b></span>
-        {status === 'draft'
+        <span className="meter-date-previous">検針期間<b>{readingPeriodText}</b></span></>}
+        {settingsOnly
+          ? <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
+          : status === 'draft'
           ? <>
             <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
             <button type="button" className="meter-confirm" disabled={dirty || confirming || loading || !baseline || !tenants.length || blockingProblems.length > 0 || unsavedRows} title={blockingProblems.length ? '検針値の入力に不備があるため確定できません' : unsavedRows ? 'まだ保存していないテナントの設定があります。保存してから確定してください' : undefined} onClick={() => void confirm()}>{confirming ? '確定中…' : '確定'}</button>
@@ -448,19 +450,18 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     {loading && <p className="tenant-billing-notice">検針データを読み込んでいます…</p>}
     {!loading && baseline && !tenants.length && <p className="tenant-billing-notice">対象月に契約中のテナントがありません。</p>}
 
-    {status === 'confirmed' && <p className="tenant-billing-notice">この月は確定済みです。編集するには確定を解除してください。</p>}
-    {status === 'draft' && blockingProblems.length > 0 && <div className="tenant-billing-notice meter-problem-list">
+    {!settingsOnly && status === 'confirmed' && <p className="tenant-billing-notice">この月は確定済みです。編集するには確定を解除してください。</p>}
+    {!settingsOnly && status === 'draft' && blockingProblems.length > 0 && <div className="tenant-billing-notice meter-problem-list">
       <b>検針値の入力に不備があるため確定できません。</b>
       <ul>{blockingProblems.map((row) => <li key={row.meter.id}>{building.subItems.find((item) => item.id === row.meter.subItemId)?.name ?? ''}　メーター「{row.meter.code || '番号なし'}」：{row.problems.join('／')}</li>)}</ul>
     </div>}
 
-    <nav className="meter-tabs">
+    {!settingsOnly && <nav className="meter-tabs">
       <button type="button" className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>集計</button>
       {visibleCategories.map((row) => <button key={row.id} type="button" className={tab === row.id ? 'active' : ''} onClick={() => setTab(row.id)}>{row.name}</button>)}
-      <button type="button" className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>設定</button>
-    </nav>
+    </nav>}
 
-    <fieldset className="meter-lock" disabled={status === 'confirmed'}>
+    <fieldset className="meter-lock" disabled={!settingsOnly && status === 'confirmed'}>
     {tab === 'summary' && <div className="meter-panel">
       {billableSurcharges.length > 0 && <div className="meter-month-rates">
         {billableSurcharges.map((row) => {

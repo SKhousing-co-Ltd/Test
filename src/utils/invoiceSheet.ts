@@ -79,8 +79,13 @@ export const invalidAmountRows = (rows: InvoiceRow[]) => rows.filter((row) => pa
 const fixedItems: Array<{ name: string; field: keyof Pick<RentRollSource, 'monthly_rent_amount' | 'monthly_common_charge_amount' | 'monthly_parking_amount' | 'other_monthly_amount'> }> = [
   { name: '賃料', field: 'monthly_rent_amount' }, { name: '共益費', field: 'monthly_common_charge_amount' }, { name: '駐車料', field: 'monthly_parking_amount' }, { name: 'その他', field: 'other_monthly_amount' },
 ];
-// 駐輪場の区画はレントロール上「その他」に入るため、明細では駐輪場利用料として分けます。
-const lineItemName = (source: RentRollSource, item: (typeof fixedItems)[number]) => item.field === 'other_monthly_amount' && source.unit_type === 'bicycle_parking' ? '駐輪場利用料' : item.name;
+// 駐輪場・看板の区画はレントロール上「その他」に入るため、請求書では契約種別に合う名称へ分けます。
+const lineItemName = (source: RentRollSource, item: (typeof fixedItems)[number]) => {
+  if (item.field !== 'other_monthly_amount') return item.name;
+  if (source.unit_type === 'bicycle_parking') return '駐輪場利用料';
+  if (source.unit_type === 'signage') return '看板料';
+  return item.name;
+};
 // 駐車場・駐輪場は区画ごとの契約なので、数量に台数、単位に「台」を出します。
 const countedItems = new Set(['駐車料', '駐輪場利用料']);
 const firstOf = <T,>(value: T | T[] | null) => Array.isArray(value) ? value[0] ?? null : value;

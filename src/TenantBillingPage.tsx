@@ -48,7 +48,7 @@ export function TenantBillingPage({ canEdit, canManageSettings }: { canEdit: boo
       : activeMenu === 4
         ? <MeterReadingPage propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} />
       : activeMenu === 5
-        ? <PropertyBillingSettings propertyId={propertyId} properties={properties} canEdit={canEdit} />
+        ? <PropertyBillingSettings propertyId={propertyId} properties={properties} period={period} canEdit={canEdit} />
         : <section className="tenant-billing-workspace"><p className="section-kicker">{billingMenus[activeMenu]}</p><h3>{billingMenus[activeMenu]}</h3><p>この領域に{billingMenus[activeMenu]}の機能を追加していきます。</p></section>}
   </section>;
 }
