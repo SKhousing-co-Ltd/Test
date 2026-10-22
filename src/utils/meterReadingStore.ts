@@ -673,7 +673,8 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
   const meterDates = { current: snapshot.meterDate, previous: snapshot.previousMeterDate };
   if (snapshot.status !== 'confirmed') {
     const { results, building } = computeMonth(snapshot, year, month);
-    return { lines: meterInvoiceLines(results, building), meterDates, status: snapshot.status };
+    // メーター未登録の物件では、初期値だけから0円の公共料金行を作らないようにします。
+    return { lines: snapshot.meters.length ? meterInvoiceLines(results, building) : [], meterDates, status: snapshot.status };
   }
   const confirmed = await loadConfirmedAmounts(client, assetId, year, month);
   // 確定した金額は、画面と同じテナント・契約行の順に並べます。
