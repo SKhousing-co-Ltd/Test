@@ -415,7 +415,7 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
   const unitOf = (id: CategoryId) => building.categories.find((row) => row.id === id)?.unit ?? '';
   return result.rows.flatMap((row) => {
     const shared = { tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
-    const subItems = row.categories.flatMap((category) => category.subItems.filter((item) => item.amount).map((item) => ({
+    const subItems = row.categories.flatMap((category) => category.subItems.map((item) => ({
       ...shared, sourceId: item.subItem.id, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
       // 基本料は固定額なので、数量・単価は出しません。単価が違うメーターが混ざる行と、
       // 請求書に単価を出さない設定の小分類も、単価は空欄にします。
@@ -423,7 +423,7 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
       unitPrice: item.subItem.kind !== 'basic' && item.subItem.showUnitPriceOnInvoice && item.groups.length === 1 ? item.groups[0].unitPrice : null,
       amount: item.amount, periodPatternId: item.subItem.periodPatternId,
     })));
-    const surcharges = row.surcharges.filter((item) => item.amount).map((item) => ({
+    const surcharges = row.surcharges.map((item) => ({
       ...shared, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
       // 増額分は請求しますが、単価は請求書に載せません（数量・金額だけ出します）。
       usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: null, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,

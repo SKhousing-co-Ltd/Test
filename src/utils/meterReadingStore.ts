@@ -683,7 +683,6 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
   const lines: MeterInvoiceLine[] = [...confirmed]
     .sort((left, right) => (tenantOrder.get(left.tenantId) ?? 9999) - (tenantOrder.get(right.tenantId) ?? 9999)
       || (sourceOrder.get(left.sourceId) ?? 9999) - (sourceOrder.get(right.sourceId) ?? 9999) || left.rowNo - right.rowNo)
-    .filter((row) => row.amount)
     .map((row) => {
       const subItem = row.sourceKind === 'subItem' ? snapshot.building.subItems.find((item) => item.id === row.sourceId) : undefined;
       const surcharge = row.sourceKind === 'surcharge' ? snapshot.building.surcharges.find((item) => item.id === row.sourceId) : undefined;
@@ -714,7 +713,6 @@ export async function confirmMeterReading(
       amount_rounding_mode: row.row.amountRoundingMode,
     };
     const subItemRows = row.categories.flatMap((category) => category.subItems
-      .filter((item) => item.amount)
       .map((item) => ({
         ...shared, category: category.category.id, source_kind: 'subItem', source_id: item.subItem.id, source_name: item.subItem.name,
         asset_billing_line_item_id: item.subItem.lineItemId || null,
@@ -726,7 +724,7 @@ export async function confirmMeterReading(
         usage_rounding_digits: item.subItem.usageRoundingDigits, usage_rounding_mode: item.subItem.usageRoundingMode,
         tax_mode: item.subItem.taxMode, tax_rate: snapshot.building.taxRate,
       })));
-    const surchargeRows = row.surcharges.filter((item) => item.amount).map((item) => ({
+    const surchargeRows = row.surcharges.map((item) => ({
       ...shared, category: item.surcharge.categoryId, source_kind: 'surcharge', source_id: item.surcharge.id, source_name: item.surcharge.name,
       asset_billing_line_item_id: item.surcharge.lineItemId || null,
       line_item_name: item.surcharge.lineItemId ? lineItemNames.get(item.surcharge.lineItemId) ?? null : null,
