@@ -5,6 +5,7 @@ declare
   v_duplicate_unit_id uuid;
   v_contract_unit_id uuid;
   v_changed integer;
+  v_match_count integer;
 begin
   if not exists (
     select 1
@@ -19,7 +20,21 @@ begin
     from public.asset_master asset
    where asset.asset_name = 'リバーサイドタワー中之島';
 
-  select unit.unit_id into strict v_canonical_unit_id
+  select count(*) into v_match_count
+    from public.unit_master unit
+   where unit.property_id = v_property_id
+     and unit.unit_code = '3002'
+     and unit.floor_label = '30F'
+     and unit.rentable_area_sqm = 111.40
+     and unit.is_active;
+  if v_match_count = 0 then
+    raise notice 'Skipping Riverside 3002 unit relink: canonical unit is absent in this database.';
+    return;
+  elsif v_match_count <> 1 then
+    raise exception 'Expected one canonical Riverside 3002 unit, found %', v_match_count;
+  end if;
+
+  select unit.unit_id into v_canonical_unit_id
     from public.unit_master unit
    where unit.property_id = v_property_id
      and unit.unit_code = '3002'
@@ -28,7 +43,22 @@ begin
      and unit.is_active
    for update;
 
-  select unit.unit_id into strict v_duplicate_unit_id
+  select count(*) into v_match_count
+    from public.unit_master unit
+   where unit.property_id = v_property_id
+     and unit.unit_code = '3002'
+     and unit.floor_label is null
+     and unit.rentable_area_sqm is null
+     and unit.unit_name = '3002'
+     and unit.is_active;
+  if v_match_count = 0 then
+    raise notice 'Skipping Riverside 3002 unit relink: duplicate unit is absent in this database.';
+    return;
+  elsif v_match_count <> 1 then
+    raise exception 'Expected one duplicate Riverside 3002 unit, found %', v_match_count;
+  end if;
+
+  select unit.unit_id into v_duplicate_unit_id
     from public.unit_master unit
    where unit.property_id = v_property_id
      and unit.unit_code = '3002'
@@ -45,7 +75,23 @@ begin
     raise exception 'Canonical Riverside 3002 unit already has a contract; refusing to merge';
   end if;
 
-  select contract_unit.lease_contract_unit_id into strict v_contract_unit_id
+  select count(*) into v_match_count
+    from public.lease_contract_unit contract_unit
+    join public.lease_contract contract
+      on contract.lease_contract_id = contract_unit.lease_contract_id
+    join public.tenant_master tenant on tenant.tenant_id = contract.tenant_id
+   where contract_unit.unit_id = v_duplicate_unit_id
+     and tenant.tenant_name = '株式会社ストライプ'
+     and contract.contract_start_date = date '2025-02-27'
+     and contract_unit.monthly_rent_amount = 380000;
+  if v_match_count = 0 then
+    raise notice 'Skipping Riverside 3002 unit relink: matching Stripe contract is absent in this database.';
+    return;
+  elsif v_match_count <> 1 then
+    raise exception 'Expected one Stripe contract unit for Riverside 3002, found %', v_match_count;
+  end if;
+
+  select contract_unit.lease_contract_unit_id into v_contract_unit_id
     from public.lease_contract_unit contract_unit
     join public.lease_contract contract
       on contract.lease_contract_id = contract_unit.lease_contract_id
