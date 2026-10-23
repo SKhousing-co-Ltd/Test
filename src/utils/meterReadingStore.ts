@@ -70,6 +70,7 @@ type ContractRowRecord = {
   amount_rounding_mode: RoundingMode; note: string | null; split_label: string | null;
 };
 type ContractItemRow = { meter_reading_contract_id: string; asset_meter_sub_item_id: string; is_billable: boolean; unit_price: number | null; fixed_amount: number | null };
+type MonthlyFixedChargeRow = { billing_month: string; meter_reading_contract_id: string; asset_meter_sub_item_id: string; amount: number };
 type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item_id: string; meter_code: string; meter_label: string | null; is_active: boolean };
 type AssignmentRow = { asset_meter_unit_assignment_id: string; asset_meter_id: string; unit_id: string; effective_from: string; effective_to: string | null };
 type BreakRow = { asset_meter_id: string; break_date: string; reading: number | null; usage_amount: number | null };
@@ -161,15 +162,19 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   // 契約行の小分類設定・分割行の区画は、契約行が決まってからでないと引けません。
   const contractIds = contractRows.map((row) => row.meter_reading_contract_id);
   let contractItemRows: ContractItemRow[] = [];
+  let monthlyFixedRows: MonthlyFixedChargeRow[] = [];
   const unitIdsByContract = new Map<string, string[]>();
   if (contractIds.length) {
-    const [itemResult, contractUnitResult] = await Promise.all([
+    const [itemResult, contractUnitResult, monthlyFixedResult] = await Promise.all([
       client.from('meter_reading_contract_item').select('meter_reading_contract_id, asset_meter_sub_item_id, is_billable, unit_price, fixed_amount').in('meter_reading_contract_id', contractIds),
       client.from('meter_reading_contract_unit').select('meter_reading_contract_id, unit_id').in('meter_reading_contract_id', contractIds),
+      client.from('meter_reading_month_fixed_charge').select('billing_month, meter_reading_contract_id, asset_meter_sub_item_id, amount').eq('asset_id', assetId).lte('billing_month', billingMonth).in('meter_reading_contract_id', contractIds).order('billing_month', { ascending: false }),
     ]);
     if (itemResult.error) throw new Error(`契約行の設定を読み込めませんでした: ${itemResult.error.message}`);
     if (contractUnitResult.error) throw new Error(`分割行の区画を読み込めませんでした: ${contractUnitResult.error.message}`);
+    if (monthlyFixedResult.error) throw new Error(`毎月定額を読み込めませんでした: ${monthlyFixedResult.error.message}`);
     contractItemRows = (itemResult.data ?? []) as ContractItemRow[];
+    monthlyFixedRows = (monthlyFixedResult.data ?? []) as MonthlyFixedChargeRow[];
     for (const row of (contractUnitResult.data ?? []) as Array<{ meter_reading_contract_id: string; unit_id: string }>) {
       unitIdsByContract.set(row.meter_reading_contract_id, [...(unitIdsByContract.get(row.meter_reading_contract_id) ?? []), row.unit_id]);
     }
@@ -237,6 +242,11 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 
   const itemsByContract = new Map<string, ContractItemRow[]>();
   for (const row of contractItemRows) itemsByContract.set(row.meter_reading_contract_id, [...(itemsByContract.get(row.meter_reading_contract_id) ?? []), row]);
+  const latestMonthlyFixed = new Map<string, number>();
+  for (const row of monthlyFixedRows) {
+    const key = `${row.meter_reading_contract_id}|${row.asset_meter_sub_item_id}`;
+    if (!latestMonthlyFixed.has(key)) latestMonthlyFixed.set(key, Number(row.amount));
+  }
 
   const toContractRow = (record: ContractRowRecord): ContractRow => {
     const items = itemsByContract.get(record.meter_reading_contract_id) ?? [];
@@ -247,6 +257,10 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
       // 未登録の小分類は、基本料以外は請求する扱いにします。
       billable[subItem.id] = found ? found.is_billable : subItem.kind !== 'basic';
       if (found?.fixed_amount !== null && found?.fixed_amount !== undefined) fixedCharges[subItem.id] = Number(found.fixed_amount);
+      if (subItem.isMonthlyFixed) {
+        const inherited = latestMonthlyFixed.get(`${record.meter_reading_contract_id}|${subItem.id}`);
+        if (inherited !== undefined) fixedCharges[subItem.id] = inherited;
+      }
     }
     return {
       id: record.meter_reading_contract_id, invoiceNo: record.invoice_number,
@@ -574,7 +588,7 @@ export async function saveMeterReading(
       meter_reading_contract_id: row.id, asset_meter_sub_item_id: subItem.id,
       is_billable: row.billable[subItem.id] ?? false,
       unit_price: null,
-      fixed_amount: subItem.kind === 'basic' || subItem.isMonthlyFixed ? row.fixedCharges[subItem.id] ?? null : null,
+      fixed_amount: subItem.kind === 'basic' ? row.fixedCharges[subItem.id] ?? null : null,
     })),
   ))), '契約行の小分類設定');
 
@@ -604,6 +618,14 @@ export async function saveMeterReading(
   check(await client.from('meter_reading_month').upsert({
     asset_id: assetId, billing_month: billingMonth, meter_date: next.meterDate || null, status: next.status,
   }, { onConflict: 'asset_id,billing_month' }), '検針日');
+
+  const monthlyFixedCharges = next.tenants.flatMap((tenant) => tenant.rows.flatMap((row) =>
+    next.building.subItems.filter((item) => item.isMonthlyFixed && row.billable[item.id]).map((item) => ({
+      asset_id: assetId, billing_month: billingMonth, meter_reading_contract_id: row.id,
+      asset_meter_sub_item_id: item.id, amount: row.fixedCharges[item.id] ?? 0,
+    })),
+  ));
+  if (monthlyFixedCharges.length) check(await client.from('meter_reading_month_fixed_charge').upsert(monthlyFixedCharges, { onConflict: 'asset_id,billing_month,meter_reading_contract_id,asset_meter_sub_item_id' }), '毎月定額');
 
   // 仕入の請求金額を入れた増額分は、増額分タブで算出した単価を保存します。
   const effectiveSurcharges = computeMonth(next, year, month).building.surcharges;

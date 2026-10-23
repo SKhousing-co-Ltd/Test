@@ -650,7 +650,23 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         </div>;
       })()}
 
-      {subItem && subItem.kind === 'custom' && currentMode === 'input' && (() => {
+      {subItem?.isMonthlyFixed && (() => {
+        const amountOf = (tenantId: string, index: number) => results.find((result) => result.tenant.id === tenantId)?.rows[index]
+          ?.categories.find((item) => item.category.id === category.id)?.subItems.find((item) => item.subItem.id === subItem.id)?.amount ?? 0;
+        return <div className="meter-table-wrap">
+          <table className="meter-table">
+            <thead><tr><th className="meter-col-name">テナント／公共料金グループ</th><th>{subItem.name}（円／月）</th><th>請求額</th></tr></thead>
+            <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id}>
+              <td className="meter-col-name">{rowLabel(tenant, index)}</td>
+              <td><span className="meter-settings-pair"><input type="checkbox" checked={row.billable[subItem.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [subItem.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[subItem.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [subItem.id]: fixedAmount ?? 0 }, billable: { ...row.billable, [subItem.id]: fixedAmount !== null } })} /><span className="meter-unit">円</span></span></td>
+              <td className="numeric">{row.billable[subItem.id] ? yen.format(amountOf(tenant.id, index)) : '—'}</td>
+            </tr>))}</tbody>
+          </table>
+          <p className="meter-hint">入力した金額はこの検針月に保存され、翌月以降は変更するまで同じ金額を引き継ぎます。</p>
+        </div>;
+      })()}
+
+      {subItem && !subItem.isMonthlyFixed && subItem.kind === 'custom' && currentMode === 'input' && (() => {
         const unit = category.unit;
         const usageRows = usageTable(subItem, category);
         const allShares = usageRows.flatMap((group) => group.meters);
@@ -888,7 +904,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                     : <span className="numeric">{yen.format(row.fixedCharges[basic.id] ?? 0)} 円</span>}</td>] : []),
                   ...(customs.length === 1 && !customs[0]?.isMonthlyFixed ? [] : customs.map((value) =>
                     <td key={`${value.id}-b`} className={categoryClass(item.id)}>{value.isMonthlyFixed
-                      ? <span className="meter-settings-pair"><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[value.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [value.id]: fixedAmount ?? 0 } })} /><span className="meter-unit">円</span></span>
+                      ? <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />
                       : <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />}</td>)),
                   <td key={`${item.id}-sum`} className={categoryClass(item.id)}>
                     <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>

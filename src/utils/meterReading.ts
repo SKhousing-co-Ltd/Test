@@ -338,7 +338,7 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
 
   if (subItem.kind === 'basic' || subItem.isMonthlyFixed) {
     const monthly = (subItem.kind === 'basic' ? category.fixedBillable : row.billable[subItem.id]) ? row.fixedCharges[subItem.id] ?? 0 : 0;
-    const fixed = proratedAmount(monthly, basicRatio, row.amountRoundingMode);
+    const fixed = subItem.isMonthlyFixed ? monthly : proratedAmount(monthly, basicRatio, row.amountRoundingMode);
     const label = fixed !== monthly && basicRatio ? `日割り（${basicRatio.days}／${basicRatio.totalDays}日）` : '固定額';
     return { ...empty, amount: fixed, groups: fixed ? [{ key: 'fixed', label, usage: 0, unitPrice: 0, amount: fixed }] : [] };
   }
