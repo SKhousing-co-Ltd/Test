@@ -399,7 +399,7 @@ function formatCurrency(value: number): string {
 
 // 公共料金の列です。検針設定で基本料を請求する分類の基本料と、請求設定で「単価をレントロールに載せる」明細項目の単価を出します。
 // 見出しは2行で、1行目に分類（電気・水道・ガス）、2行目に「基本料」「（請求内容）単価」を出します。
-type UtilityColumn = { key: string; group: string; label: string; kind: 'basic' | 'price'; id: string; fallback: { value: number; taxMode: string } | null };
+type UtilityColumn = { key: string; group: string; label: string; kind: 'basic' | 'price' | 'fixed'; id: string; fallback: { value: number; taxMode: string } | null };
 type UtilityValue = { value: number; taxMode: string; isDefault: boolean };
 const utilityCategoryNames: Record<string, string> = { electric: '電気', water: '水道', gas: 'ガス' };
 const utilityCategoryOrder = ['electric', 'water', 'gas', 'other'];
@@ -440,20 +440,25 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     let cancelled = false;
     const client = supabase;
     const loadUtility = async () => {
-      const [settingResult, lineItemResult, contractResult, priceSettingResult] = await Promise.all([
+      const [settingResult, lineItemResult, contractResult, priceSettingResult, billingGroupResult] = await Promise.all([
         client.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
-        client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, category, sub_item_name, asset_billing_line_item_id, default_unit_price, tax_mode, sort_order').eq('asset_id', propertyId).eq('sub_item_kind', 'custom').order('sort_order'),
-        client.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(property_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
+        client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, category, sub_item_name, asset_billing_line_item_id, default_unit_price, tax_mode, sort_order, is_monthly_fixed').eq('asset_id', propertyId).eq('sub_item_kind', 'custom').order('sort_order'),
+        client.from('lease_contract_unit').select('lease_contract_unit_id, unit_id, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
         client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode, show_in_rent_roll').eq('asset_id', propertyId),
+        client.from('meter_reading_contract').select('tenant_id, units:meter_reading_contract_unit(unit_id), items:meter_reading_contract_item(asset_meter_sub_item_id, is_billable, fixed_amount)').eq('asset_id', propertyId),
       ]);
       if (cancelled) return;
       // 読み込めないとき（未適用の環境など）は公共料金の列を出さないだけにします。
-      if (settingResult.error || lineItemResult.error || contractResult.error || priceSettingResult.error) { setUtilityColumns([]); setUtilityValues({}); return; }
+      if (settingResult.error || lineItemResult.error || contractResult.error || priceSettingResult.error || billingGroupResult.error) { setUtilityColumns([]); setUtilityValues({}); return; }
       const settings = (settingResult.data ?? []) as Array<{ category: string; is_billable: boolean; is_basic_billable: boolean }>;
       const basicColumns: UtilityColumn[] = ['electric', 'water', 'gas']
         .filter((category) => settings.some((row) => row.category === category && row.is_basic_billable && (category === 'electric' || row.is_billable)))
         .map((category) => ({ key: `basic:${category}`, group: category, label: '基本料', kind: 'basic', id: category, fallback: null }));
-      const priceColumns: UtilityColumn[] = ((lineItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; category: string; sub_item_name: string; asset_billing_line_item_id: string | null; default_unit_price: number | null; tax_mode: string }>)
+      const subItems = (lineItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; category: string; sub_item_name: string; asset_billing_line_item_id: string | null; default_unit_price: number | null; tax_mode: string; is_monthly_fixed: boolean }>;
+      const fixedColumns: UtilityColumn[] = subItems.filter((item) => item.is_monthly_fixed)
+        .map((item) => ({ key: `fixed:${item.asset_meter_sub_item_id}`, group: item.category, label: item.sub_item_name, kind: 'fixed' as const, id: item.asset_meter_sub_item_id, fallback: null }));
+      const priceColumns: UtilityColumn[] = subItems
+        .filter((item) => !item.is_monthly_fixed)
         .filter((item) => item.asset_billing_line_item_id !== null)
         .map((item) => ({ key: `price:${item.asset_billing_line_item_id}`, group: item.category, label: `${item.sub_item_name}単価`, kind: 'price' as const, id: item.asset_billing_line_item_id!, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.tax_mode } }));
       // 単価を分類で共通にした分類は、明細項目ごとの列の代わりに分類の「単価」を1列出します。
@@ -465,15 +470,23 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const sharedColumns: UtilityColumn[] = [...sharedGroups].filter((category) => (settingOf(category)?.show_in_rent_roll ?? true) && settings.some((row) => row.category === category && (category === 'electric' || row.is_billable)))
         .map((category) => { const row = settingOf(category); return { key: `category:${category}`, group: category, label: '単価', kind: 'price' as const, id: category, fallback: row?.default_unit_price == null ? null : { value: Number(row.default_unit_price), taxMode: row.default_tax_mode } }; });
       const values: Record<string, Record<string, { value: number; taxMode: string }>> = {};
-      for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; categoryPrices: Array<{ category: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null }>) {
+      const fixedTaxMode = new Map(subItems.map((item) => [item.asset_meter_sub_item_id, item.tax_mode]));
+      const billingGroups = (billingGroupResult.data ?? []) as unknown as Array<{ tenant_id: string; units: Array<{ unit_id: string }>; items: Array<{ asset_meter_sub_item_id: string; is_billable: boolean; fixed_amount: number | null }> }>;
+      for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; unit_id: string; contract: { tenant_id: string } | null; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; categoryPrices: Array<{ category: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null }>) {
         const target: Record<string, { value: number; taxMode: string }> = {};
         for (const price of unit.categoryPrices ?? []) target[`category:${price.category}`] = { value: Number(price.unit_price), taxMode: price.tax_mode };
         for (const price of unit.prices ?? []) target[`price:${price.asset_billing_line_item_id}`] = { value: Number(price.unit_price), taxMode: price.tax_mode };
         for (const basic of unit.basics ?? []) target[`basic:${basic.category}`] = { value: Number(basic.amount), taxMode: basic.tax_mode };
+        for (const group of billingGroups.filter((row) => row.tenant_id === unit.contract?.tenant_id && (!row.units.length || row.units.some((linked) => linked.unit_id === unit.unit_id)))) {
+          for (const item of group.items.filter((row) => row.is_billable && row.fixed_amount != null)) {
+            const key = `fixed:${item.asset_meter_sub_item_id}`;
+            target[key] = { value: (target[key]?.value ?? 0) + Number(item.fixed_amount), taxMode: fixedTaxMode.get(item.asset_meter_sub_item_id) ?? 'exclusive' };
+          }
+        }
         values[unit.lease_contract_unit_id] = target;
       }
       // 分類ごとに、基本料・単価（明細項目の並び順）の順に並べます。
-      const ordered = [...basicColumns, ...sharedColumns, ...priceColumns.filter((column) => !sharedGroups.has(column.group) && (settingOf(column.group)?.show_in_rent_roll ?? true))].map((column, index) => ({ column, index }))
+      const ordered = [...basicColumns, ...fixedColumns, ...sharedColumns, ...priceColumns.filter((column) => !sharedGroups.has(column.group) && (settingOf(column.group)?.show_in_rent_roll ?? true))].map((column, index) => ({ column, index }))
         .sort((left, right) => utilityCategoryOrder.indexOf(left.column.group) - utilityCategoryOrder.indexOf(right.column.group) || left.index - right.index).map(({ column }) => column);
       setUtilityColumns(ordered);
       setUtilityValues(values);

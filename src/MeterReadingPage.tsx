@@ -851,7 +851,8 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 {visibleCategories.map((item) => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
                   const detailColumns = customs.length === 1 && !customs[0]?.isMonthlyFixed ? 0 : customs.length;
-                  return <th key={item.id} colSpan={2 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  const basicColumns = item.fixedBillable ? 1 : 0;
+                  return <th key={item.id} colSpan={2 + basicColumns + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>備考</th>
                 <th rowSpan={2}>データ分割設定</th>
@@ -860,6 +861,10 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
               </tr>
               <tr>{visibleCategories.flatMap((item) => [
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
+...(() => {
+                  const basic = building.subItems.find((value) => value.categoryId === item.id && value.kind === 'basic');
+                  return item.fixedBillable && basic ? [<th key={`${basic.id}-allocation`} className={categoryClass(item.id)}>基本料配分</th>] : [];
+                })(),
 ...(() => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
                   if (customs.length === 1 && !customs[0]?.isMonthlyFixed) return [];
@@ -872,11 +877,15 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
               <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-contract-continued">{tenant.name}</span>}{tenant.splitEnabled ? <input className="meter-split-label" value={row.splitLabel} placeholder={`分割 ${index + 1} の識別名（3F など）`} onChange={(event) => updateRow(tenant.id, index, { splitLabel: event.target.value })} /> : null}</td>
               {visibleCategories.flatMap((item) => {
                 const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
+                const basic = building.subItems.find((value) => value.categoryId === item.id && value.kind === 'basic');
                 const enabled = row.categoryBillable[item.id] !== false;
                 return [
                   <td key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>
                     <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
                   </td>,
+                  ...(item.fixedBillable && basic ? [<td key={`${basic.id}-allocation`} className={categoryClass(item.id)}>{tenant.splitEnabled
+                    ? <span className="meter-settings-pair"><OptionalNumberInput value={row.fixedCharges[basic.id] ?? null} digits={0} placeholder="配分額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [basic.id]: fixedAmount ?? 0 }, billable: { ...row.billable, [basic.id]: fixedAmount !== null } })} /><span className="meter-unit">円</span></span>
+                    : <span className="numeric">{yen.format(row.fixedCharges[basic.id] ?? 0)} 円</span>}</td>] : []),
                   ...(customs.length === 1 && !customs[0]?.isMonthlyFixed ? [] : customs.map((value) =>
                     <td key={`${value.id}-b`} className={categoryClass(item.id)}>{value.isMonthlyFixed
                       ? <span className="meter-settings-pair"><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[value.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [value.id]: fixedAmount ?? 0 } })} /><span className="meter-unit">円</span></span>
