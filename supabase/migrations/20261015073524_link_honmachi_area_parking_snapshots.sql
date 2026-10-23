@@ -38,6 +38,7 @@ declare
   four_space_snapshot_count integer;
   ten_space_count integer;
   four_space_count integer;
+  source_snapshot_count integer;
 begin
   select asset.asset_id into strict v_property_id
     from public.asset_master asset
@@ -83,6 +84,19 @@ begin
     from public.unit_master unit
    where unit.property_id = v_property_id
      and unit.unit_code in ('PK-MAIN-201', 'PK-MAIN-203', 'PK-MAIN-303', 'PK-MAIN-310');
+
+  select count(*) into source_snapshot_count
+    from public.rent_roll_snapshot_row snapshot
+    join public.rent_roll_snapshot_batch batch using (rent_roll_snapshot_batch_id)
+   where snapshot.property_id = v_property_id
+     and snapshot.unit_code = '外部駐車場'
+     and snapshot.tenant_name ilike '%エリア・パーキング%'
+     and batch.as_of_date between date '2025-05-01' and date '2026-09-30';
+
+  if source_snapshot_count = 0 and ten_space_count = 0 and four_space_count = 0 then
+    raise notice 'Skipping 本町ビル parking snapshot allocation: source snapshots and target units are absent in this database.';
+    return;
+  end if;
 
   if ten_space_count <> 10
      or early_snapshot_count <> 6
