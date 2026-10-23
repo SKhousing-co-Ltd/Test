@@ -6,6 +6,15 @@ declare
   v_contract_unit_id uuid;
   v_changed integer;
 begin
+  if not exists (
+    select 1
+      from public.asset_master asset
+     where asset.asset_name = 'リバーサイドタワー中之島'
+  ) then
+    raise notice 'Skipping Riverside 3002 unit relink: property is absent in this database.';
+    return;
+  end if;
+
   select asset.asset_id into strict v_property_id
     from public.asset_master asset
    where asset.asset_name = 'リバーサイドタワー中之島';
