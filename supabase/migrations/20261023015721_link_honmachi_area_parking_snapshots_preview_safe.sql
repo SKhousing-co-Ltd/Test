@@ -40,6 +40,15 @@ declare
   four_space_count integer;
   source_snapshot_count integer;
 begin
+  if not exists (
+    select 1
+      from public.asset_master asset
+     where asset.asset_name = '三共本町ビル'
+  ) then
+    raise notice 'Skipping 本町ビル parking snapshot allocation: property is absent in this database.';
+    return;
+  end if;
+
   select asset.asset_id into strict v_property_id
     from public.asset_master asset
    where asset.asset_name = '三共本町ビル';
