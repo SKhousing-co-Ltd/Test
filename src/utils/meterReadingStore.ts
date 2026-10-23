@@ -402,7 +402,6 @@ export function applyContractBasics(tenants: TenantConfig[], building: BuildingC
       for (const category of categoryIds) {
         const basicItem = building.subItems.find((item) => item.categoryId === category && item.kind === 'basic');
         if (!basicItem) continue;
-        if (tenant.rows.length > 1 && row.splitLabel.trim() && row.fixedCharges[basicItem.id] !== undefined) continue;
         let found = false; let total = 0;
         for (const [key, charges] of Object.entries(basics)) {
           const [unitId, tenantId] = key.split(':');
