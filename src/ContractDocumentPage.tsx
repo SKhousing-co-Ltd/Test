@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { supabase } from "./lib/supabase";
 import {
   ContractTemplateTabs,
@@ -59,6 +59,19 @@ type Application = {
   approvedAt: string | null;
   values: Values;
   source: Record<string, unknown>;
+};
+type ContractOption = {
+  lease_contract_id: string;
+  contract_type: string | null;
+  contract_start_date: string | null;
+  tenant: { tenant_name: string | null } | null;
+  contract_units: Array<{
+    unit: {
+      unit_code: string | null;
+      unit_name: string | null;
+      asset: { asset_name: string | null } | null;
+    } | null;
+  }>;
 };
 type Geometry = { type: "MultiPolygon"; coordinates: number[][][][] };
 type PlanCandidate = {
@@ -162,7 +175,13 @@ async function renderPlanSnapshot(
 }
 
 export function ContractDocumentPage() {
-  const { contractId = "" } = useParams();
+  const { contractId: routeContractId = "" } = useParams();
+  const navigate = useNavigate();
+  const [selectedContractId, setSelectedContractId] =
+    useState(routeContractId);
+  const contractId = selectedContractId;
+  const [contractOptions, setContractOptions] = useState<ContractOption[]>([]);
+  const [contractOptionsError, setContractOptionsError] = useState("");
   const [documentType, setDocumentType] =
     useState<DocumentType>("ordinary_lease");
   const [revision, setRevision] = useState<Revision | null>(null);
@@ -194,11 +213,47 @@ export function ContractDocumentPage() {
   );
 
   useEffect(() => {
+    setSelectedContractId(routeContractId);
+  }, [routeContractId]);
+
+  useEffect(() => {
+    void loadContractOptions();
+  }, []);
+
+  useEffect(() => {
     void load();
   }, [contractId]);
 
+  const loadContractOptions = async () => {
+    if (!supabase) return;
+    const { data, error: optionsError } = await supabase
+      .from("lease_contract")
+      .select(
+        "lease_contract_id, contract_type, contract_start_date, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit(unit:unit_master(unit_code, unit_name, asset:asset_master(asset_name)))",
+      )
+      .neq("contract_status", "draft")
+      .order("contract_start_date", { ascending: false, nullsFirst: false });
+    if (optionsError) {
+      setContractOptionsError(optionsError.message);
+      return;
+    }
+    setContractOptions((data ?? []) as unknown as ContractOption[]);
+  };
+
+  const selectContract = (nextContractId: string) => {
+    setSelectedContractId(nextContractId);
+    if (nextContractId) navigate(`/contracts/${nextContractId}/document`);
+    else navigate("/contract-documents");
+  };
+
   const load = async () => {
-    if (!supabase || !contractId) return;
+    if (!supabase) return;
+    if (!contractId) {
+      setLoading(false);
+      setDocument(null);
+      setRevision(null);
+      return;
+    }
     setLoading(true);
     setError("");
     const client = supabase;
@@ -262,6 +317,15 @@ export function ContractDocumentPage() {
         sum + Number(item.leased_area_sqm ?? item.unit?.rentable_area_sqm ?? 0),
       0,
     );
+    const sumUnitAmount = (key: string) => {
+      const amounts = units
+        .map((item: any) => item[key])
+        .filter((amount: unknown) => amount != null && amount !== "")
+        .map((amount: unknown) => Number(amount));
+      return amounts.length
+        ? String(amounts.reduce((sum: number, amount: number) => sum + amount, 0))
+        : "";
+    };
     const rentalDefaults: Values = {
       ...emptyValues(loadedRevision?.field_definitions ?? fallbackFields),
       propertyName: unit?.unit?.asset?.asset_name ?? "",
@@ -281,10 +345,9 @@ export function ContractDocumentPage() {
             : "事務所",
       contractStartDate: contract.contract_start_date ?? "",
       contractEndDate: contract.contract_end_date ?? "",
-      monthlyRentAmount: unit?.monthly_rent_amount?.toString() ?? "",
-      monthlyCommonChargeAmount:
-        unit?.monthly_common_charge_amount?.toString() ?? "",
-      depositAmount: unit?.deposit_amount?.toString() ?? "",
+      monthlyRentAmount: sumUnitAmount("monthly_rent_amount"),
+      monthlyCommonChargeAmount: sumUnitAmount("monthly_common_charge_amount"),
+      depositAmount: sumUnitAmount("deposit_amount"),
       parkingContractCount:
         type === "parking" ? String(Math.max(unitRows.length, 1)) : "",
       specialProvisions: contract.notes ?? "",
@@ -297,7 +360,7 @@ export function ContractDocumentPage() {
         ? { ...rentalDefaults, ...existing.field_values }
         : rentalDefaults,
     );
-    setDefaults(existing?.workflow_defaults ?? rentalDefaults);
+    setDefaults(rentalDefaults);
     setManualFields(existing?.manually_edited_fields ?? []);
     setTermsText(savedTerms || loadedRevision?.default_terms_text || "");
     setRestorationText(
@@ -728,17 +791,62 @@ export function ContractDocumentPage() {
           <button
             className="primary-button"
             onClick={() => void generateWord()}
-            disabled={saving || !revision}
+            disabled={saving || !revision || !contractId}
           >
             {saving ? "処理中…" : "Wordを生成"}
           </button>
         </div>
       </header>
-      <ContractTemplateTabs
-        contractId={contractId}
-        currentType={documentType}
-        onChanged={() => void load()}
-      />
+      <section className="document-panel contract-selection-panel">
+        <label htmlFor="contract-document-contract-select">
+          対象契約
+          <select
+            id="contract-document-contract-select"
+            value={selectedContractId}
+            onChange={(event) => selectContract(event.target.value)}
+          >
+            <option value="">契約を選択してください</option>
+            {selectedContractId &&
+              !contractOptions.some(
+                (item) => item.lease_contract_id === selectedContractId,
+              ) && <option value={selectedContractId}>{selectedContractId}</option>}
+            {contractOptions.map((item) => {
+              const units = item.contract_units ?? [];
+              const firstUnit = units.find((entry) => entry.unit)?.unit;
+              const propertyName = firstUnit?.asset?.asset_name ?? "物件未設定";
+              const unitNames = units
+                .map((entry) => entry.unit?.unit_name || entry.unit?.unit_code)
+                .filter(Boolean)
+                .join("・");
+              return (
+                <option
+                  key={item.lease_contract_id}
+                  value={item.lease_contract_id}
+                >
+                  {[propertyName, item.contract_type || "種別未設定", unitNames || "区画未設定", item.tenant?.tenant_name || "テナント未設定", item.contract_start_date || "入居日未設定"]
+                    .filter(Boolean)
+                    .join(" / ")}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        {contractOptionsError && (
+          <p className="document-message error">
+            契約一覧を読み込めませんでした: {contractOptionsError}
+          </p>
+        )}
+      </section>
+      {!contractId && (
+        <p className="document-message">契約を選択すると契約書を作成できます。</p>
+      )}
+      {contractId && (
+        <ContractTemplateTabs
+          contractId={contractId}
+          currentType={documentType}
+          onChanged={() => void load()}
+        />
+      )}
       {!wordIsCurrent && document && (
         <p className="document-message">
           内容が変更されています。正式PDFを出力する前にWordを再生成してください。
@@ -746,18 +854,18 @@ export function ContractDocumentPage() {
       )}
       {error && <p className="document-message error">{error}</p>}
       {notice && <p className="document-message">{notice}</p>}
-      <div className="document-editor">
+      {contractId && <div className="document-editor">
         <section className="document-panel">
           <header>
             <div>
               <h3>頭書ブロック</h3>
-              <p>DeskNet’s・契約・物件データを初期転記します。</p>
+              <p>DBに登録済みの契約・物件情報を初期値に反映します。</p>
             </div>
             <button
               className="secondary-button"
               onClick={() => void loadApplications()}
             >
-              申請を取得
+              稟議から補足取得
             </button>
           </header>
           {applications.length > 0 && (
@@ -969,7 +1077,7 @@ export function ContractDocumentPage() {
             契約書作成完了
           </button>
         </footer>
-      </div>
+      </div>}
     </section>
   );
 }
