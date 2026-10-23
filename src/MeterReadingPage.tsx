@@ -88,7 +88,7 @@ const patternMark = (index: number) => '①②③④⑤⑥⑦⑧⑨⑩'.charAt(i
 const emptyBuilding: BuildingConfig = { categories: [], subItems: [], surcharges: [], taxRate: 0.1 };
 type PeriodPattern = { billing_period_pattern_id: string; pattern_name: string; start_month_offset: number; start_day_type: string; start_meter_day_offset: number; end_month_offset: number; end_day_type: string; end_meter_day_offset: number };
 
-export function MeterReadingPage({ propertyId, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
+export function MeterReadingPage({ propertyId, period, settingsOnly = false }: { propertyId: string; propertyName: string; period: BillingPeriod; settingsOnly?: boolean }) {
   const [building, setBuildingState] = useState<BuildingConfig>(emptyBuilding);
   const [tenants, setTenantsState] = useState<TenantConfig[]>([]);
   const [meters, setMetersState] = useState<AssetMeter[]>([]);
@@ -104,7 +104,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [tab, setTab] = useState<string>('summary');
+  const [tab, setTab] = useState<string>(settingsOnly ? 'settings' : 'summary');
   const [subTab, setSubTab] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'input' | 'assign' | 'price'>('input');
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
@@ -410,11 +410,12 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
 
   const category = visibleCategories.find((row) => row.id === tab);
   const categorySubItems = category ? building.subItems.filter((row) => row.categoryId === category.id && (row.kind !== 'basic' || category.fixedBillable)) : [];
+  const categoryTabItems = categorySubItems.filter((row) => !row.isMonthlyFixed);
   const categorySurcharges = category ? billableSurcharges.filter((row) => row.categoryId === category.id) : [];
   // 分類を開いたときは最初の小分類を出します。選んでいた小分類が消えた場合も最初に戻します。
   const storedSubTab = category ? subTab[category.id] : undefined;
-  const currentSubTab = storedSubTab && (storedSubTab === 'surcharge' ? categorySurcharges.length > 0 : categorySubItems.some((row) => row.id === storedSubTab))
-    ? storedSubTab : categorySubItems[0]?.id ?? (categorySurcharges.length ? 'surcharge' : '');
+  const currentSubTab = storedSubTab && (storedSubTab === 'surcharge' ? categorySurcharges.length > 0 : categoryTabItems.some((row) => row.id === storedSubTab))
+    ? storedSubTab : categoryTabItems[0]?.id ?? (categorySurcharges.length ? 'surcharge' : '');
   const subItem = categorySubItems.find((row) => row.id === currentSubTab);
   // 選んでいる小分類の請求期間です。小分類の設定で選んだ請求期間パターンから、検針日をもとに求めます。
   // 増額分タブでは、増額分で選んだ既定の請求期間を出します。
@@ -427,12 +428,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
 
   return <section className="meter-page">
     <header className="meter-page-heading">
-      <div><p className="section-kicker">METER</p><h2>検針データ</h2></div>
+      <div><p className="section-kicker">METER</p><h2>{settingsOnly ? '検針設定' : '検針データ'}</h2></div>
       <div className="meter-date-fields">
-        <label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
+        {!settingsOnly && <><label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
         <span className="meter-date-previous">前回検針日<b>{previousMeterDate ? previousMeterDate.replace(/-/g, '/') : '前月の検針データなし'}</b></span>
-        <span className="meter-date-previous">検針期間<b>{readingPeriodText}</b></span>
-        {status === 'draft'
+        <span className="meter-date-previous">検針期間<b>{readingPeriodText}</b></span></>}
+        {settingsOnly
+          ? <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
+          : status === 'draft'
           ? <>
             <button type="button" className="meter-save" disabled={!dirty || saving || loading || !baseline} onClick={() => void save()}>{saving ? '保存中…' : dirty ? '保存' : '保存済み'}</button>
             <button type="button" className="meter-confirm" disabled={dirty || confirming || loading || !baseline || !tenants.length || blockingProblems.length > 0 || unsavedRows} title={blockingProblems.length ? '検針値の入力に不備があるため確定できません' : unsavedRows ? 'まだ保存していないテナントの設定があります。保存してから確定してください' : undefined} onClick={() => void confirm()}>{confirming ? '確定中…' : '確定'}</button>
@@ -448,19 +451,18 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     {loading && <p className="tenant-billing-notice">検針データを読み込んでいます…</p>}
     {!loading && baseline && !tenants.length && <p className="tenant-billing-notice">対象月に契約中のテナントがありません。</p>}
 
-    {status === 'confirmed' && <p className="tenant-billing-notice">この月は確定済みです。編集するには確定を解除してください。</p>}
-    {status === 'draft' && blockingProblems.length > 0 && <div className="tenant-billing-notice meter-problem-list">
+    {!settingsOnly && status === 'confirmed' && <p className="tenant-billing-notice">この月は確定済みです。編集するには確定を解除してください。</p>}
+    {!settingsOnly && status === 'draft' && blockingProblems.length > 0 && <div className="tenant-billing-notice meter-problem-list">
       <b>検針値の入力に不備があるため確定できません。</b>
       <ul>{blockingProblems.map((row) => <li key={row.meter.id}>{building.subItems.find((item) => item.id === row.meter.subItemId)?.name ?? ''}　メーター「{row.meter.code || '番号なし'}」：{row.problems.join('／')}</li>)}</ul>
     </div>}
 
-    <nav className="meter-tabs">
+    {!settingsOnly && <nav className="meter-tabs">
       <button type="button" className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>集計</button>
       {visibleCategories.map((row) => <button key={row.id} type="button" className={tab === row.id ? 'active' : ''} onClick={() => setTab(row.id)}>{row.name}</button>)}
-      <button type="button" className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>設定</button>
-    </nav>
+    </nav>}
 
-    <fieldset className="meter-lock" disabled={status === 'confirmed'}>
+    <fieldset className="meter-lock" disabled={!settingsOnly && status === 'confirmed'}>
     {tab === 'summary' && <div className="meter-panel">
       {billableSurcharges.length > 0 && <div className="meter-month-rates">
         {billableSurcharges.map((row) => {
@@ -528,7 +530,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
     {category && <div className="meter-panel">
       <div className="meter-panel-bar">
         <nav className="meter-subtabs">
-          {categorySubItems.map((row) => <button key={row.id} type="button" className={currentSubTab === row.id ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: row.id })}>{row.name}</button>)}
+          {categoryTabItems.map((row) => <button key={row.id} type="button" className={currentSubTab === row.id ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: row.id })}>{row.name}</button>)}
           {categorySurcharges.length > 0 && <button type="button" className={currentSubTab === 'surcharge' ? 'active' : ''} onClick={() => setSubTab({ ...subTab, [category.id]: 'surcharge' })}>増額分</button>}
           {tabPatternId !== null && <span className="meter-subtab-period">
             <b>請求期間</b>
@@ -625,9 +627,10 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
         // 基本料は契約情報で基本料を入れている契約だけに請求します。入居日数は基本料の既定の請求期間で数えます。
         const basicPeriod = calculated.basicPeriods.get(subItem.id) ?? calculated.period;
         const contractTenants = calculated.contractTenants;
+        const monthlyFixedItems = categorySubItems.filter((item) => item.isMonthlyFixed);
         return <div className="meter-table-wrap">
           <table className="meter-table">
-            <thead><tr><th className="meter-col-name">テナント</th><th>{subItem.name}（円／月）</th><th>入居日数<small>{slashDate(basicPeriod.start)}～{slashDate(basicPeriod.end)}</small></th><th>請求額</th></tr></thead>
+            <thead><tr><th className="meter-col-name">テナント</th><th>{subItem.name}（円／月）</th><th>入居日数<small>{slashDate(basicPeriod.start)}～{slashDate(basicPeriod.end)}</small></th><th>請求額</th>{monthlyFixedItems.map((item) => <th key={item.id}>{item.name}<small>毎月定額</small></th>)}</tr></thead>
             <tbody>{contractTenants.flatMap((tenant) => tenant.rows.map((row, index) => {
               const ratio = calculated.ratios.get(basicRatioKey(row.id, subItem.id)) ?? calculated.ratios.get(row.id);
               const partial = ratio && ratio.days < ratio.totalDays;
@@ -636,6 +639,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <td className="numeric">{row.billable[subItem.id] ? yen.format(row.fixedCharges[subItem.id] ?? 0) : <span className="meter-muted">契約に基本料なし</span>}</td>
                 <td className={partial ? 'numeric meter-warn' : 'numeric meter-muted'}>{ratio ? `${ratio.days}／${ratio.totalDays}日${partial ? '（日割り）' : ''}` : '—'}</td>
                 <td className="numeric">{row.billable[subItem.id] ? yen.format(billedOf(tenant.id, index)) : ''}</td>
+                {monthlyFixedItems.map((item) => <td key={item.id}><span className="meter-settings-pair"><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[item.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [item.id]: fixedAmount ?? 0 }, billable: { ...row.billable, [item.id]: fixedAmount !== null } })} /><span className="meter-unit">円</span></span></td>)}
               </tr>;
             }))}</tbody>
             <tfoot><tr>
@@ -643,13 +647,14 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
               <td className="numeric">{yen.format(contractTenants.reduce((sum, tenant) => sum + tenant.rows.reduce((value, row) => value + (row.billable[subItem.id] ? row.fixedCharges[subItem.id] ?? 0 : 0), 0), 0))}</td>
               <td />
               <td className="numeric meter-total">{yen.format(contractTenants.reduce((sum, tenant) => sum + tenant.rows.reduce((value, row, index) => value + (row.billable[subItem.id] ? billedOf(tenant.id, index) : 0), 0), 0))}</td>
+              {monthlyFixedItems.map((item) => <td key={item.id} className="numeric meter-total">{yen.format(contractTenants.reduce((sum, tenant) => sum + tenant.rows.reduce((value, row) => value + (row.billable[item.id] ? row.fixedCharges[item.id] ?? 0 : 0), 0), 0))}</td>)}
             </tr></tfoot>
           </table>
-          <p className="meter-hint">基本料の金額は契約情報で設定します。既定の請求期間の途中で入居・退去したテナントは、入居日数で日割りします（小数点以下は契約情報の「小数点以下の処理」で処理します）。</p>
+          <p className="meter-hint">基本料は契約情報の金額を使用します。毎月定額はこの画面で入力し、翌月以降は変更するまで同じ金額を引き継ぎます。</p>
         </div>;
       })()}
 
-      {subItem && subItem.kind === 'custom' && currentMode === 'input' && (() => {
+      {subItem && !subItem.isMonthlyFixed && subItem.kind === 'custom' && currentMode === 'input' && (() => {
         const unit = category.unit;
         const usageRows = usageTable(subItem, category);
         const allShares = usageRows.flatMap((group) => group.meters);
@@ -849,7 +854,8 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
                 {visibleCategories.map((item) => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  return <th key={item.id} colSpan={2 + (customs.length === 1 ? 0 : customs.length)} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  const detailColumns = customs.length === 1 && !customs[0]?.isMonthlyFixed ? 0 : customs.length;
+                  return <th key={item.id} colSpan={2 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>備考</th>
                 <th rowSpan={2}>データ分割設定</th>
@@ -860,7 +866,7 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
 ...(() => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  if (customs.length === 1) return [];
+                  if (customs.length === 1 && !customs[0]?.isMonthlyFixed) return [];
                   return customs.map((value) => <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>);
                 })(),
                 <th key={`${item.id}-sum`} className={categoryClass(item.id)}>計算方法</th>,
@@ -875,8 +881,10 @@ export function MeterReadingPage({ propertyId, period }: { propertyId: string; p
                   <td key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>
                     <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
                   </td>,
-                  ...(customs.length === 1 ? [] : customs.map((value) =>
-                    <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>)),
+                  ...(customs.length === 1 && !customs[0]?.isMonthlyFixed ? [] : customs.map((value) =>
+                    <td key={`${value.id}-b`} className={categoryClass(item.id)}>{value.isMonthlyFixed
+                      ? <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />
+                      : <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />}</td>)),
                   <td key={`${item.id}-sum`} className={categoryClass(item.id)}>
                     <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
                   </td>,

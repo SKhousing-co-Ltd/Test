@@ -179,8 +179,12 @@ test('請求書作成へは、小分類・増額分ごとに使用量・単価�
     ['電灯', 'L-light', 2, 600, 'kWh', 30, 18000, 'P1'],
     ['電気増額分', 'L-up', 2, 600, 'kWh', null, 6000, 'P2'],
   ]);
-  // 金額0の小分類（T2の基本料）は載せません。
-  assert.deepEqual(lines.filter((line) => line.tenantId === 'T2').map((line) => line.sourceName), ['電灯', '電気増額分']);
+  // 請求対象の小分類は、計算結果が0円でも請求書作成へ渡します。
+  assert.deepEqual(lines.filter((line) => line.tenantId === 'T2').map((line) => [line.sourceName, line.amount]), [
+    ['基本料', 0],
+    ['電灯', 12000],
+    ['電気増額分', 4000],
+  ]);
 });
 
 test('請求書作成へは、電気→水道→ガスの順に小分類の並び順で渡し、増額分は分類の最後に置く', () => {

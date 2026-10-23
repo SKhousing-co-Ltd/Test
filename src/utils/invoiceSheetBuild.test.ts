@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildInvoiceSheet, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow } from './invoiceSheet.ts';
+import { buildInvoiceSheet, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet } from './invoiceSheet.ts';
 
 const invoiceRow = (invoiceKey: string, tenantId: string, line: string, invoiceNumber = ''): InvoiceRow => {
   const values = Array.from({ length: 21 }, () => ''); values[0] = invoiceNumber; values[11] = line;
@@ -21,6 +21,15 @@ test('保存済みテナント順を請求書カードへ反映し、同じテ�
   const rows = [invoiceRow('a1', 'A', '賃料', '1'), invoiceRow('a2', 'A', '水道代', '2'), invoiceRow('b', 'B', '賃料', '3')];
   const reordered = orderInvoiceCardsByTenants(rows, ['B', 'A']);
   assert.deepEqual(reordered.map((row) => [row.invoiceKey, row.values[0]]), [['b', '1'], ['a1', '2'], ['a2', '3']]);
+});
+
+test('保存済み請求書へ、確定後に増えた0円の電気代増額分を追加する', () => {
+  const savedRow = invoiceRow('a', 'A', '電気代', '1'); savedRow.values[15] = '1,000';
+  const surcharge = invoiceRow('a', 'A', '電気代増額分'); surcharge.chargeType = '電気代増額分'; surcharge.values[12] = '100'; surcharge.values[13] = 'kWh'; surcharge.values[15] = '0';
+  const sheet = (rows: InvoiceRow[]): InvoiceSheet => ({ rows, duePatternByInvoice: {}, dueDateByPattern: {}, periodPatternByRow: {}, periodRangeByPattern: {}, invoiceNote: '', showInvoiceNote: false });
+  const merged = mergeMissingZeroSurchargeRows(sheet([savedRow]), sheet([savedRow, surcharge]));
+  assert.deepEqual(merged.rows.map((row) => [row.values[11], row.values[15]]), [['電気代', '1,000'], ['電気代増額分', '0']]);
+  assert.equal(mergeMissingZeroSurchargeRows(merged, sheet([savedRow, surcharge])).rows.length, 2);
 });
 
 // Supabase のクエリを真似た最小の偽クライアントです。テーブルごとに決めた行を返します。
@@ -49,6 +58,15 @@ test('既定の条件：当月末日（土日祝は前日）・翌月分', async
   assert.equal(row.values[10], '2026/11/1～2026/11/30分');
   assert.equal(row.values[15], '100,000');
   assert.equal(termsNotice, '');
+});
+
+test('看板契約のその他月額は請求書で看板料として表示する', async () => {
+  const signage = { ...source('c1', 'A', 0), unit_type: 'signage', monthly_rent_amount: null, other_monthly_amount: 30000 };
+  const client = fakeClient({ billing_code: [code('A', '1001')], lease_contract: [terms('c1')] }, [signage]);
+  const { sheet } = await buildInvoiceSheet(client, 'p', '物件', 2026, 10);
+  assert.equal(sheet.rows[0].values[11], '看板料');
+  assert.equal(sheet.rows[0].values[15], '30,000');
+  assert.equal(sheet.rows[0].chargeType, '看板料');
 });
 
 test('年払い（10月請求・翌月～1年分）：10月は月額×12で1年分、他の月は0円・明細項目1は空白', async () => {

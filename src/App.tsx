@@ -154,7 +154,7 @@ function App() {
             <Route path="/appsuite-sync" element={<AppsuiteSyncPage isAdmin={profile?.role === 'admin'} />} />
             <Route path="/leasing-map" element={<LeasingMapPage />} />
             <Route path="/contracts" element={<ContractWorkflowPage role={profile?.role ?? 'viewer'} canComplete={profile?.role === 'admin' || (profile?.role !== 'viewer' && isAccountingDepartment)} />} />
-            <Route path="/contract-documents" element={<Navigate to="/contracts/90528c83-bff1-485b-8bc1-1b74bad9d6f7/document" replace />} />
+            <Route path="/contract-documents" element={<ContractDocumentPage />} />
             <Route path="/contracts/:contractId/document" element={<ContractDocumentPage />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
             <Route path="/admin/contract-billing-bulk" element={<ContractBillingBulkPage canEdit={canEditContractBillingTerms} />} />

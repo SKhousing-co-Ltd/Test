@@ -63,6 +63,7 @@ type ContractUnitOption = {
     floor_label: string | null;
     building_wing: { wing_code: string; wing_name: string | null } | null;
     asset: { asset_name: string } | null;
+    parking_space?: { space_number: string } | null;
   } | null;
   contract: { lease_contract_id: string; tenant_id: string; contract_status: string; tenant: { tenant_name: string } | null } | null;
 };
@@ -75,14 +76,56 @@ const editableFields = [
 const statusLabel: Record<string, string> = { open: '要確認', in_review: '確認中', on_hold: '保留', resolved: '確認済み（確定待ち）', applied: '確定済み', excluded: '対象外' };
 const sourceLabels: Record<string, string> = { floor: '階', unit: '取込元の区画表記', tenant_name: '取込元のテナント名', tenant_code: '取込元の請求コード', discriminator: '仮識別子' };
 const formatDate = (value: string) => new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+const numericContractFields = ['leased_area_sqm', 'monthly_rent_amount', 'monthly_common_charge_amount', 'deposit_amount', 'security_deposit_amount', 'key_money_amount', 'renewal_fee_amount'];
+const withoutThousandsSeparators = (value: string) => value.replace(/,/g, '').trim();
+const formatNumericInput = (value: string) => {
+  const normalized = withoutThousandsSeparators(value);
+  if (!normalized || !Number.isFinite(Number(normalized))) return value;
+  return Number(normalized).toLocaleString('ja-JP', { maximumFractionDigits: 4 });
+};
 const prettyValue = (value: unknown) => value === null || value === undefined || value === '' ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const sourceValue = (payload: JsonObject, key: string) => {
   const field = payload[key];
   if (field && typeof field === 'object' && 'val' in field) return String((field as { val?: unknown }).val ?? '').trim();
   return field === null || field === undefined ? '' : String(field).trim();
 };
+const formatAppsuiteSourceValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '';
+  if (Array.isArray(value)) return value.map((item, index) => {
+    const formatted = formatAppsuiteSourceValue(item);
+    return formatted ? `${index + 1}. ${formatted}` : '';
+  }).filter(Boolean).join('\n');
+  if (typeof value === 'object') {
+    const objectValue = value as Record<string, unknown>;
+    if ('val' in objectValue) return formatAppsuiteSourceValue(objectValue.val);
+    return Object.entries(objectValue)
+      .map(([key, entry]) => {
+        const formatted = formatAppsuiteSourceValue(entry);
+        return formatted ? `${key}: ${formatted}` : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(value).trim();
+};
+const sourceDateInput = (value: string) => {
+  const match = value.trim().match(/^(\d{4})[年/.-](\d{1,2})[月/.-](\d{1,2})日?$/);
+  return match ? `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}` : '';
+};
 function guessSourceTenantName(payload: JsonObject): string {
-  return sourceValue(payload, 'テナント名') || sourceValue(payload, 'tenant_name');
+  return sourceValue(payload, 'テナント名')
+    || sourceValue(payload, '契約者名')
+    || sourceValue(payload, '会社名')
+    || sourceValue(payload, 'tenant_name');
+}
+function requestDisplayTitle(request: ChangeRequest) {
+  const tenant = guessSourceTenantName(request.source_payload);
+  const property = sourceValue(request.source_payload, '物件名')
+    || sourceValue(request.source_payload, '物件名称')
+    || sourceValue(request.source_payload, '建物名称');
+  return request.title
+    .replace(/契約者未設定|テナント未設定/g, tenant || 'テナント未設定')
+    .replace(/物件未設定/g, property || '物件未設定');
 }
 function useTextFilter<T>(items: T[], initial: string, textOf: (item: T) => string) {
   const [query, setQuery] = useState(initial);
@@ -104,7 +147,7 @@ function relatedWorkflowLinks(request: ChangeRequest): { to: string; label: stri
 }
 const requestLocation = (request: ChangeRequest) => {
   const payload = request.source_payload;
-  return [sourceValue(payload, '物件名') || sourceValue(payload, '物件名称'), guessSourceTenantName(payload), sourceValue(payload, 'unit') || sourceValue(payload, '区画')].filter(Boolean).join(' / ');
+  return [sourceValue(payload, '物件名') || sourceValue(payload, '物件名称') || sourceValue(payload, '建物名称'), guessSourceTenantName(payload), sourceValue(payload, 'unit') || sourceValue(payload, '区画')].filter(Boolean).join(' / ');
 };
 type HistoricalContractCandidate = {
   historical_contract_key: string; snapshot_date: string; snapshot_count: number;
@@ -133,7 +176,7 @@ async function fetchAllPages<T>(loadPage: (from: number, to: number) => PromiseL
 }
 
 function requestDisplayContext(request: ChangeRequest, contracts: ContractOption[], contractUnits: ContractUnitOption[], properties: PropertyOption[], tenants: TenantOption[]) {
-  const sourceProperty = sourceValue(request.source_payload, '物件名') || sourceValue(request.source_payload, '物件名称') || sourceValue(request.source_payload, 'property_name');
+  const sourceProperty = sourceValue(request.source_payload, '物件名') || sourceValue(request.source_payload, '物件名称') || sourceValue(request.source_payload, '建物名称') || sourceValue(request.source_payload, 'property_name');
   const sourceTenant = guessSourceTenantName(request.source_payload) || sourceValue(request.source_payload, 'tenant_name');
   const titleParties = request.title.split(':').slice(1).join(':').split(/\s*\/\s*/, 2).map((value) => value.trim());
   const titleProperty = titleParties[0] || '';
@@ -273,9 +316,14 @@ function openAppsuiteRecord(event: React.MouseEvent<HTMLAnchorElement>, url: str
 
 function AppsuiteSourceContext({ request }: { request: ChangeRequest }) {
   if (request.source_type !== 'desknets') return null;
-  const importantFields = ['稟議番号', '取下稟議番号', '物件名', '物件名称', 'テナント名', '申請内容', '取下理由']
+  const importantFields = ['稟議番号', '取下稟議番号', '物件名', '物件名称', '建物名称', 'テナント名', '契約者名', '会社名', '区画', '申請内容', '取下理由']
     .map((key) => [key, key === '稟議番号' ? (request.source_record?.ringi_number || sourceValue(request.source_payload, key)) : sourceValue(request.source_payload, key)] as const)
     .filter(([, value]) => value);
+  const terminationFields = request.request_type === 'contract_terminate'
+    ? Object.entries(request.source_payload)
+      .map(([key, value]) => [key, formatAppsuiteSourceValue(value)] as const)
+      .filter(([, value]) => value)
+    : [];
   return <section className="change-card issue-context">
     <p className="section-kicker">APPSUITE APPROVAL</p>
     <h4>{requestTypeLabel[request.request_type] ?? 'AppSuite申請'}の原文</h4>
@@ -283,7 +331,7 @@ function AppsuiteSourceContext({ request }: { request: ChangeRequest }) {
       <div className="change-diff-head"><span>項目</span><span>申請内容</span><span>取扱い</span></div>
       {importantFields.map(([key, value]) => <div key={key}><strong>{key}</strong><span>{key === '稟議番号' && request.source_record ? <a href={appsuiteRecordUrl(request.source_record.app_id, request.source_record.data_id)} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, appsuiteRecordUrl(request.source_record!.app_id, request.source_record!.data_id))}>{value}</a> : value}</span><span>{key === '稟議番号' && request.source_record ? 'クリックしてデスクネッツを別ウインドウで開く' : key === '申請内容' || key === '取下理由' ? '原文を目視確認' : '照合情報'}</span></div>)}
     </div>
-    <details className="change-dev-details"><summary>AppSuiteペイロード全体を確認</summary><pre className="change-json-editor">{JSON.stringify(request.source_payload, null, 2)}</pre></details>
+    {terminationFields.length > 0 && <details className="change-dev-details"><summary>解約申請の同期項目（{terminationFields.length}項目）</summary><div className="change-diff-table">{terminationFields.map(([key, value]) => <div key={key}><strong>{key}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{value}</span><span>AppSuite同期値</span></div>)}</div></details>}
   </section>;
 }
 
@@ -577,8 +625,8 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
   contractUnits: ContractUnitOption[]; role: AccountRole; working: boolean; onWorking: (value: boolean) => void;
   onError: (value: string) => void; onSaved: (message: string) => Promise<void>;
 }) {
-  const sourceProperty = sourceValue(request.source_payload, '物件名') || sourceValue(request.source_payload, '物件名称');
-  const sourceTenant = sourceValue(request.source_payload, 'テナント名');
+  const sourceProperty = sourceValue(request.source_payload, '物件名') || sourceValue(request.source_payload, '物件名称') || sourceValue(request.source_payload, '建物名称');
+  const sourceTenant = guessSourceTenantName(request.source_payload);
   const sortedContracts = useMemo(() => [...contracts].sort((a, b) => (a.tenant?.tenant_name ?? '').localeCompare(b.tenant?.tenant_name ?? '', 'ja-JP')), [contracts]);
   const contractFilter = useTextFilter(sortedContracts, sourceTenant, (c) => `${c.tenant?.tenant_name ?? ''} ${c.contract_type ?? ''}`);
   const tenantFilter = useTextFilter(tenants, sourceTenant, (t) => `${t.tenant_name} ${t.external_tenant_code ?? ''}`);
@@ -667,12 +715,14 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
     await onSaved('契約内容とリーシング区画を保存しました。');
   };
   const addOperation = () => {
-    if (operationKind === 'unit' && operationField === 'monthly_rent_amount' && !operationEffectiveDate) { onError('賃料の適用開始日を入力してください。'); return; }
-    if ((operationKind !== 'contract' && !operationTarget) || !operationValue.trim()) { onError('変更対象と値を入力してください。'); return; }
+    const isEffectiveDatedAmount = operationKind === 'unit' && ['monthly_rent_amount', 'monthly_common_charge_amount'].includes(operationField);
+    const operationValueForSave = operationKind === 'unit' && numericContractFields.includes(operationField) ? withoutThousandsSeparators(operationValue) : operationValue.trim();
+    if (isEffectiveDatedAmount && !operationEffectiveDate) { onError('適用開始日を入力してください。'); return; }
+    if ((operationKind !== 'contract' && !operationTarget) || !operationValueForSave) { onError('変更対象と値を入力してください。'); return; }
     const operation: ContractOperation = operationKind === 'contract'
       ? { action: 'set_field', entity_type: 'lease_contract', field_name: operationField, value: operationValue.trim() }
       : operationKind === 'unit'
-        ? { action: 'set_field', entity_type: 'lease_contract_unit', entity_id: operationTarget, field_name: operationField, value: operationValue.trim(), ...(operationField === 'monthly_rent_amount' ? { effective_date: operationEffectiveDate } : {}) }
+        ? { action: 'set_field', entity_type: 'lease_contract_unit', entity_id: operationTarget, field_name: operationField, value: operationValueForSave, ...(isEffectiveDatedAmount ? { effective_date: operationEffectiveDate } : {}) }
         : operationKind === 'link'
           ? { action: 'link_unit', unit_id: operationTarget, value: { lease_start_date: operationValue.trim() } }
           : { action: 'unlink_unit', entity_id: operationTarget, value: { effective_date: operationValue.trim() } };
@@ -758,9 +808,9 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
         </select>
       </label> : <label>契約区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{targetContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label>}
       {(operationKind === 'contract' || operationKind === 'unit') && <label>項目<select value={operationField} onChange={(e) => setOperationField(e.target.value)}>{operationKind === 'contract' ? [['contract_type', '契約種別'], ['contract_start_date', '契約開始日'], ['contract_end_date', '契約終了日'], ['renewal_terms', '更新条件'], ['payment_terms', '支払条件'], ['notes', '備考']].map(([value, label]) => <option value={value} key={value}>{label}</option>) : editableFields.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
-      <label>{operationKind === 'unlink' ? '解除効力発生日' : operationKind === 'link' ? '利用開始日' : '反映予定値'}<input value={operationValue} onChange={(e) => setOperationValue(e.target.value)} /></label><button className="secondary-button" onClick={addOperation}>変更を追加</button>
+      <label>{operationKind === 'unlink' ? '解除効力発生日' : operationKind === 'link' ? '利用開始日' : '反映予定値'}<input inputMode={operationKind === 'unit' && numericContractFields.includes(operationField) ? 'decimal' : undefined} value={operationValue} onChange={(e) => setOperationValue(e.target.value)} onBlur={() => { if (operationKind === 'unit' && numericContractFields.includes(operationField)) setOperationValue(formatNumericInput(operationValue)); }} /></label><button className="secondary-button" onClick={addOperation}>変更を追加</button>
     </div>
-    {operationKind === 'unit' && operationField === 'monthly_rent_amount' && <label>賃料適用開始日<input type="date" value={operationEffectiveDate} onChange={(e) => setOperationEffectiveDate(e.target.value)} /></label>}
+    {operationKind === 'unit' && ['monthly_rent_amount', 'monthly_common_charge_amount'].includes(operationField) && <label>適用開始日<input type="date" value={operationEffectiveDate} onChange={(e) => setOperationEffectiveDate(e.target.value)} /></label>}
     <ChangeSummary rows={operations.map((op) => ({ label: op.field_name ?? op.entity_id ?? op.unit_id ?? op.action, before: op.action, after: `${prettyValue(op.value)}${op.effective_date ? `（適用開始日：${op.effective_date}）` : ''}` }))} />
     <ol>{operations.map((operation, index) => <li key={`${operation.action}-${index}`}>{operation.action}｜{operation.field_name ?? operation.entity_id ?? operation.unit_id}｜{prettyValue(operation.value)}{operation.effective_date ? `（適用開始日：${operation.effective_date}）` : ''} <button className="text-button" onClick={() => setOperations((current) => current.filter((_, itemIndex) => itemIndex !== index))}>削除</button></li>)}</ol>
     <label>本システムに対象項目がない場合の理由<textarea value={noSystemReason} onChange={(e) => setNoSystemReason(e.target.value)} placeholder="例：連帯保証人は本システムの管理対象外。契約原本側で確認済み。" /></label>
@@ -814,6 +864,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [workflowLinksRecordId, setWorkflowLinksRecordId] = useState<string | null>(null);
   const [manualContractSearch, setManualContractSearch] = useState('');
   const [manualContractId, setManualContractId] = useState('');
+  const [terminationContractIds, setTerminationContractIds] = useState<string[]>([]);
   const [verifiedLinkIds, setVerifiedLinkIds] = useState<string[]>([]);
   const [confirmedFields, setConfirmedFields] = useState<Record<string, boolean>>({});
   const [reconciliationNote, setReconciliationNote] = useState('');
@@ -822,6 +873,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [historicalCandidateLoading, setHistoricalCandidateLoading] = useState(false);
   const [terminationScope, setTerminationScope] = useState<'contract' | 'unit' | 'parking'>('contract');
   const [terminationUnitIds, setTerminationUnitIds] = useState<string[]>([]);
+  const [terminationDate, setTerminationDate] = useState('');
   const [snapshotDate, setSnapshotDate] = useState('2026-08-31');
   const [snapshotFile, setSnapshotFile] = useState('');
   const [snapshotSheet, setSnapshotSheet] = useState('');
@@ -910,7 +962,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (!supabase) return;
     const client = supabase;
     void Promise.all([
-      fetchAllPages<ContractUnitOption>((from, to) => client.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, lease_start_date, lease_end_date, leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))').order('lease_contract_unit_id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResponse<ContractUnitOption>>),
+      fetchAllPages<ContractUnitOption>((from, to) => client.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, lease_start_date, lease_end_date, leased_area_sqm, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, security_deposit_amount, key_money_amount, renewal_fee_amount, unit:unit_master(property_id, unit_type, unit_code, unit_name, floor_label, building_wing:building_wing_master(wing_code, wing_name), asset:asset_master(asset_name), parking_space:parking_space_master(space_number)), contract:lease_contract(lease_contract_id, tenant_id, contract_status, tenant:tenant_master(tenant_name))').order('lease_contract_unit_id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResponse<ContractUnitOption>>),
       fetchAllPages<PropertyOption>((from, to) => client.from('asset_master').select('asset_id, asset_name').order('asset_id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResponse<PropertyOption>>),
       fetchAllPages<TenantOption>((from, to) => client.from('tenant_master').select('tenant_id, tenant_name, external_tenant_code').order('tenant_id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResponse<TenantOption>>),
       fetchAllPages<UnitOption>((from, to) => client.from('unit_master').select('unit_id, property_id, unit_code, unit_name, floor_label, unit_type, is_active').order('unit_id', { ascending: true }).range(from, to) as unknown as PromiseLike<PageResponse<UnitOption>>),
@@ -924,6 +976,16 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     });
   }, []);
   const selected = requests.find((request) => request.change_request_id === selectedId) ?? null;
+  useEffect(() => {
+    setTerminationScope('contract');
+    setTerminationUnitIds([]);
+    const sourceDate = sourceValue(selected?.source_payload ?? {}, '解約日')
+      || sourceValue(selected?.source_payload ?? {}, '解約終了日')
+      || sourceValue(selected?.source_payload ?? {}, 'effective_date');
+    const savedDate = selected?.proposed_payload.termination && typeof selected.proposed_payload.termination === 'object'
+      ? String((selected.proposed_payload.termination as JsonObject).termination_date ?? '') : '';
+    setTerminationDate(sourceDateInput(sourceDate) || sourceDateInput(savedDate));
+  }, [selectedId]);
   const selectedAppsuiteRecordId = selected?.source_appsuite_record_id || selected?.source_record?.appsuite_record_id || null;
   const availableContractUnits = useMemo(() => {
     const linkedUnitIds = new Set((selected?.items ?? [])
@@ -937,6 +999,9 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   }, [availableContractUnits, itemUnitSearch]);
   useEffect(() => {
     setComment(''); setItemUnitId(''); setItemValue(''); setItemUnitSearch(selected ? guessSourceTenantName(selected.source_payload) : '');
+    setManualContractSearch(selected ? [guessSourceTenantName(selected.source_payload), sourceValue(selected.source_payload, '建物名称') || sourceValue(selected.source_payload, '物件名'), sourceValue(selected.source_payload, '区画')].filter(Boolean).join(' '): '');
+    setManualContractId('');
+    setTerminationContractIds(selected?.lease_contract_id ? [selected.lease_contract_id] : []);
     setError(''); setMessage('');
     const evidence = selected?.proposed_payload?.rent_roll_snapshot_evidence;
     if (evidence && typeof evidence === 'object') {
@@ -954,7 +1019,10 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
 
   const requestContexts = useMemo(() => new Map(requests.map((request) => [request.change_request_id, requestDisplayContext(request, contracts, contractUnits, properties, tenants)])), [requests, contracts, contractUnits, properties, tenants]);
   const filtered = useMemo(() => requests.filter((request) => {
-    const matchesStatus = filter === 'all' || request.status === filter;
+    const matchesStatus = filter === 'all'
+      || (filter === 'active' && ACTIVE_REQUEST_STATUSES.includes(request.status as typeof ACTIVE_REQUEST_STATUSES[number]))
+      || (filter === 'archived' && ARCHIVED_REQUEST_STATUSES.includes(request.status as typeof ARCHIVED_REQUEST_STATUSES[number]))
+      || request.status === filter;
     const matchesType = typeFilter === 'all' || requestTypeGroup(request) === typeFilter;
     const matchesSource = sourceFilter === 'all' || request.source_type === sourceFilter;
     const context = requestContexts.get(request.change_request_id);
@@ -989,6 +1057,20 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       return !term || searchable.includes(term);
     }).slice(0, 100);
   }, [contracts, contractUnits, manualContractSearch]);
+  const selectedManualContract = contracts.find((contract) => contract.lease_contract_id === manualContractId);
+  const terminationTargetContractIds = selected?.request_type === 'contract_terminate'
+    ? terminationContractIds
+    : [manualContractId || selected?.lease_contract_id || ''].filter(Boolean);
+  const terminationContractSelectionSummary = terminationContractIds.map((id) => contracts.find((contract) => contract.lease_contract_id === id))
+    .filter((contract): contract is ContractOption => Boolean(contract))
+    .map((contract) => `${contract.tenant?.tenant_name ?? 'テナント未設定'}（${contract.contract_start_date ?? '開始日未設定'}）`)
+    .join('、');
+  const terminationTargetUnits = useMemo(() => {
+    const targetContractIdSet = new Set(terminationTargetContractIds);
+    return targetContractIdSet.size
+      ? contractUnits.filter((unit) => targetContractIdSet.has(unit.lease_contract_id ?? unit.contract?.lease_contract_id ?? ''))
+      : [];
+  }, [contractUnits, terminationTargetContractIds]);
   const threadTimeline = useMemo<ThreadTimelineEntry[]>(() => {
     if (!selected) return [];
     const comments: ThreadTimelineEntry[] = (selected.comments ?? []).map((entry) => ({ id: entry.change_request_comment_id, created_at: entry.created_at, type: 'comment', title: '対応メモ', body: entry.body }));
@@ -1078,6 +1160,9 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const confirmWorkflowContract = async (candidate: WorkflowContractCandidate) => {
     if (!selected || !selectedAppsuiteRecordId || !supabase) return;
     const isTermination = selected.request_type === 'contract_terminate' || selected.request_type === 'contract_cancellation_review';
+    if (selected.request_type === 'contract_terminate' && !terminationDate) {
+      setError('契約終了日を入力してください。'); return;
+    }
     if (isTermination && terminationScope !== 'contract' && terminationUnitIds.length === 0) {
       setError('解約対象区画を選択してください。'); return;
     }
@@ -1090,6 +1175,21 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (selected.request_type === 'contract_create' && workflowCandidates.length > 0
       && !window.confirm('既存契約候補があります。重複を確認したうえで、この契約を新規案件の対象として確定しますか？')) return;
     setWorking(true); setError('');
+    if (selected.request_type === 'contract_terminate') {
+      const { error: terminationError } = await supabase.rpc('complete_appsuite_termination_request', {
+        p_change_request_id: selected.change_request_id,
+        p_expected_row_version: selected.row_version,
+        p_lease_contract_id: candidate.lease_contract_id,
+        p_termination_date: terminationDate,
+        p_target_scope: terminationScope,
+        p_lease_contract_unit_ids: terminationScope === 'contract' ? [] : terminationUnitIds,
+      });
+      setWorking(false);
+      if (terminationError) { setError(`解約内容を契約データへ反映できませんでした: ${terminationError.message}`); return; }
+      setMessage('対象契約への紐付けと対応依頼の完了が済み、案件を契約業務フローへ移行しました。契約データは契約業務側で反映するまで変更されません。');
+      await loadRequests();
+      return;
+    }
     const rpcName = isTermination && terminationScope !== 'contract' ? 'confirm_workflow_contract_links' : 'confirm_workflow_contract_link';
     const rpcArgs = isTermination && terminationScope !== 'contract' ? {
       p_appsuite_record_id: selectedAppsuiteRecordId, p_lease_contract_id: candidate.lease_contract_id,
@@ -1106,6 +1206,43 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     setWorking(false);
     if (linkError) { setError(`契約リンクを確定できませんでした: ${linkError.message}`); return; }
     setMessage('契約リンクを確定しました。契約処理とレントロール確認を続けてください。');
+    await loadRequests();
+  };
+
+  const handoffAppsuiteTermination = async () => {
+    if (!selected || !selectedAppsuiteRecordId || !supabase) return;
+    if (terminationTargetContractIds.length === 0) {
+      setError('紐づける契約を1件以上選択してください。'); return;
+    }
+    if (!terminationDate) {
+      setError('契約終了日を入力してください。'); return;
+    }
+    const contractSelections = [...terminationTargetContractIds].sort().map((leaseContractId) => ({
+      lease_contract_id: leaseContractId,
+      lease_contract_unit_ids: terminationScope === 'contract'
+        ? []
+        : terminationTargetUnits
+          .filter((unit) => (unit.lease_contract_id ?? unit.contract?.lease_contract_id) === leaseContractId
+            && terminationUnitIds.includes(unit.lease_contract_unit_id))
+          .map((unit) => unit.lease_contract_unit_id),
+    }));
+    if (terminationScope !== 'contract' && contractSelections.some((selection) => selection.lease_contract_unit_ids.length === 0)) {
+      setError('契約ごとに解約対象区画を1件以上選択してください。'); return;
+    }
+    if (!window.confirm(`選択した${contractSelections.length}件の契約に、契約終了日 ${terminationDate} と対象範囲を適用して契約業務フローへ移行します。契約データは契約業務側で反映するまで変更されません。よろしいですか？`)) return;
+    setWorking(true); setError('');
+    const { error: handoffError } = await supabase.rpc('complete_appsuite_termination_request_multi', {
+      p_change_request_id: selected.change_request_id,
+      p_expected_row_version: selected.row_version,
+      p_contract_selections: contractSelections,
+      p_termination_date: terminationDate,
+      p_target_scope: terminationScope,
+    });
+    setWorking(false);
+    if (handoffError) {
+      setError(`選択した契約を契約業務フローへ移行できませんでした: ${handoffError.message}`); return;
+    }
+    setMessage(`選択した${contractSelections.length}件の契約へ紐付け、契約業務フローへ移行しました。契約データは契約業務側で反映するまで変更されません。`);
     await loadRequests();
   };
 
@@ -1259,6 +1396,21 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const openCount = requests.filter((request) => request.status === 'open').length;
   const inReviewCount = requests.filter((request) => request.status === 'in_review').length;
   const holdCount = requests.filter((request) => request.status === 'on_hold').length;
+  const applyMetricFilter = (nextFilter: RequestStatus) => {
+    setFilter(nextFilter);
+    setTypeFilter('all');
+    setSourceFilter('all');
+    setSearch('');
+    setPage(1);
+  };
+  const toggleArchivedFromMetric = async () => {
+    if (archiveLoaded && filter === 'archived') {
+      await toggleArchivedRequests();
+      return;
+    }
+    if (!archiveLoaded) await toggleArchivedRequests();
+    applyMetricFilter('archived');
+  };
   const sourceTypes = Array.from(new Set(requests.map((request) => request.source_type))).sort();
   const visiblePageNumbers = [...new Set([1, page - 1, page, page + 1, pageCount].filter((number) => number >= 1 && number <= pageCount))].sort((a, b) => a - b);
 
@@ -1266,27 +1418,26 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     <div className="page-heading change-thread-page-heading"><div><p className="section-kicker">WORK MANAGEMENT</p><h2>案件スレッド</h2><p>案件ごとの情報・確認・判断を一つの流れで進めます。</p></div><div className="thread-page-actions"><button className="secondary-button" onClick={() => void loadRequests()} disabled={loading || archiveLoading}>一覧を更新</button><button className="secondary-button" onClick={() => void recheckAll()} disabled={loading || rechecking}>{rechecking ? '再チェック中…' : '作業中を再チェック'}</button></div></div>
     {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}</p>}
     <div className="thread-work-stats">
-      <div className="thread-work-stat primary"><span>作業中</span><strong>{loading ? '—' : openCount + inReviewCount + holdCount}</strong><small>要確認・確認中・保留</small></div>
-      <div className="thread-work-stat"><span><i className="open-dot" />要確認</span><strong>{loading ? '—' : openCount}</strong></div>
-      <div className="thread-work-stat"><span><i className="review-dot" />確認中</span><strong>{loading ? '—' : inReviewCount}</strong></div>
-      <div className="thread-work-stat"><span><i className="hold-dot" />保留</span><strong>{loading ? '—' : holdCount}</strong></div>
-      <div className="thread-work-stat archived"><span><i className="archive-dot" />完了分</span><strong>{archiveCount}</strong><small>確認済み・確定済み・対象外</small></div>
+      <button type="button" className="thread-work-stat primary" aria-pressed={filter === 'active'} onClick={() => applyMetricFilter('active')}><span>作業中</span><strong>{loading ? '—' : openCount + inReviewCount + holdCount}</strong><small>要確認・確認中・保留</small></button>
+      <button type="button" className="thread-work-stat" aria-pressed={filter === 'open'} onClick={() => applyMetricFilter('open')}><span><i className="open-dot" />要確認</span><strong>{loading ? '—' : openCount}</strong></button>
+      <button type="button" className="thread-work-stat" aria-pressed={filter === 'in_review'} onClick={() => applyMetricFilter('in_review')}><span><i className="review-dot" />確認中</span><strong>{loading ? '—' : inReviewCount}</strong></button>
+      <button type="button" className="thread-work-stat" aria-pressed={filter === 'on_hold'} onClick={() => applyMetricFilter('on_hold')}><span><i className="hold-dot" />保留</span><strong>{loading ? '—' : holdCount}</strong></button>
+      <button type="button" className="thread-work-stat archived" aria-pressed={filter === 'archived'} onClick={() => void toggleArchivedFromMetric()} disabled={loading || archiveLoading}><span><i className="archive-dot" />{archiveLoaded && filter === 'archived' ? '完了分（クリックで隠す）' : archiveLoaded ? '完了分（クリックで表示）' : '完了分（クリックで読み込み）'}</span><strong>{archiveCount}</strong><small>確認済み・確定済み・対象外</small></button>
     </div>
     <div className="thread-toolbar">
       <label className="thread-search-field"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="案件名・物件名・テナント名・稟議番号で検索" /></label>
       <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} aria-label="案件種別"><option value="all">すべての種別</option>{Object.entries(requestTypeGroupLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value); setPage(1); }} aria-label="発生元"><option value="all">すべての発生元</option>{sourceTypes.map((source) => <option key={source} value={source}>{source === 'initial_import' ? 'Excel取込' : source === 'desknets' ? 'AppSuite' : source}</option>)}</select>
-      <select value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }} aria-label="状態"><option value="all">作業状態: すべて</option><option value="open">要確認</option><option value="in_review">確認中</option><option value="on_hold">保留</option>{archiveLoaded && <><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option></>}</select>
+      <select value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }} aria-label="状態"><option value="all">作業状態: すべて</option><option value="active">作業中（要確認・確認中・保留）</option><option value="open">要確認</option><option value="in_review">確認中</option><option value="on_hold">保留</option>{archiveLoaded && <><option value="archived">完了分</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option></>}</select>
       <label className="thread-sort-field"><span>並び順</span><select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as 'newest' | 'oldest'); setPage(1); }}><option value="newest">更新日時が新しい順</option><option value="oldest">更新日時が古い順</option></select></label>
     </div>
-    <div className="thread-archive-bar"><span>{archiveLoaded ? '作業中と完了分を一覧に表示しています。' : '完了分は必要なときに読み込めます。'}</span><button className="secondary-button" onClick={() => void toggleArchivedRequests()} disabled={loading || archiveLoading}>{archiveLoading ? '完了分を取得中…' : archiveLoaded ? '完了分を隠す' : `完了分を読み込む（${archiveCount.toLocaleString('ja-JP')}件）`}</button></div>
      <div className="change-workbench-layout thread-workbench-layout">
       <aside className="change-request-list thread-request-list"><header><div><h3>案件一覧</h3><p>{archiveLoaded ? '作業中・完了分' : '作業中'}　·　{filtered.length.toLocaleString('ja-JP')}件</p></div><button className="thread-refresh-button" onClick={() => void loadRequests()} disabled={loading || archiveLoading} aria-label="一覧を更新">↻</button></header>
         <div className="change-request-rows thread-request-rows">{loading ? <p className="change-empty">案件を読み込んでいます…</p> : filtered.length === 0 ? <p className="change-empty">{search.trim() ? '検索条件に一致する案件はありません。' : '現在、対応が必要な案件はありません。'}</p> : pageRequests.map((request) => {
           const context = requestContexts.get(request.change_request_id);
           return <button key={request.change_request_id} onClick={() => setSelectedId(request.change_request_id)} className={request.change_request_id === selectedId ? 'selected thread-request-card' : 'thread-request-card'}>
             <span className="thread-request-card-top"><span className={`change-status ${request.status}`}>{statusLabel[request.status] ?? request.status}</span><time>{formatDate(request.updated_at)}</time></span>
-            <small className="thread-request-type">{requestTypeLabel[request.request_type] ?? request.request_type}</small><strong>{request.title}</strong><small className="thread-request-summary">{request.summary || '内容を確認してください。'}</small>
+            <small className="thread-request-type">{requestTypeLabel[request.request_type] ?? request.request_type}</small><strong>{requestDisplayTitle(request)}</strong><small className="thread-request-summary">{request.summary || '内容を確認してください。'}</small>
             <span className="thread-request-parties"><b>物件</b>{context?.property ?? '物件未特定'}<i>·</i><b>テナント</b>{context?.tenant ?? 'テナント未特定'}</span>
             <span className="thread-request-card-footer"><small>{request.source_record?.ringi_number || request.change_request_id.slice(0, 8)}</small><small>{request.comments?.length ?? 0}件のメモ　›</small></span>
           </button>;
@@ -1294,7 +1445,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
         <div className="thread-list-pagination"><span>{filtered.length ? `${(page - 1) * REQUEST_DISPLAY_PAGE_SIZE + 1}–${Math.min(page * REQUEST_DISPLAY_PAGE_SIZE, filtered.length)}件 / ${filtered.length}件` : '0件'}</span><div><button disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>‹</button>{visiblePageNumbers.map((number, index) => <span key={number}>{index > 0 && number - visiblePageNumbers[index - 1] > 1 ? <i>…</i> : null}<button className={number === page ? 'active' : ''} onClick={() => { setPage(number); setSelectedId(filtered[(number - 1) * REQUEST_DISPLAY_PAGE_SIZE]?.change_request_id ?? null); }}>{number}</button></span>)}<button disabled={page >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>›</button></div></div>
       </aside>
       <main className="change-request-detail thread-request-detail">{selected ? <>
-        <header className="change-detail-heading"><div><div className="thread-detail-labels"><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span><span>{requestTypeLabel[selected.request_type] ?? selected.request_type}</span><span>{selected.source_type === 'initial_import' ? 'Excel取込' : selected.source_type === 'desknets' ? 'AppSuite' : selected.source_type}</span></div><h3>{selected.title}</h3><p>{selected.summary || '案件の内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><div className="change-detail-tools">{editable && !isContractDeadlineRequest ? <button className="secondary-button" onClick={() => void recheckSelected()} disabled={working || rechecking}>{rechecking ? '再チェック中…' : '再チェック'}</button> : null}</div></header>
+        <header className="change-detail-heading"><div><div className="thread-detail-labels"><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span><span>{requestTypeLabel[selected.request_type] ?? selected.request_type}</span><span>{selected.source_type === 'initial_import' ? 'Excel取込' : selected.source_type === 'desknets' ? 'AppSuite' : selected.source_type}</span></div><h3>{requestDisplayTitle(selected)}</h3><p>{selected.summary || '案件の内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><div className="change-detail-tools">{editable && !isContractDeadlineRequest ? <button className="secondary-button" onClick={() => void recheckSelected()} disabled={working || rechecking}>{rechecking ? '再チェック中…' : '再チェック'}</button> : null}</div></header>
         <section className="thread-related-context"><div><span>物件</span><strong>{selectedContext?.property ?? '物件未特定'}</strong></div><div><span>テナント</span><strong>{selectedContext?.tenant ?? 'テナント未特定'}</strong></div>{selectedContext?.unit && <div><span>区画</span><strong>{selectedContext.unit}</strong></div>}<div><span>案件ID</span><strong>{selected.change_request_id}</strong></div></section>
         <section className="thread-case-links"><div className="thread-ringi"><span>稟議NO</span>{selectedRingiNumber && selected.source_record ? <a href={appsuiteRecordUrl(selected.source_record.app_id, selected.source_record.data_id)} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, appsuiteRecordUrl(selected.source_record!.app_id, selected.source_record!.data_id))}>{selectedRingiNumber} ↗</a> : <strong>{selectedRingiNumber || '未登録'}</strong>}{selectedAppsuiteDataId && <small>AppSuite ID: {selectedAppsuiteDataId}</small>}</div><nav aria-label="関連ワークフロー"><span>関連ワークフロー</span>{selectedWorkflowLinks.map((workflow) => <Link key={workflow.to} to={workflow.to}>{workflow.label} ↗</Link>)}{selected.source_record && <a href={appsuiteRecordUrl(selected.source_record.app_id, selected.source_record.data_id)} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, appsuiteRecordUrl(selected.source_record!.app_id, selected.source_record!.data_id))}>AppSuite原文 ↗</a>}</nav></section>
         <IssueContext request={selected} />
@@ -1302,17 +1453,17 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           <h4>未完了の確認項目</h4>
           <p>契約と稟議の紐付けは保存されています。次の項目が確認済みになるまで「確認完了」にはできません。</p>
           <ul>{selected.items.filter((item) => item.validation_status !== 'valid').map((item) => <li key={item.change_request_item_id}>{item.validation_message || `明細の状態: ${item.validation_status}`}</li>)}</ul>
-          {(selected.request_type === 'contract_terminate' || selected.request_type === 'contract_cancellation_review') && <p>解約案件では、ここでの紐付けは対象契約の関連付けのみです。終了日と必要な処理を確認してから完了してください。</p>}
+          {(selected.request_type === 'contract_terminate' || selected.request_type === 'contract_cancellation_review') && <p>解約対象と終了日を確認し、対象契約のデータを更新してください。</p>}
         </section>}
-        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <section className="change-card historical-contract-candidates">
-          <h4>過去契約履歴候補</h4>
+        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <details className="change-card historical-contract-candidates">
+          <summary>過去契約履歴候補（{historicalCandidates.length}件）</summary>
           <p>過去スナップショットを連続期間にまとめた候補です。ここで紐付けても、現行契約・請求・解約処理は変更しません。</p>
           {historicalCandidateLoading ? <p className="muted">過去スナップショット候補を取得中です…</p> : historicalCandidates.length === 0 ? <p className="muted">一致する過去契約履歴はありません。</p> : historicalCandidates.map((candidate) => <article key={candidate.historical_contract_key} className="historical-contract-candidate">
             <div><strong>{candidate.tenant_name ?? 'テナント未設定'}</strong><span>{candidate.property_name} / {candidate.floor_label ?? 'フロア未設定'} / {candidate.unit_code ?? '識別番号未設定'}</span><span>区画種別: {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '未設定'}</span><span>履歴期間: {candidate.period_start ?? '未設定'} ～ {candidate.period_end ?? '未設定'}（{candidate.snapshot_count}か月）</span></div>
             <div><strong>一致度: {candidate.match_level}</strong><ul>{candidate.match_reasons.filter((reason) => reason.matched).map((reason) => <li key={reason.rule}>✓ {reason.message}</li>)}</ul></div>
             {editable && <button className="secondary-button" onClick={() => void confirmHistoricalContract(candidate)} disabled={working}>過去履歴に紐付ける</button>}
           </article>)}
-        </section>}
+        </details>}
         <AppsuiteSourceContext request={selected} />
         {isAppsuiteContractRequest && editable && !isLinkedContractCreate && !isContractCreateLinkLoading && <details className="change-card historical-roll-check" open={historicalCandidates.length === 0}><summary>過去レントロール確認（手動確認・証跡）</summary><p>候補が見つからない場合や、Excelの確認結果を証跡として残す場合に使用します。</p><div className="change-item-editor">
           <label>基準日<input type="date" value={snapshotDate} onChange={(event) => setSnapshotDate(event.target.value)} /></label>
@@ -1327,39 +1478,80 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           <p>候補は自動確定されません。候補理由を確認して、対象契約を手動で確定してください。</p>
           {selectedAppsuiteRecordId && editable && <div className="change-item-editor">
             <label>既存契約を検索<input value={manualContractSearch} onChange={(event) => { setManualContractSearch(event.target.value); setManualContractId(''); }} placeholder="テナント名・物件名・区画・契約日" /></label>
-            <label>紐付ける契約<select value={manualContractId} onChange={(event) => setManualContractId(event.target.value)}><option value="">契約を選択してください</option>{manualContractOptions.map((contract) => {
+            {selected.request_type === 'contract_terminate' ? <fieldset className="termination-unit-picker">
+              <legend>紐づける契約（複数選択可）</legend>
+              <p className="muted">現在 {terminationContractIds.length} 件を選択中です。表示中の契約に同じ終了日・対象範囲を適用します。</p>
+              <p className="muted">選択中: {terminationContractSelectionSummary || 'なし'}</p>
+              <div className="termination-unit-options termination-contract-options">
+                {manualContractOptions.map((contract) => {
+                  const unitsForContract = contractUnits.filter((unit) => (unit.lease_contract_id ?? unit.contract?.lease_contract_id) === contract.lease_contract_id);
+                  const unitLabel = [...new Set(unitsForContract.map((unit) => [unit.unit?.asset?.asset_name, unit.unit?.floor_label, unit.unit?.unit_code].filter(Boolean).join(' ')))].filter(Boolean).join('、');
+                  const checked = terminationContractIds.includes(contract.lease_contract_id);
+                  return <label key={contract.lease_contract_id} className={checked ? 'termination-unit-option selected' : 'termination-unit-option'}>
+                    <input type="checkbox" checked={checked} onChange={(event) => {
+                      setTerminationContractIds((current) => event.target.checked
+                        ? [...current, contract.lease_contract_id]
+                        : current.filter((id) => id !== contract.lease_contract_id));
+                      setTerminationUnitIds([]);
+                    }} />
+                    <span><strong>{contract.tenant?.tenant_name ?? 'テナント未設定'}</strong><small>{unitLabel || '区画未登録'} / {contract.contract_start_date ?? '開始日未設定'} ～ {contract.contract_end_date ?? '終了日未設定'}</small></span>
+                  </label>;
+                })}
+                {manualContractOptions.length === 0 && <p className="muted">検索条件に一致する契約がありません。</p>}
+              </div>
+            </fieldset> : <label>紐付ける契約<select value={manualContractId} onChange={(event) => setManualContractId(event.target.value)}><option value="">契約を選択してください</option>{manualContractOptions.map((contract) => {
               const unitsForContract = contractUnits.filter((unit) => (unit.lease_contract_id ?? unit.contract?.lease_contract_id) === contract.lease_contract_id);
               const unitLabel = [...new Set(unitsForContract.map((unit) => [unit.unit?.asset?.asset_name, unit.unit?.floor_label, unit.unit?.unit_code].filter(Boolean).join(' ')))].filter(Boolean).join('、');
               return <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.tenant?.tenant_name ?? 'テナント未設定'} / {unitLabel || '区画未登録'} / {contract.contract_start_date ?? '開始日未設定'} ～ {contract.contract_end_date ?? '終了日未設定'}</option>;
-            })}</select></label>
-            <button className="secondary-button" onClick={() => void linkManuallySelectedContract()} disabled={working || !manualContractId}>既存契約と稟議を紐付ける</button>
-            <small>この操作は契約・請求データを変更せず、稟議との関連だけを記録します。</small>
+            })}</select></label>}
+            {selected.request_type !== 'contract_terminate' && <>
+              <button className="secondary-button" onClick={() => void linkManuallySelectedContract()} disabled={working || !manualContractId}>既存契約と稟議を紐付ける</button>
+              <small>この操作は契約・請求データを変更せず、稟議との関連だけを記録します。</small>
+            </>}
           </div>}
           {(selected.request_type === 'contract_terminate' || selected.request_type === 'contract_cancellation_review') && <div className="change-item-editor">
+            {selected.request_type === 'contract_terminate' && <label>契約終了日<input type="date" value={terminationDate} onChange={(event) => setTerminationDate(event.target.value)} /></label>}
             <label>解約対象範囲<select value={terminationScope} onChange={(event) => { setTerminationScope(event.target.value as 'contract' | 'unit' | 'parking'); setTerminationUnitIds([]); }}>
               <option value="contract">契約全体</option><option value="unit">選択した区画（貸室・駐車場など）</option><option value="parking">駐車場のみ</option>
             </select></label>
             {terminationScope !== 'contract' && <fieldset className="termination-unit-picker">
-              <legend>対象区画（複数選択可）</legend>
-              <p className="muted">解約する区画にチェックを入れてください。現在 {terminationUnitIds.length} 区画を選択中です。</p>
-              <div className="termination-unit-options">
-                {workflowCandidates.filter((candidate) => terminationScope !== 'parking' || contractUnits.find((unit) => unit.lease_contract_unit_id === candidate.lease_contract_unit_id)?.unit?.unit_type === 'parking').map((candidate) => {
-                  const unit = contractUnits.find((entry) => entry.lease_contract_unit_id === candidate.lease_contract_unit_id)?.unit;
-                  const checked = terminationUnitIds.includes(candidate.lease_contract_unit_id);
-                  return <label key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className={checked ? 'termination-unit-option selected' : 'termination-unit-option'}>
-                    <input type="checkbox" checked={checked} onChange={(event) => setTerminationUnitIds((current) => event.target.checked ? [...current, candidate.lease_contract_unit_id] : current.filter((id) => id !== candidate.lease_contract_unit_id))} />
-                    <span><strong>{candidate.floor_label ?? candidate.unit_code}</strong><small>{candidate.property_name} / {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '区画'} / {candidate.tenant_name}</small></span>
+              <legend>対象区画（契約ごとに複数選択可）</legend>
+              <p className="muted">選択した各契約から解約する区画を1件以上選んでください。現在 {terminationUnitIds.length} 区画を選択中です。</p>
+              {terminationTargetContractIds.length > 0 ? <div className="termination-unit-options">
+                {terminationTargetUnits.filter((entry) => terminationScope !== 'parking' || entry.unit?.unit_type === 'parking').map((entry) => {
+                  const unit = entry.unit;
+                  const checked = terminationUnitIds.includes(entry.lease_contract_unit_id);
+                  const isParkingUnit = unit?.unit_type === 'parking';
+                  const isOfficeUnit = unit?.unit_type === 'office';
+                  const parkingSpaceNumber = unit?.parking_space?.space_number;
+                  const areaLabel = entry.leased_area_sqm == null
+                    ? '未設定'
+                    : `${Number(entry.leased_area_sqm).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}㎡`;
+                  const unitDetail = isParkingUnit
+                    ? `区画番号 ${parkingSpaceNumber ?? '未設定'} / ${unit?.unit_code ?? '区画コード未設定'}`
+                    : isOfficeUnit
+                      ? `区画 ${unit?.unit_name ?? unit?.unit_code ?? '未設定'} / 面積 ${areaLabel}`
+                      : unit?.unit_code ?? '区画コード未設定';
+                  return <label key={entry.lease_contract_unit_id} className={checked ? 'termination-unit-option selected' : 'termination-unit-option'}>
+                    <input type="checkbox" checked={checked} onChange={(event) => setTerminationUnitIds((current) => event.target.checked ? [...current, entry.lease_contract_unit_id] : current.filter((id) => id !== entry.lease_contract_unit_id))} />
+                    <span><strong>{isParkingUnit ? `駐車区画 ${parkingSpaceNumber ?? '番号未設定'}` : unit?.floor_label ?? unit?.unit_code ?? '区画未設定'}</strong><small>{unit?.asset?.asset_name ?? '物件未設定'} / {unit?.unit_type === 'parking' ? '駐車場' : unit?.unit_type === 'bicycle_parking' ? '駐輪場' : unit?.unit_type === 'signage' ? '看板' : unit?.unit_type === 'antenna' ? 'アンテナ' : unit?.unit_type === 'warehouse' ? '倉庫' : unit?.unit_type === 'office' ? '貸室' : unit?.unit_type ?? '区画'} / {unitDetail} / {entry.contract?.tenant?.tenant_name ?? selectedManualContract?.tenant?.tenant_name ?? 'テナント未設定'} / 契約期間 {entry.lease_start_date ?? '開始日未設定'} ～ {entry.lease_end_date ?? '継続中'}</small></span>
                   </label>;
                 })}
-              </div>
+                {terminationTargetUnits.filter((entry) => terminationScope !== 'parking' || entry.unit?.unit_type === 'parking').length === 0 && <p className="muted">選択した契約に紐づく対象区画がありません。</p>}
+              </div> : <p className="muted">先に紐づける契約を1件以上選択してください。</p>}
             </fieldset>}
+            {selected?.request_type === 'contract_terminate' && editable && <button className="primary-button" onClick={() => void handoffAppsuiteTermination()} disabled={working || !terminationDate || terminationTargetContractIds.length === 0 || (terminationScope !== 'contract' && terminationUnitIds.length === 0)}>選択した{terminationTargetContractIds.length}件を紐付けて契約業務フローへ移行</button>}
           </div>}
           {candidateLoading ? <p className="muted">候補を取得中です…</p> : workflowCandidates.length === 0 ? <p className="muted">候補なし。分類・建物・テナント・契約期間を確認してください。</p> : <details open={workflowCandidates.length <= 5}>
             <summary>契約候補を表示（{workflowCandidates.length}件）</summary>
             {workflowCandidates.map((candidate) => <article key={`${candidate.lease_contract_id}-${candidate.lease_contract_unit_id}`} className="workflow-contract-candidate">
             <div><strong>{candidate.tenant_name}</strong><span>{candidate.property_name} / {candidate.floor_label ?? candidate.unit_code} / {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '区画'}</span><span>契約期間: {candidate.contract_start_date ?? '未設定'} ～ {candidate.contract_end_date ?? '継続中'}</span></div>
             <div><strong>判定: {candidate.suggestion_level}</strong><ul>{candidate.match_reasons.filter((reason) => reason.matched || reason.rule === 'effective_date').map((reason) => <li key={reason.rule}>{reason.matched ? '✓ ' : '⚠ '}{reason.message}</li>)}</ul></div>
-            {editable && <button className="secondary-button" onClick={() => void confirmWorkflowContract(candidate)} disabled={working}>この契約に紐付ける</button>}
+            {selected.request_type === 'contract_terminate' && editable && <button className="secondary-button" onClick={() => {
+              setTerminationContractIds((current) => current.includes(candidate.lease_contract_id) ? current : [...current, candidate.lease_contract_id]);
+              setTerminationUnitIds([]);
+            }} disabled={working}>契約選択に追加</button>}
+            {selected.request_type !== 'contract_terminate' && (editable || selected.status === 'resolved') && <button className="secondary-button" onClick={() => void confirmWorkflowContract(candidate)} disabled={working}>この契約に紐付ける</button>}
           </article>)}
           </details>}
         </section>}
@@ -1390,7 +1582,8 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   </select>
 </label><label>項目<select value={itemField} onChange={(event) => setItemField(event.target.value as typeof itemField)}>{editableFields.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>反映予定の値<input value={itemValue} onChange={(event) => setItemValue(event.target.value)} placeholder={itemField.endsWith('_date') ? 'YYYY-MM-DD' : '例: 100000'} /></label><button className="secondary-button" onClick={() => void updateItem()} disabled={working}>契約条件を保存</button></div></section>}
         <section className="change-card thread-history-card"><div className="thread-history-heading"><div><h4>案件スレッド</h4><p>確認内容、コメント、状態変更の履歴を時系列で記録します。</p></div><span>{threadTimeline.length}件</span></div><div className="thread-history-timeline">{threadTimeline.length ? threadTimeline.map((entry) => <article key={`${entry.type}-${entry.id}`} className={`thread-history-entry ${entry.type}`}><i>{entry.type === 'comment' ? '●' : '✓'}</i><div><header><strong>{entry.title}</strong><time>{formatDate(entry.created_at)}</time></header>{entry.body && <p>{entry.body}</p>}</div></article>) : <p className="muted">この案件の記録はまだありません。</p>}</div>{editable && <div className="thread-comment-composer"><textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="確認した資料、照合結果、判断理由を記録…" /><button className="primary-button" onClick={() => void addComment()} disabled={working || !comment.trim()}>{working ? '保存中…' : 'コメントを追加'}</button></div>}</section>
-        {!isLinkedContractCreate && !isContractCreateLinkLoading && (editable && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><ActionButton className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working} label="保留にする" hint="後で対応するため保留にします。データは変更されません。" /><ActionButton className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working} label="対象外にする" hint="この依頼を対応不要として終了します。データは変更されません。" /><ActionButton className="primary-button" onClick={() => void resolve()} disabled={working || !!selected.items?.some((item) => item.validation_status !== 'valid')} label={working ? '処理中…' : selected.items?.some((item) => item.validation_status !== 'valid') ? '確認項目が未完了' : '確認完了にする'} hint="未完了の確認項目を上で確認してください。すべて確認済みになると完了できます。" /></footer> : selected.status === 'resolved' && selected.request_type !== 'approval_cancel' && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><p>最終確認後、正本へ反映します。</p><ActionButton className="primary-button" onClick={() => void apply()} disabled={working} label={working ? '処理中…' : '内容を確定'} hint="確認済みの内容を正本データへ反映します。この操作は取り消せません。" /></footer> : null)}
+        {!isLinkedContractCreate && !isContractCreateLinkLoading && selected.request_type === 'contract_terminate' && editable && <footer className="change-actions"><ActionButton className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working} label="保留にする" hint="後で対応するため保留にします。データは変更されません。" /><ActionButton className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working} label="対象外にする" hint="この依頼を対応不要として終了します。データは変更されません。" /></footer>}
+        {!isLinkedContractCreate && !isContractCreateLinkLoading && selected.request_type !== 'contract_terminate' && (editable && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><ActionButton className="secondary-button" onClick={() => void setStatus('on_hold')} disabled={working} label="保留にする" hint="後で対応するため保留にします。データは変更されません。" /><ActionButton className="secondary-button" onClick={() => void setStatus('excluded')} disabled={working} label="対象外にする" hint="この依頼を対応不要として終了します。データは変更されません。" /><ActionButton className="primary-button" onClick={() => void resolve()} disabled={working || !!selected.items?.some((item) => item.validation_status !== 'valid')} label={working ? '処理中…' : selected.items?.some((item) => item.validation_status !== 'valid') ? '確認項目が未完了' : '確認完了にする'} hint="未完了の確認項目を上で確認してください。すべて確認済みになると完了できます。" /></footer> : selected.status === 'resolved' && selected.request_type !== 'approval_cancel' && !isParkingFeeRequest && !isContractDeadlineRequest ? <footer className="change-actions"><p>最終確認後、正本へ反映します。</p><ActionButton className="primary-button" onClick={() => void apply()} disabled={working} label={working ? '処理中…' : '内容を確定'} hint="確認済みの内容を正本データへ反映します。この操作は取り消せません。" /></footer> : null)}
       </> : <p className="change-empty">{filter === 'open' && !search.trim() && !loading ? 'すべての要確認案件を処理しました。' : '左側から対応依頼を選択してください。'}</p>}</main>
     </div>
   </section>;

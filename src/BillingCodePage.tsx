@@ -208,10 +208,10 @@ export function BillingCodePage({
           .eq("asset_id", propertyId)
           .maybeSingle(),
         supabase
-          .from("asset_billing_charge_type_setting")
+          .from("asset_billing_line_item")
           .select("billing_charge_type_id")
           .eq("asset_id", propertyId)
-          .eq("is_enabled", true),
+          .eq("is_active", true),
         supabase
           .from("billing_charge_type")
           .select("billing_charge_type_id, charge_type_name")

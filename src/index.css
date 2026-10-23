@@ -3699,11 +3699,31 @@ td small {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 11px;
 }
-.rent-roll-metrics > div {
+.rent-roll-metrics > div,
+.rent-roll-metrics > button {
   padding: 10px 14px;
   border: 1px solid #e1e7ef;
   border-radius: 9px;
   background: #fff;
+}
+.rent-roll-metrics > .rent-roll-metric-button {
+  display: block;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.rent-roll-metrics > .rent-roll-metric-button:hover,
+.rent-roll-metrics > .rent-roll-metric-button[aria-pressed="true"] {
+  border-color: #9dbbda;
+  background: #f7fbff;
+  box-shadow: 0 0 0 2px rgb(67 132 215 / 10%);
+}
+.rent-roll-metrics > .rent-roll-metric-button:focus-visible {
+  outline: 2px solid #4384d7;
+  outline-offset: 2px;
 }
 .rent-roll-metrics span {
   color: #718097;
@@ -3765,7 +3785,7 @@ td small {
   font-size: 10px;
 }
 .rent-roll-table-wrap {
-  max-height: clamp(420px, 68vh, 760px);
+  max-height: clamp(480px, 76vh, 860px);
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -3892,6 +3912,28 @@ td small {
 .rent-roll-table tfoot th {
   text-align: right;
 }
+.rent-roll-total-wrap {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.rent-roll-total-wrap::-webkit-scrollbar {
+  display: none;
+}
+.rent-roll-total-table .rent-roll-total-row td {
+  border-top: 2px solid #cbd8e6;
+  border-bottom: 0;
+  color: #233f61;
+  background: #eef5fc;
+  font-weight: 800;
+}
+.rent-roll-total-table .rent-roll-total-row .rent-roll-pinned {
+  background: #eef5fc;
+}
+.rent-roll-total-table .rent-roll-total-row td.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .rent-roll-table td.numeric,
 .rent-roll-table th:nth-child(n + 10) {
   text-align: right;
@@ -3975,6 +4017,10 @@ td small {
   background: #edf2f7;
 }
 .rent-roll-status.applied {
+  color: #2b6fa9;
+  background: #e6f2ff;
+}
+.rent-roll-status.move_in_scheduled {
   color: #2b6fa9;
   background: #e6f2ff;
 }
@@ -4220,6 +4266,10 @@ td small {
 .parking-state.occupied {
   color: #27765a;
   background: #e2f5ec;
+}
+.parking-state.scheduled {
+  color: #8a5b13;
+  background: #fff1d8;
 }
 .parking-state.vacant {
   color: #56708b;
@@ -5012,8 +5062,31 @@ td small {
   box-shadow: inset 0 0 0 2px rgb(38 117 217 / 45%);
 }
 .contract-document-page input,
-.contract-document-page textarea {
+.contract-document-page textarea,
+.contract-document-page select {
   font-family: "Noto Sans JP", "Yu Gothic UI", Meiryo, sans-serif;
+}
+.contract-selection-panel {
+  margin-bottom: 12px;
+  padding: 12px 16px;
+}
+.contract-selection-panel label {
+  display: grid;
+  gap: 6px;
+  color: #53647b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.contract-selection-panel select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #d9e2ec;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #263a55;
+  background: #fff;
+  font-size: 12px;
 }
 .contract-template-tabs {
   display: grid;
@@ -5695,6 +5768,11 @@ td small {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
+}
+.termination-contract-options {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px;
 }
 .termination-unit-option {
   display: flex;
@@ -6605,6 +6683,202 @@ td small {
 .contract-workflow-detail-actions a {
   white-space: nowrap;
 }
+.dialog.workflow-progress-dialog {
+  width: min(900px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+}
+.workflow-progress-dialog-body {
+  display: grid;
+  gap: 14px;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  padding: 16px;
+  background: #f4f7fa;
+}
+.workflow-progress-summary,
+.workflow-progress-detail-section {
+  overflow: hidden;
+  border: 1px solid #dfe6ee;
+  border-radius: 9px;
+  background: #fff;
+}
+.workflow-progress-summary {
+  padding: 15px;
+}
+.workflow-progress-summary h3,
+.workflow-progress-detail-section > h3 {
+  margin: 0;
+  padding: 12px 14px;
+  color: #354b66;
+  font-size: 13px;
+}
+.workflow-progress-summary h3 {
+  padding: 0 0 10px;
+  font-size: 16px;
+}
+.workflow-progress-summary dl,
+.workflow-progress-terms {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+}
+.workflow-progress-summary dl > div,
+.workflow-progress-terms > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-top: 1px solid #edf1f5;
+}
+.workflow-progress-summary dt,
+.workflow-progress-terms dt {
+  color: #7b899a;
+  font-size: 10px;
+  font-weight: 700;
+}
+.workflow-progress-summary dd,
+.workflow-progress-terms dd {
+  margin: 0;
+  color: #354b66;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.workflow-progress-detail-section > h3 {
+  border-bottom: 1px solid #e8edf3;
+  background: #fafbfd;
+}
+.workflow-progress-terms {
+  padding: 0 12px 12px;
+}
+.workflow-progress-stage-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-progress-stage-list li {
+  display: grid;
+  gap: 4px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #edf1f5;
+}
+.workflow-progress-stage-list li:last-child {
+  border-bottom: 0;
+}
+.workflow-progress-stage-list li.current {
+  background: #eef6ff;
+}
+.workflow-progress-stage-list li > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.workflow-progress-stage-list li strong {
+  color: #354b66;
+  font-size: 11px;
+}
+.workflow-progress-stage-list li small {
+  color: #7b899a;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+.workflow-progress-stage-status {
+  color: #66768b;
+  font-size: 10px;
+  font-weight: 800;
+}
+.workflow-progress-stage-list li.current .workflow-progress-stage-status {
+  color: #1766b5;
+}
+.workflow-progress-stage-list li.complete .workflow-progress-stage-status {
+  color: #27765a;
+}
+.contract-workflow-table.contract-workflow-progress-table {
+  min-width: 1210px;
+}
+.contract-workflow-table.contract-workflow-progress-table th:last-child,
+.contract-workflow-table.contract-workflow-progress-table td:last-child {
+  width: 240px;
+  min-width: 240px;
+}
+.workflow-progress-row-actions {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.workflow-progress-row-actions > .workflow-complete-button {
+  width: 100%;
+  min-height: 32px;
+}
+.workflow-action-group.workflow-progress-edit-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+.workflow-action-group.workflow-progress-edit-actions .workflow-complete-button,
+.workflow-action-group.workflow-progress-edit-actions .text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 7px;
+  border: 1px solid #d9e2ec;
+  border-radius: 6px;
+  color: #53647b;
+  background: #fff;
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
+}
+.workflow-action-group.workflow-progress-edit-actions .workflow-complete-button:hover,
+.workflow-action-group.workflow-progress-edit-actions .text-button:hover {
+  border-color: #a9c5df;
+  color: #245f98;
+  background: #f5f9fd;
+}
+.workflow-action-group.workflow-progress-edit-actions button.workflow-skip-action {
+  grid-column: 1 / -1;
+  justify-self: end;
+  width: auto;
+  min-height: 0;
+  padding: 3px 2px;
+  border-color: transparent;
+  color: #1769b4;
+  background: transparent;
+  font-weight: 800;
+  text-decoration: underline;
+}
+.workflow-action-group.workflow-progress-edit-actions button.workflow-skip-action:hover {
+  border-color: transparent;
+  color: #104f89;
+  background: transparent;
+}
+@media (max-width: 600px) {
+  .dialog.workflow-progress-dialog {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .workflow-progress-dialog-body {
+    max-height: calc(100vh - 60px);
+    padding: 10px;
+  }
+  .workflow-progress-summary dl,
+  .workflow-progress-terms {
+    grid-template-columns: 1fr;
+  }
+}
 .workflow-field {
   display: grid;
   gap: 6px;
@@ -6843,7 +7117,22 @@ td small {
   padding: 11px 14px 11px 16px;
   border: 1px solid #e4eaf0;
   border-radius: 7px;
+  color: inherit;
   background: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.contract-workflow-metrics .metric:hover,
+.contract-workflow-metrics .metric[aria-pressed="true"] {
+  border-color: #9dbbda;
+  background: #f7fbff;
+  box-shadow: 0 0 0 2px rgb(67 132 215 / 10%);
+}
+.contract-workflow-metrics .metric:focus-visible {
+  outline: 2px solid #4384d7;
+  outline-offset: 2px;
 }
 .contract-workflow-metrics .metric::before {
   position: absolute;

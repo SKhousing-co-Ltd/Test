@@ -39,6 +39,7 @@ export const emptyVariablePrice = (): VariablePriceInput => ({ unitPrice: null, 
 // 小分類を新しく作るときの、変動単価・請求書の単価表示の既定値です。
 export const subItemDefaults = () => ({
   showUnitPriceOnInvoice: true, inputMode: 'usage' as InputMode,
+  isMonthlyFixed: false,
   variablePriceMethod: 'manual' as VariablePriceMethod, unitPriceRoundingDigits: 2, unitPriceRoundingMode: 'floor' as RoundingMode, monthly: emptyVariablePrice(),
 });
 export type Category = { id: CategoryId; name: string; unit: string; billable: boolean; fixedBillable: boolean };
@@ -74,6 +75,7 @@ export type SubItem = {
   periodPatternId: string;
   // 検針値の入力方式です。指針入力は、前月指針との差分を使用量にします。
   inputMode: InputMode;
+  isMonthlyFixed: boolean;
 };
 // 増額分の仕入（電力会社などからの請求）です。月ごとに手入力します。
 export type SurchargePurchase = { periodStart: string; periodEnd: string; amountInclusive: number | null; usage: number | null };
@@ -334,9 +336,9 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   const empty = { subItem, meters: [], usage: 0, amount: 0, groups: [] as ChargeGroup[] };
   if (!row.billable[subItem.id]) return empty;
 
-  if (subItem.kind === 'basic') {
-    const monthly = category.fixedBillable ? row.fixedCharges[subItem.id] ?? 0 : 0;
-    const fixed = proratedAmount(monthly, basicRatio, row.amountRoundingMode);
+  if (subItem.kind === 'basic' || subItem.isMonthlyFixed) {
+    const monthly = (subItem.kind === 'basic' ? category.fixedBillable : row.billable[subItem.id]) ? row.fixedCharges[subItem.id] ?? 0 : 0;
+    const fixed = subItem.isMonthlyFixed ? monthly : proratedAmount(monthly, basicRatio, row.amountRoundingMode);
     const label = fixed !== monthly && basicRatio ? `日割り（${basicRatio.days}／${basicRatio.totalDays}日）` : '固定額';
     return { ...empty, amount: fixed, groups: fixed ? [{ key: 'fixed', label, usage: 0, unitPrice: 0, amount: fixed }] : [] };
   }
@@ -415,15 +417,15 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
   const unitOf = (id: CategoryId) => building.categories.find((row) => row.id === id)?.unit ?? '';
   return result.rows.flatMap((row) => {
     const shared = { tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
-    const subItems = row.categories.flatMap((category) => category.subItems.filter((item) => item.amount).map((item) => ({
+    const subItems = row.categories.flatMap((category) => category.subItems.map((item) => ({
       ...shared, sourceId: item.subItem.id, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
       // 基本料は固定額なので、数量・単価は出しません。単価が違うメーターが混ざる行と、
       // 請求書に単価を出さない設定の小分類も、単価は空欄にします。
-      usage: item.subItem.kind === 'basic' ? null : item.usage, unit: item.subItem.kind === 'basic' ? '' : unitOf(category.category.id),
-      unitPrice: item.subItem.kind !== 'basic' && item.subItem.showUnitPriceOnInvoice && item.groups.length === 1 ? item.groups[0].unitPrice : null,
+      usage: item.subItem.kind === 'basic' || item.subItem.isMonthlyFixed ? null : item.usage, unit: item.subItem.kind === 'basic' || item.subItem.isMonthlyFixed ? '' : unitOf(category.category.id),
+      unitPrice: item.subItem.kind !== 'basic' && !item.subItem.isMonthlyFixed && item.subItem.showUnitPriceOnInvoice && item.groups.length === 1 ? item.groups[0].unitPrice : null,
       amount: item.amount, periodPatternId: item.subItem.periodPatternId,
     })));
-    const surcharges = row.surcharges.filter((item) => item.amount).map((item) => ({
+    const surcharges = row.surcharges.map((item) => ({
       ...shared, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
       // 増額分は請求しますが、単価は請求書に載せません（数量・金額だけ出します）。
       usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: null, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,
