@@ -35,6 +35,7 @@ export type ParkingCurrentRow = {
   lease_contract_id: string | null;
   termination_in_progress?: boolean;
   termination_date?: string | null;
+  termination_scheduled?: boolean;
   contract_status: string | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
@@ -212,6 +213,16 @@ function parkingStatusLabel(status: ParkingSpaceStatus): string {
   if (status === 'occupied') return '契約中';
   if (status === 'unavailable') return '使用不可';
   return '空き';
+}
+
+function formatJapaneseDate(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[1]}年${Number(match[2])}月${Number(match[3])}日` : value;
+}
+
+function parkingRowStatusLabel(row: ParkingCurrentRow): string {
+  if (row.termination_in_progress && !row.termination_date) return '契約手続き中';
+  return row.termination_scheduled ? '退去予定' : parkingStatusLabel(row.space_status);
 }
 
 async function hashFile(file: File): Promise<string> {
@@ -401,7 +412,18 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             return (selection ? true : entry.lease_contract_id === row.lease_contract_id)
               && (entry.target_scope === 'contract' || unitIds.includes(row.lease_contract_unit_id ?? ''));
           });
-          return { ...row, termination_in_progress: Boolean(workflow), termination_date: workflow?.termination_date ?? null };
+          const futureTerminationDate = workflow?.termination_date && workflow.termination_date > nextAsOfDate
+            ? workflow.termination_date
+            : null;
+          const futureContractEndDate = row.contract_end_date && row.contract_end_date > nextAsOfDate
+            ? row.contract_end_date
+            : null;
+          return {
+            ...row,
+            termination_in_progress: Boolean(workflow),
+            termination_scheduled: Boolean(futureTerminationDate || futureContractEndDate),
+            termination_date: futureTerminationDate ?? futureContractEndDate,
+          };
         }));
         setError('');
       }
@@ -529,7 +551,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             {loading ? <tr><td colSpan={10} className="parking-empty">駐車場台帳を読み込んでいます。</td></tr> : null}
             {!loading && !filteredRows.length ? <tr><td colSpan={10} className="parking-empty">条件に一致する駐車枠がありません。</td></tr> : null}
             {!loading ? filteredRows.map((row) => <tr key={row.unit_id} className={selected?.unit_id === row.unit_id ? 'selected' : ''} onClick={() => { setSelected(row); setDetailOpen(false); }}>
-              <td><span className={`parking-state ${row.space_status}`}>{parkingStatusLabel(row.space_status)}</span>{row.termination_in_progress && <small className="rent-roll-incoming-note">契約手続き中{row.termination_date ? `（解約日 ${row.termination_date}）` : ''}</small>}</td>
+              <td><span className={`parking-state ${row.termination_scheduled ? 'scheduled' : row.space_status}`}>{parkingRowStatusLabel(row)}</span>{row.termination_scheduled && row.termination_date ? <small className="rent-roll-incoming-note">{formatJapaneseDate(row.termination_date)}{row.termination_in_progress ? '（手続き中）' : ''}</small> : null}</td>
               <td><strong>{row.space_number}</strong><small>{row.facility_name}{row.parking_type_name ? ` / ${row.parking_type_name}` : ''}</small></td>
               <td>{row.parking_scope === 'internal' ? '内部' : row.parking_scope === 'external' ? '外部' : '—'}</td>
               <td>{row.tenant_name || '—'}</td><td>{row.space_status !== 'occupied' ? '—' : row.parking_fee_effective_from ? `${row.monthly_parking_fee.toLocaleString('ja-JP')}円` : <Link to={`/change-requests?parking=${encodeURIComponent(row.lease_contract_unit_id ?? '')}`} onClick={(event) => event.stopPropagation()}>未設定（対応依頼）</Link>}</td><td className="access-code">{row.access_code || '—'}</td>
@@ -546,7 +568,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
           <dl>
             <div><dt>駐車場</dt><dd>{selected.facility_name}</dd></div>
             <div><dt>種別</dt><dd>{selected.parking_type_name || '—'}</dd></div>
-            <div><dt>状態</dt><dd>{parkingStatusLabel(selected.space_status)}{selected.termination_in_progress && <small className="rent-roll-incoming-note">契約手続き中{selected.termination_date ? `（解約日 ${selected.termination_date}）` : ''}</small>}</dd></div>
+            <div><dt>状態</dt><dd>{parkingRowStatusLabel(selected)}{selected.termination_scheduled && selected.termination_date ? <small className="rent-roll-incoming-note">{formatJapaneseDate(selected.termination_date)}{selected.termination_in_progress ? '（手続き中）' : ''}</small> : null}</dd></div>
             <div><dt>区分</dt><dd>{selected.parking_scope === 'internal' ? '内部' : selected.parking_scope === 'external' ? '外部' : '—'}</dd></div>
             <div><dt>契約者</dt><dd>{selected.tenant_name || '—'}</dd></div>
             <div><dt>月額駐車料</dt><dd>{selected.space_status !== 'occupied' ? '—' : selected.parking_fee_effective_from ? `${selected.monthly_parking_fee.toLocaleString('ja-JP')}円` : <Link to={`/change-requests?parking=${encodeURIComponent(selected.lease_contract_unit_id ?? '')}`}>未設定（対応依頼を開く）</Link>}</dd></div>

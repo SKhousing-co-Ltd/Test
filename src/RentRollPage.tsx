@@ -12,7 +12,12 @@ import {
 import { supabase } from "./lib/supabase";
 
 type RentRollStatus =
-  "occupied" | "scheduled" | "vacant" | "applied" | "unavailable";
+  | "occupied"
+  | "scheduled"
+  | "move_in_scheduled"
+  | "vacant"
+  | "applied"
+  | "unavailable";
 
 type PropertyOption = {
   propertyId: string;
@@ -34,6 +39,7 @@ type RentRollSource = {
   contract_status: string | null;
   contract_start_date: string | null;
   contract_end_date: string | null;
+  lease_end_date: string | null;
   lease_term_type: "ordinary" | "fixed_term" | null;
   renewal_due_date: string | null;
   actual_end_date: string | null;
@@ -149,11 +155,19 @@ const collator = new Intl.Collator("ja-JP", {
 
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: "入居中",
-  scheduled: "解約予定",
+  scheduled: "退去予定",
+  move_in_scheduled: "入居予定",
   vacant: "空室",
   applied: "申込中",
   unavailable: "使用不可",
 };
+
+function formatJapaneseDate(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match
+    ? `${match[1]}年${Number(match[2])}月${Number(match[3])}日`
+    : value;
+}
 
 function storedProductCategories(propertyId: string): ProductCategory[] {
   if (!propertyId) return allProductCategories;
@@ -176,7 +190,9 @@ function summarizeRows(targetRows: RentRollRow[]) {
     occupied: targetRows.filter(
       (row) => row.status === "occupied" || row.status === "scheduled",
     ).length,
-    vacant: targetRows.filter((row) => row.status === "vacant").length,
+    vacant: targetRows.filter(
+      (row) => row.status === "vacant" || row.status === "move_in_scheduled",
+    ).length,
     monthlyTotal: targetRows.reduce((total, row) => total + row.total, 0),
   };
 }
@@ -220,12 +236,25 @@ function floorOrder(label: string): number {
   return 5000;
 }
 
-function toRentRollRow(source: RentRollSource): RentRollRow {
+function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
   const parkingUnavailable =
     source.unit_type === "parking" && source.space_status === "unavailable";
   const isParking = source.unit_type === "parking";
-  const incomingContracts = source.incoming_contracts ?? [];
-  const pendingTermination = source.pending_terminations?.[0] ?? null;
+  const incomingContracts = (source.incoming_contracts ?? []).filter(
+    (incoming) => incoming.contract_start_date > asOfDate,
+  );
+  const inProgressTermination = source.pending_terminations?.[0] ?? null;
+  const futureTermination =
+    source.pending_terminations?.find(
+      (termination) => termination.termination_date > asOfDate,
+    ) ?? null;
+  const futureContractEndDate = [
+    source.actual_end_date,
+    source.lease_end_date,
+    source.lease_term_type === "fixed_term" ? source.contract_end_date : null,
+  ]
+    .filter((date): date is string => !!date && date > asOfDate)
+    .sort()[0] ?? null;
   const leaseTermLabel = isParking
     ? "—"
     : source.lease_term_type === "ordinary"
@@ -246,16 +275,17 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
   );
   const status: RentRollStatus = parkingUnavailable
     ? "unavailable"
-    : source.leasing_status === "applied" ||
-        source.leasing_status === "unavailable"
+    : source.leasing_status === "unavailable"
       ? source.leasing_status
       : source.lease_contract_id
-      ? isTerminationScheduled || !!pendingTermination
+        ? isTerminationScheduled || !!futureTermination || !!futureContractEndDate
           ? "scheduled"
           : "occupied"
-        : incomingContracts.length
-          ? "applied"
-          : "vacant";
+        : incomingContracts.length > 0
+          ? "move_in_scheduled"
+          : source.leasing_status === "applied"
+            ? "applied"
+            : "vacant";
 
   return {
     unitId: source.unit_id,
@@ -300,8 +330,8 @@ function toRentRollRow(source: RentRollSource): RentRollRow {
           .filter(Boolean)
           .join(" / "),
     incomingContracts,
-    terminationInProgress: !!pendingTermination,
-    terminationDate: pendingTermination?.termination_date,
+    terminationInProgress: !!inProgressTermination,
+    terminationDate: futureTermination?.termination_date ?? futureContractEndDate ?? undefined,
   };
 }
 
@@ -382,9 +412,10 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const [propertyId, setPropertyId] = useState("");
   const [rows, setRows] = useState<RentRollRow[]>([]);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | RentRollStatus>(
+  const [statusFilter, setStatusFilter] = useState<"all" | RentRollStatus | "occupied_group" | "vacant_group">(
     "all",
   );
+  const [monthlyTotalSort, setMonthlyTotalSort] = useState(false);
   const [selectedProductCategories, setSelectedProductCategories] =
     useState<ProductCategory[]>(allProductCategories);
   const [unitTypeFilter, setUnitTypeFilter] = useState<
@@ -403,6 +434,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const [utilityValues, setUtilityValues] = useState<Record<string, Record<string, { value: number; taxMode: string }>>>({});
   const [tableScrollPosition, setTableScrollPosition] = useState<"left" | "middle" | "right">("left");
   const tableWrapRef = useRef<HTMLDivElement>(null);
+  const totalsWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!propertyId || !supabase) { setUtilityColumns([]); setUtilityValues({}); return; }
@@ -565,7 +597,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         });
         loadError = result.error;
         loadedRows = ((result.data ?? []) as RentRollSource[]).map(
-          toRentRollRow,
+          (row) => toRentRollRow(row, asOfDate),
         );
       }
 
@@ -615,12 +647,14 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("ja-JP");
     const selectedCategories = new Set(selectedProductCategories);
-    return sortedRows.filter((row) => {
+    const matchedRows = sortedRows.filter((row) => {
       const matchesProductCategory = selectedCategories.has(
         row.productCategory,
       );
-      const matchesStatus =
-        statusFilter === "all" || row.status === statusFilter;
+      const matchesStatus = statusFilter === "all"
+        || (statusFilter === "occupied_group" && (row.status === "occupied" || row.status === "scheduled"))
+        || (statusFilter === "vacant_group" && (row.status === "vacant" || row.status === "move_in_scheduled"))
+        || row.status === statusFilter;
       const matchesType =
         unitTypeFilter === "all" ||
         (unitTypeFilter === "parking"
@@ -645,12 +679,16 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         matchesProductCategory && matchesStatus && matchesType && matchesQuery
       );
     });
+    return monthlyTotalSort
+      ? [...matchedRows].sort((a, b) => b.total - a.total || collator.compare(a.unitName, b.unitName))
+      : matchedRows;
   }, [
     query,
     selectedProductCategories,
     sortedRows,
     statusFilter,
     unitTypeFilter,
+    monthlyTotalSort,
   ]);
 
   const summary = useMemo(() => summarizeRows(filteredRows), [filteredRows]);
@@ -787,12 +825,15 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           <select
             value={statusFilter}
             onChange={(event) =>
-              setStatusFilter(event.target.value as "all" | RentRollStatus)
+              setStatusFilter(event.target.value as typeof statusFilter)
             }
           >
             <option value="all">全件</option>
+            <option value="occupied_group">入居中（退去予定を含む）</option>
+            <option value="vacant_group">空室（入居予定を含む）</option>
             <option value="occupied">入居中</option>
-            <option value="scheduled">解約予定</option>
+            <option value="scheduled">退去予定</option>
+            <option value="move_in_scheduled">入居予定</option>
             <option value="vacant">空室</option>
             <option value="unavailable">使用不可</option>
           </select>
@@ -880,35 +921,26 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           className="rent-roll-metrics"
           aria-label={`${selectedProperty.propertyName} の集計`}
         >
-          <div>
+          <button type="button" className="rent-roll-metric-button" aria-pressed={statusFilter === "all"} onClick={() => { setStatusFilter("all"); setMonthlyTotalSort(false); }}>
             <span>表示中の区画数</span>
             <strong>{numberFormatter.format(summary.units)} 区画</strong>
-            <small>
-              全体 {numberFormatter.format(overallSummary.units)} 区画
-            </small>
-          </div>
-          <div>
+            <small>全体 {numberFormatter.format(overallSummary.units)} 区画</small>
+          </button>
+          <button type="button" className="rent-roll-metric-button" aria-pressed={statusFilter === "occupied_group"} onClick={() => { setStatusFilter("occupied_group"); setMonthlyTotalSort(false); }}>
             <span>表示中の入居</span>
             <strong>{numberFormatter.format(summary.occupied)} 区画</strong>
-            <small>
-              全体 {numberFormatter.format(overallSummary.occupied)} 区画
-            </small>
-          </div>
-          <div>
+            <small>全体 {numberFormatter.format(overallSummary.occupied)} 区画</small>
+          </button>
+          <button type="button" className="rent-roll-metric-button" aria-pressed={statusFilter === "vacant_group"} onClick={() => { setStatusFilter("vacant_group"); setMonthlyTotalSort(false); }}>
             <span>表示中の空室</span>
             <strong>{numberFormatter.format(summary.vacant)} 区画</strong>
-            <small>
-              全体 {numberFormatter.format(overallSummary.vacant)} 区画
-            </small>
-          </div>
-          <div className="rent-roll-total">
+            <small>全体 {numberFormatter.format(overallSummary.vacant)} 区画</small>
+          </button>
+          <button type="button" className="rent-roll-metric-button rent-roll-total" aria-pressed={monthlyTotalSort} onClick={() => setMonthlyTotalSort((current) => !current)}>
             <span>表示中の月額総計</span>
             <strong>{currencyFormatter.format(summary.monthlyTotal)}</strong>
-            <small>
-              賃料・共益費・駐車場代・その他を別項目で集計｜全体{" "}
-              {currencyFormatter.format(overallSummary.monthlyTotal)}
-            </small>
-          </div>
+            <small>{monthlyTotalSort ? "月額の高い順で表示中" : "賃料・共益費・駐車場代・その他を別項目で集計｜全体"} {currencyFormatter.format(overallSummary.monthlyTotal)}</small>
+          </button>
         </div>
       )}
 
@@ -938,6 +970,9 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           onScroll={(event) => {
             const element = event.currentTarget;
             const maxScroll = element.scrollWidth - element.clientWidth;
+            if (totalsWrapRef.current) {
+              totalsWrapRef.current.scrollLeft = element.scrollLeft;
+            }
             setTableScrollPosition(element.scrollLeft < 8 ? "left" : element.scrollLeft >= maxScroll - 8 ? "right" : "middle");
           }}
         >
@@ -995,16 +1030,23 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   >
                     <td className="rent-roll-pinned rent-roll-pinned-1">
                       <span className={`rent-roll-status ${row.status}`}>
-                        {row.terminationInProgress ? "契約手続き中" : statusLabel[row.status]}
+                        {row.terminationInProgress && !row.terminationDate
+                          ? "契約手続き中"
+                          : statusLabel[row.status]}
                       </span>
-                      {row.terminationInProgress && row.terminationDate ? <small className="rent-roll-incoming-note">解約日: {row.terminationDate}</small> : null}
+                      {row.status === "scheduled" && row.terminationDate ? (
+                        <small className="rent-roll-incoming-note">
+                          {formatJapaneseDate(row.terminationDate)}
+                          {row.terminationInProgress ? "（手続き中）" : ""}
+                        </small>
+                      ) : null}
                       {row.incomingContracts?.length ? (
                         <small className="rent-roll-incoming-note">
-                          申込中:{" "}
+                          入居予定:{" "}
                           {row.incomingContracts
                             .map(
                               (incoming) =>
-                                `${incoming.tenant_name}（${incoming.contract_start_date}）`,
+                                `${incoming.tenant_name}（${formatJapaneseDate(incoming.contract_start_date)}から）`,
                             )
                             .join("、")}
                         </small>
@@ -1142,12 +1184,21 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   </tr>
                 ))}
             </tbody>
-            {!loadingRows && filteredRows.length > 0 && (
-              <tfoot>
+          </table>
+        </div>
+        {!loadingRows && filteredRows.length > 0 && (
+          <div ref={totalsWrapRef} className="rent-roll-total-wrap" aria-label="表示中の合計">
+            <table className="rent-roll-table rent-roll-total-table" aria-hidden="true">
+              <tbody>
                 <tr className="rent-roll-total-row">
-                  <th colSpan={8} scope="row">
-                    表示中の合計（{numberFormatter.format(filteredRows.length)}件）
-                  </th>
+                  <td className="rent-roll-pinned rent-roll-pinned-1" />
+                  <td className="rent-roll-pinned rent-roll-pinned-2" />
+                  <td className="rent-roll-pinned rent-roll-pinned-3" />
+                  <td className="rent-roll-pinned rent-roll-pinned-4" />
+                  <td className="rent-roll-pinned rent-roll-pinned-5" />
+                  <td />
+                  <td />
+                  <td className="rent-roll-pinned rent-roll-pinned-tenant">表示中の合計（{numberFormatter.format(filteredRows.length)}件）</td>
                   <td className="numeric">{numberFormatter.format(columnTotals.area)}</td>
                   <td className="numeric emphasis">{formatCurrency(columnTotals.rent)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.commonCharge)}</td>
@@ -1158,13 +1209,15 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   <td className="numeric">{formatCurrency(columnTotals.securityDeposit)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.keyMoney)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.renewalFee)}</td>
-                  <td colSpan={3} />
+                  <td />
+                  <td />
+                  <td />
                   {viewMode === "snapshot" && <td />}
                 </tr>
-              </tfoot>
-            )}
-          </table>
-        </div>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
       {selectedLeaseContractUnitId && (
         <ContractDetailModal

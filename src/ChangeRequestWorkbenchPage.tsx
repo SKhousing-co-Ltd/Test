@@ -76,6 +76,13 @@ const editableFields = [
 const statusLabel: Record<string, string> = { open: '要確認', in_review: '確認中', on_hold: '保留', resolved: '確認済み（確定待ち）', applied: '確定済み', excluded: '対象外' };
 const sourceLabels: Record<string, string> = { floor: '階', unit: '取込元の区画表記', tenant_name: '取込元のテナント名', tenant_code: '取込元の請求コード', discriminator: '仮識別子' };
 const formatDate = (value: string) => new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+const numericContractFields = ['leased_area_sqm', 'monthly_rent_amount', 'monthly_common_charge_amount', 'deposit_amount', 'security_deposit_amount', 'key_money_amount', 'renewal_fee_amount'];
+const withoutThousandsSeparators = (value: string) => value.replace(/,/g, '').trim();
+const formatNumericInput = (value: string) => {
+  const normalized = withoutThousandsSeparators(value);
+  if (!normalized || !Number.isFinite(Number(normalized))) return value;
+  return Number(normalized).toLocaleString('ja-JP', { maximumFractionDigits: 4 });
+};
 const prettyValue = (value: unknown) => value === null || value === undefined || value === '' ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 const sourceValue = (payload: JsonObject, key: string) => {
   const field = payload[key];
@@ -708,12 +715,14 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
     await onSaved('契約内容とリーシング区画を保存しました。');
   };
   const addOperation = () => {
-    if (operationKind === 'unit' && operationField === 'monthly_rent_amount' && !operationEffectiveDate) { onError('賃料の適用開始日を入力してください。'); return; }
-    if ((operationKind !== 'contract' && !operationTarget) || !operationValue.trim()) { onError('変更対象と値を入力してください。'); return; }
+    const isEffectiveDatedAmount = operationKind === 'unit' && ['monthly_rent_amount', 'monthly_common_charge_amount'].includes(operationField);
+    const operationValueForSave = operationKind === 'unit' && numericContractFields.includes(operationField) ? withoutThousandsSeparators(operationValue) : operationValue.trim();
+    if (isEffectiveDatedAmount && !operationEffectiveDate) { onError('適用開始日を入力してください。'); return; }
+    if ((operationKind !== 'contract' && !operationTarget) || !operationValueForSave) { onError('変更対象と値を入力してください。'); return; }
     const operation: ContractOperation = operationKind === 'contract'
       ? { action: 'set_field', entity_type: 'lease_contract', field_name: operationField, value: operationValue.trim() }
       : operationKind === 'unit'
-        ? { action: 'set_field', entity_type: 'lease_contract_unit', entity_id: operationTarget, field_name: operationField, value: operationValue.trim(), ...(operationField === 'monthly_rent_amount' ? { effective_date: operationEffectiveDate } : {}) }
+        ? { action: 'set_field', entity_type: 'lease_contract_unit', entity_id: operationTarget, field_name: operationField, value: operationValueForSave, ...(isEffectiveDatedAmount ? { effective_date: operationEffectiveDate } : {}) }
         : operationKind === 'link'
           ? { action: 'link_unit', unit_id: operationTarget, value: { lease_start_date: operationValue.trim() } }
           : { action: 'unlink_unit', entity_id: operationTarget, value: { effective_date: operationValue.trim() } };
@@ -799,9 +808,9 @@ function AppsuiteContractEditor({ request, properties, tenants, units, contracts
         </select>
       </label> : <label>契約区画<select value={operationTarget} onChange={(e) => setOperationTarget(e.target.value)}><option value="">選択してください</option>{targetContractUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{contractUnitLabel(unit)}</option>)}</select></label>}
       {(operationKind === 'contract' || operationKind === 'unit') && <label>項目<select value={operationField} onChange={(e) => setOperationField(e.target.value)}>{operationKind === 'contract' ? [['contract_type', '契約種別'], ['contract_start_date', '契約開始日'], ['contract_end_date', '契約終了日'], ['renewal_terms', '更新条件'], ['payment_terms', '支払条件'], ['notes', '備考']].map(([value, label]) => <option value={value} key={value}>{label}</option>) : editableFields.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>}
-      <label>{operationKind === 'unlink' ? '解除効力発生日' : operationKind === 'link' ? '利用開始日' : '反映予定値'}<input value={operationValue} onChange={(e) => setOperationValue(e.target.value)} /></label><button className="secondary-button" onClick={addOperation}>変更を追加</button>
+      <label>{operationKind === 'unlink' ? '解除効力発生日' : operationKind === 'link' ? '利用開始日' : '反映予定値'}<input inputMode={operationKind === 'unit' && numericContractFields.includes(operationField) ? 'decimal' : undefined} value={operationValue} onChange={(e) => setOperationValue(e.target.value)} onBlur={() => { if (operationKind === 'unit' && numericContractFields.includes(operationField)) setOperationValue(formatNumericInput(operationValue)); }} /></label><button className="secondary-button" onClick={addOperation}>変更を追加</button>
     </div>
-    {operationKind === 'unit' && operationField === 'monthly_rent_amount' && <label>賃料適用開始日<input type="date" value={operationEffectiveDate} onChange={(e) => setOperationEffectiveDate(e.target.value)} /></label>}
+    {operationKind === 'unit' && ['monthly_rent_amount', 'monthly_common_charge_amount'].includes(operationField) && <label>適用開始日<input type="date" value={operationEffectiveDate} onChange={(e) => setOperationEffectiveDate(e.target.value)} /></label>}
     <ChangeSummary rows={operations.map((op) => ({ label: op.field_name ?? op.entity_id ?? op.unit_id ?? op.action, before: op.action, after: `${prettyValue(op.value)}${op.effective_date ? `（適用開始日：${op.effective_date}）` : ''}` }))} />
     <ol>{operations.map((operation, index) => <li key={`${operation.action}-${index}`}>{operation.action}｜{operation.field_name ?? operation.entity_id ?? operation.unit_id}｜{prettyValue(operation.value)}{operation.effective_date ? `（適用開始日：${operation.effective_date}）` : ''} <button className="text-button" onClick={() => setOperations((current) => current.filter((_, itemIndex) => itemIndex !== index))}>削除</button></li>)}</ol>
     <label>本システムに対象項目がない場合の理由<textarea value={noSystemReason} onChange={(e) => setNoSystemReason(e.target.value)} placeholder="例：連帯保証人は本システムの管理対象外。契約原本側で確認済み。" /></label>
@@ -1010,7 +1019,10 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
 
   const requestContexts = useMemo(() => new Map(requests.map((request) => [request.change_request_id, requestDisplayContext(request, contracts, contractUnits, properties, tenants)])), [requests, contracts, contractUnits, properties, tenants]);
   const filtered = useMemo(() => requests.filter((request) => {
-    const matchesStatus = filter === 'all' || request.status === filter;
+    const matchesStatus = filter === 'all'
+      || (filter === 'active' && ACTIVE_REQUEST_STATUSES.includes(request.status as typeof ACTIVE_REQUEST_STATUSES[number]))
+      || (filter === 'archived' && ARCHIVED_REQUEST_STATUSES.includes(request.status as typeof ARCHIVED_REQUEST_STATUSES[number]))
+      || request.status === filter;
     const matchesType = typeFilter === 'all' || requestTypeGroup(request) === typeFilter;
     const matchesSource = sourceFilter === 'all' || request.source_type === sourceFilter;
     const context = requestContexts.get(request.change_request_id);
@@ -1384,6 +1396,21 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const openCount = requests.filter((request) => request.status === 'open').length;
   const inReviewCount = requests.filter((request) => request.status === 'in_review').length;
   const holdCount = requests.filter((request) => request.status === 'on_hold').length;
+  const applyMetricFilter = (nextFilter: RequestStatus) => {
+    setFilter(nextFilter);
+    setTypeFilter('all');
+    setSourceFilter('all');
+    setSearch('');
+    setPage(1);
+  };
+  const toggleArchivedFromMetric = async () => {
+    if (archiveLoaded && filter === 'archived') {
+      await toggleArchivedRequests();
+      return;
+    }
+    if (!archiveLoaded) await toggleArchivedRequests();
+    applyMetricFilter('archived');
+  };
   const sourceTypes = Array.from(new Set(requests.map((request) => request.source_type))).sort();
   const visiblePageNumbers = [...new Set([1, page - 1, page, page + 1, pageCount].filter((number) => number >= 1 && number <= pageCount))].sort((a, b) => a - b);
 
@@ -1391,20 +1418,19 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     <div className="page-heading change-thread-page-heading"><div><p className="section-kicker">WORK MANAGEMENT</p><h2>案件スレッド</h2><p>案件ごとの情報・確認・判断を一つの流れで進めます。</p></div><div className="thread-page-actions"><button className="secondary-button" onClick={() => void loadRequests()} disabled={loading || archiveLoading}>一覧を更新</button><button className="secondary-button" onClick={() => void recheckAll()} disabled={loading || rechecking}>{rechecking ? '再チェック中…' : '作業中を再チェック'}</button></div></div>
     {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}</p>}
     <div className="thread-work-stats">
-      <div className="thread-work-stat primary"><span>作業中</span><strong>{loading ? '—' : openCount + inReviewCount + holdCount}</strong><small>要確認・確認中・保留</small></div>
-      <div className="thread-work-stat"><span><i className="open-dot" />要確認</span><strong>{loading ? '—' : openCount}</strong></div>
-      <div className="thread-work-stat"><span><i className="review-dot" />確認中</span><strong>{loading ? '—' : inReviewCount}</strong></div>
-      <div className="thread-work-stat"><span><i className="hold-dot" />保留</span><strong>{loading ? '—' : holdCount}</strong></div>
-      <div className="thread-work-stat archived"><span><i className="archive-dot" />完了分</span><strong>{archiveCount}</strong><small>確認済み・確定済み・対象外</small></div>
+      <button type="button" className="thread-work-stat primary" aria-pressed={filter === 'active'} onClick={() => applyMetricFilter('active')}><span>作業中</span><strong>{loading ? '—' : openCount + inReviewCount + holdCount}</strong><small>要確認・確認中・保留</small></button>
+      <button type="button" className="thread-work-stat" aria-pressed={filter === 'open'} onClick={() => applyMetricFilter('open')}><span><i className="open-dot" />要確認</span><strong>{loading ? '—' : openCount}</strong></button>
+      <button type="button" className="thread-work-stat" aria-pressed={filter === 'in_review'} onClick={() => applyMetricFilter('in_review')}><span><i className="review-dot" />確認中</span><strong>{loading ? '—' : inReviewCount}</strong></button>
+      <button type="button" className="thread-work-stat" aria-pressed={filter === 'on_hold'} onClick={() => applyMetricFilter('on_hold')}><span><i className="hold-dot" />保留</span><strong>{loading ? '—' : holdCount}</strong></button>
+      <button type="button" className="thread-work-stat archived" aria-pressed={filter === 'archived'} onClick={() => void toggleArchivedFromMetric()} disabled={loading || archiveLoading}><span><i className="archive-dot" />{archiveLoaded && filter === 'archived' ? '完了分（クリックで隠す）' : archiveLoaded ? '完了分（クリックで表示）' : '完了分（クリックで読み込み）'}</span><strong>{archiveCount}</strong><small>確認済み・確定済み・対象外</small></button>
     </div>
     <div className="thread-toolbar">
       <label className="thread-search-field"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="案件名・物件名・テナント名・稟議番号で検索" /></label>
       <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} aria-label="案件種別"><option value="all">すべての種別</option>{Object.entries(requestTypeGroupLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value); setPage(1); }} aria-label="発生元"><option value="all">すべての発生元</option>{sourceTypes.map((source) => <option key={source} value={source}>{source === 'initial_import' ? 'Excel取込' : source === 'desknets' ? 'AppSuite' : source}</option>)}</select>
-      <select value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }} aria-label="状態"><option value="all">作業状態: すべて</option><option value="open">要確認</option><option value="in_review">確認中</option><option value="on_hold">保留</option>{archiveLoaded && <><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option></>}</select>
+      <select value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }} aria-label="状態"><option value="all">作業状態: すべて</option><option value="active">作業中（要確認・確認中・保留）</option><option value="open">要確認</option><option value="in_review">確認中</option><option value="on_hold">保留</option>{archiveLoaded && <><option value="archived">完了分</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option></>}</select>
       <label className="thread-sort-field"><span>並び順</span><select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as 'newest' | 'oldest'); setPage(1); }}><option value="newest">更新日時が新しい順</option><option value="oldest">更新日時が古い順</option></select></label>
     </div>
-    <div className="thread-archive-bar"><span>{archiveLoaded ? '作業中と完了分を一覧に表示しています。' : '完了分は必要なときに読み込めます。'}</span><button className="secondary-button" onClick={() => void toggleArchivedRequests()} disabled={loading || archiveLoading}>{archiveLoading ? '完了分を取得中…' : archiveLoaded ? '完了分を隠す' : `完了分を読み込む（${archiveCount.toLocaleString('ja-JP')}件）`}</button></div>
      <div className="change-workbench-layout thread-workbench-layout">
       <aside className="change-request-list thread-request-list"><header><div><h3>案件一覧</h3><p>{archiveLoaded ? '作業中・完了分' : '作業中'}　·　{filtered.length.toLocaleString('ja-JP')}件</p></div><button className="thread-refresh-button" onClick={() => void loadRequests()} disabled={loading || archiveLoading} aria-label="一覧を更新">↻</button></header>
         <div className="change-request-rows thread-request-rows">{loading ? <p className="change-empty">案件を読み込んでいます…</p> : filtered.length === 0 ? <p className="change-empty">{search.trim() ? '検索条件に一致する案件はありません。' : '現在、対応が必要な案件はありません。'}</p> : pageRequests.map((request) => {
@@ -1419,7 +1445,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
         <div className="thread-list-pagination"><span>{filtered.length ? `${(page - 1) * REQUEST_DISPLAY_PAGE_SIZE + 1}–${Math.min(page * REQUEST_DISPLAY_PAGE_SIZE, filtered.length)}件 / ${filtered.length}件` : '0件'}</span><div><button disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>‹</button>{visiblePageNumbers.map((number, index) => <span key={number}>{index > 0 && number - visiblePageNumbers[index - 1] > 1 ? <i>…</i> : null}<button className={number === page ? 'active' : ''} onClick={() => { setPage(number); setSelectedId(filtered[(number - 1) * REQUEST_DISPLAY_PAGE_SIZE]?.change_request_id ?? null); }}>{number}</button></span>)}<button disabled={page >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))}>›</button></div></div>
       </aside>
       <main className="change-request-detail thread-request-detail">{selected ? <>
-        <header className="change-detail-heading"><div><div className="thread-detail-labels"><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span><span>{requestTypeLabel[selected.request_type] ?? selected.request_type}</span><span>{selected.source_type === 'initial_import' ? 'Excel取込' : selected.source_type === 'desknets' ? 'AppSuite' : selected.source_type}</span></div><h3>{selected.title}</h3><p>{selected.summary || '案件の内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><div className="change-detail-tools">{editable && !isContractDeadlineRequest ? <button className="secondary-button" onClick={() => void recheckSelected()} disabled={working || rechecking}>{rechecking ? '再チェック中…' : '再チェック'}</button> : null}</div></header>
+        <header className="change-detail-heading"><div><div className="thread-detail-labels"><span className={`change-status ${selected.status}`}>{statusLabel[selected.status] ?? selected.status}</span><span>{requestTypeLabel[selected.request_type] ?? selected.request_type}</span><span>{selected.source_type === 'initial_import' ? 'Excel取込' : selected.source_type === 'desknets' ? 'AppSuite' : selected.source_type}</span></div><h3>{requestDisplayTitle(selected)}</h3><p>{selected.summary || '案件の内容を確認してください。'} <span>最終更新: {formatDate(selected.updated_at)}</span></p></div><div className="change-detail-tools">{editable && !isContractDeadlineRequest ? <button className="secondary-button" onClick={() => void recheckSelected()} disabled={working || rechecking}>{rechecking ? '再チェック中…' : '再チェック'}</button> : null}</div></header>
         <section className="thread-related-context"><div><span>物件</span><strong>{selectedContext?.property ?? '物件未特定'}</strong></div><div><span>テナント</span><strong>{selectedContext?.tenant ?? 'テナント未特定'}</strong></div>{selectedContext?.unit && <div><span>区画</span><strong>{selectedContext.unit}</strong></div>}<div><span>案件ID</span><strong>{selected.change_request_id}</strong></div></section>
         <section className="thread-case-links"><div className="thread-ringi"><span>稟議NO</span>{selectedRingiNumber && selected.source_record ? <a href={appsuiteRecordUrl(selected.source_record.app_id, selected.source_record.data_id)} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, appsuiteRecordUrl(selected.source_record!.app_id, selected.source_record!.data_id))}>{selectedRingiNumber} ↗</a> : <strong>{selectedRingiNumber || '未登録'}</strong>}{selectedAppsuiteDataId && <small>AppSuite ID: {selectedAppsuiteDataId}</small>}</div><nav aria-label="関連ワークフロー"><span>関連ワークフロー</span>{selectedWorkflowLinks.map((workflow) => <Link key={workflow.to} to={workflow.to}>{workflow.label} ↗</Link>)}{selected.source_record && <a href={appsuiteRecordUrl(selected.source_record.app_id, selected.source_record.data_id)} target="_blank" rel="noreferrer" onClick={(event) => openAppsuiteRecord(event, appsuiteRecordUrl(selected.source_record!.app_id, selected.source_record!.data_id))}>AppSuite原文 ↗</a>}</nav></section>
         <IssueContext request={selected} />
@@ -1429,15 +1455,15 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           <ul>{selected.items.filter((item) => item.validation_status !== 'valid').map((item) => <li key={item.change_request_item_id}>{item.validation_message || `明細の状態: ${item.validation_status}`}</li>)}</ul>
           {(selected.request_type === 'contract_terminate' || selected.request_type === 'contract_cancellation_review') && <p>解約対象と終了日を確認し、対象契約のデータを更新してください。</p>}
         </section>}
-        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <section className="change-card historical-contract-candidates">
-          <h4>過去契約履歴候補</h4>
+        {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <details className="change-card historical-contract-candidates">
+          <summary>過去契約履歴候補（{historicalCandidates.length}件）</summary>
           <p>過去スナップショットを連続期間にまとめた候補です。ここで紐付けても、現行契約・請求・解約処理は変更しません。</p>
           {historicalCandidateLoading ? <p className="muted">過去スナップショット候補を取得中です…</p> : historicalCandidates.length === 0 ? <p className="muted">一致する過去契約履歴はありません。</p> : historicalCandidates.map((candidate) => <article key={candidate.historical_contract_key} className="historical-contract-candidate">
             <div><strong>{candidate.tenant_name ?? 'テナント未設定'}</strong><span>{candidate.property_name} / {candidate.floor_label ?? 'フロア未設定'} / {candidate.unit_code ?? '識別番号未設定'}</span><span>区画種別: {candidate.unit_type === 'parking' ? '駐車場' : candidate.unit_type === 'bicycle_parking' ? '駐輪場' : candidate.unit_type === 'signage' ? '看板' : candidate.unit_type === 'antenna' ? 'アンテナ' : candidate.unit_type === 'warehouse' ? '倉庫' : candidate.unit_type === 'office' ? '貸室' : candidate.unit_type ?? '未設定'}</span><span>履歴期間: {candidate.period_start ?? '未設定'} ～ {candidate.period_end ?? '未設定'}（{candidate.snapshot_count}か月）</span></div>
             <div><strong>一致度: {candidate.match_level}</strong><ul>{candidate.match_reasons.filter((reason) => reason.matched).map((reason) => <li key={reason.rule}>✓ {reason.message}</li>)}</ul></div>
             {editable && <button className="secondary-button" onClick={() => void confirmHistoricalContract(candidate)} disabled={working}>過去履歴に紐付ける</button>}
           </article>)}
-        </section>}
+        </details>}
         <AppsuiteSourceContext request={selected} />
         {isAppsuiteContractRequest && editable && !isLinkedContractCreate && !isContractCreateLinkLoading && <details className="change-card historical-roll-check" open={historicalCandidates.length === 0}><summary>過去レントロール確認（手動確認・証跡）</summary><p>候補が見つからない場合や、Excelの確認結果を証跡として残す場合に使用します。</p><div className="change-item-editor">
           <label>基準日<input type="date" value={snapshotDate} onChange={(event) => setSnapshotDate(event.target.value)} /></label>
