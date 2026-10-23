@@ -850,7 +850,8 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
                 {visibleCategories.map((item) => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  return <th key={item.id} colSpan={2 + (customs.length === 1 ? 0 : customs.length)} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  const detailColumns = customs.length === 1 && !customs[0]?.isMonthlyFixed ? 0 : customs.length;
+                  return <th key={item.id} colSpan={2 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>備考</th>
                 <th rowSpan={2}>データ分割設定</th>
@@ -861,7 +862,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
 ...(() => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  if (customs.length === 1) return [];
+                  if (customs.length === 1 && !customs[0]?.isMonthlyFixed) return [];
                   return customs.map((value) => <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>);
                 })(),
                 <th key={`${item.id}-sum`} className={categoryClass(item.id)}>計算方法</th>,
@@ -876,8 +877,10 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                   <td key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>
                     <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
                   </td>,
-                  ...(customs.length === 1 ? [] : customs.map((value) =>
-                    <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>)),
+                  ...(customs.length === 1 && !customs[0]?.isMonthlyFixed ? [] : customs.map((value) =>
+                    <td key={`${value.id}-b`} className={categoryClass(item.id)}>{value.isMonthlyFixed
+                      ? <span className="meter-settings-pair"><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[value.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [value.id]: fixedAmount ?? 0 } })} /><span className="meter-unit">円</span></span>
+                      : <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />}</td>)),
                   <td key={`${item.id}-sum`} className={categoryClass(item.id)}>
                     <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
                   </td>,

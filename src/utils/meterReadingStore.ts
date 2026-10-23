@@ -56,6 +56,7 @@ type SubItemRow = {
   billing_period_pattern_id: string | null; sort_order: number;
   variable_price_method: VariablePriceMethod; unit_price_rounding_digits: number; unit_price_rounding_mode: RoundingMode;
   show_unit_price_on_invoice: boolean; input_mode: InputMode | null;
+  is_monthly_fixed: boolean;
 };
 type MonthSubItemRow = {
   asset_meter_sub_item_id: string; unit_price: number | null;
@@ -123,7 +124,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 
   const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult, priceSettingResult] = await Promise.all([
     client.from('asset_meter_category_setting').select('asset_id, category, usage_unit, is_billable, is_basic_billable').eq('asset_id', assetId),
-    client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, usage_display_digits, billing_period_pattern_id, sort_order, variable_price_method, unit_price_rounding_digits, unit_price_rounding_mode, show_unit_price_on_invoice, input_mode').eq('asset_id', assetId).order('sort_order'),
+    client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, usage_display_digits, billing_period_pattern_id, sort_order, variable_price_method, unit_price_rounding_digits, unit_price_rounding_mode, show_unit_price_on_invoice, input_mode, is_monthly_fixed').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable, billing_period_pattern_id').eq('asset_id', assetId).order('surcharge_name'),
     client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note, split_label').eq('asset_id', assetId).order('row_no'),
     client.from('asset_meter').select('asset_meter_id, asset_id, asset_meter_sub_item_id, meter_code, meter_label, is_active').eq('asset_id', assetId).order('sort_order').order('meter_code'),
@@ -201,6 +202,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
         variablePriceMethod: row.variable_price_method, unitPriceRoundingDigits: row.unit_price_rounding_digits, unitPriceRoundingMode: row.unit_price_rounding_mode,
         monthly: monthlyBySubItem.get(row.asset_meter_sub_item_id) ?? emptyVariablePrice(),
         showUnitPriceOnInvoice: row.show_unit_price_on_invoice,
+        isMonthlyFixed: row.is_monthly_fixed,
         // 検針値は使用量で入力します（指針入力は使いません。以前に指針入力へ切り替えた小分類も使用量に戻します）。
         inputMode: 'usage',
       });
@@ -522,6 +524,7 @@ export async function saveMeterReading(
       variable_price_method: row.variablePriceMethod,
       unit_price_rounding_digits: row.unitPriceRoundingDigits, unit_price_rounding_mode: row.unitPriceRoundingMode,
       show_unit_price_on_invoice: row.showUnitPriceOnInvoice,
+      is_monthly_fixed: row.kind === 'custom' && row.isMonthlyFixed,
       input_mode: row.kind === 'basic' ? 'usage' : row.inputMode,
     };
   })), '小分類');
@@ -570,7 +573,7 @@ export async function saveMeterReading(
       meter_reading_contract_id: row.id, asset_meter_sub_item_id: subItem.id,
       is_billable: row.billable[subItem.id] ?? false,
       unit_price: null,
-      fixed_amount: subItem.kind === 'basic' ? row.fixedCharges[subItem.id] ?? null : null,
+      fixed_amount: subItem.kind === 'basic' || subItem.isMonthlyFixed ? row.fixedCharges[subItem.id] ?? null : null,
     })),
   ))), '契約行の小分類設定');
 
