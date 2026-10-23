@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
 import { periodText } from './utils/billingDates';
 import {
-  buildInvoiceSheet, csvHeaders, invalidAmountRows, loadSavedInvoiceSheet, numberValue, orderInvoiceCardsByTenants, recalcInvoices, reorderInvoiceCards, saveInvoiceSheet, taxCategories,
+  buildInvoiceSheet, csvHeaders, invalidAmountRows, loadSavedInvoiceSheet, mergeMissingZeroSurchargeRows, numberValue, orderInvoiceCardsByTenants, recalcInvoices, reorderInvoiceCards, saveInvoiceSheet, taxCategories,
   type DuePattern, type InvoiceRow, type InvoiceSheet, type PeriodPattern,
 } from './utils/invoiceSheet';
 import { loadSavedTenantOrder, moveBefore, saveTenantOrder } from './utils/tenantOrder';
@@ -112,11 +112,13 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
         if (!built && builtResult.status === 'rejected') setError(`最新データから作れなかったため、保存した内容を表示しています: ${builtResult.reason instanceof Error ? builtResult.reason.message : ''}`);
         setDuePatterns(built?.duePatterns ?? []); setPeriodPatterns(built?.periodPatterns ?? []); setMeterNotice(built?.meterNotice ?? ''); setTermsNotice(built?.termsNotice ?? '');
 
-        const sourceSheet = saved?.sheet ?? built!.sheet;
+        const sourceSheet = saved && built ? mergeMissingZeroSurchargeRows(saved.sheet, built.sheet) : saved?.sheet ?? built!.sheet;
+        const addedZeroSurcharge = Boolean(saved && sourceSheet !== saved.sheet);
         const tenantIds = orderResult.status === 'fulfilled' ? orderResult.value.sort((left, right) => left.sort_order - right.sort_order).map((item) => item.tenant_id) : [];
         applySheet({ ...sourceSheet, rows: orderInvoiceCardsByTenants(sourceSheet.rows, tenantIds) });
         setSavedAt(saved?.savedAt ?? '');
-        setDirty(false);
+        if (addedZeroSurcharge) { revision.current += 1; setDirty(true); setNotice('確定した0円の電気代増額分を請求明細へ追加しました。'); }
+        else setDirty(false);
         if (saved && built && sheetTotal(saved.sheet.rows) !== sheetTotal(built.sheet.rows)) {
           setNotice(`保存した後に、レントロール・検針データの金額が変わっています（保存した内容 ${yen.format(sheetTotal(saved.sheet.rows))}円／最新 ${yen.format(sheetTotal(built.sheet.rows))}円）。最新の内容にするには「最新データで作り直す」を押してください。`);
         }

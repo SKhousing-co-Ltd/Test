@@ -53,6 +53,25 @@ export function orderInvoiceCardsByTenants(rows: InvoiceRow[], tenantIds: string
   return reorderInvoiceCards(rows, cards.map((row) => row.invoiceKey));
 }
 
+// 保存済みの請求書に、確定後に追加された0円の電気代増額分だけを補います。
+// 金額が変わらないため従来の合計比較では検知できませんが、請求対象なら0円でも明細行が必要です。
+export function mergeMissingZeroSurchargeRows(saved: InvoiceSheet, latest: InvoiceSheet): InvoiceSheet {
+  const merged = saved.rows.map((row) => ({ ...row, values: [...row.values] }));
+  const signature = (row: InvoiceRow) => [row.invoiceKey, row.chargeType, row.values[11], row.values[12], row.values[13], row.values[14], row.values[15]].join('\u0000');
+  const latestSeen = new Map<string, number>();
+  let changed = false;
+  for (const row of latest.rows.filter((item) => item.chargeType === '電気代増額分' && numberValue(item.values[15]) === 0)) {
+    const key = signature(row);
+    const required = (latestSeen.get(key) ?? 0) + 1;
+    latestSeen.set(key, required);
+    if (merged.filter((item) => signature(item) === key).length >= required) continue;
+    const lastInvoiceRow = merged.reduce((found, item, index) => item.invoiceKey === row.invoiceKey ? index : found, -1);
+    merged.splice(lastInvoiceRow + 1, 0, { ...row, values: [...row.values] });
+    changed = true;
+  }
+  return changed ? { ...saved, rows: recalcInvoices(merged) } : saved;
+}
+
 // CSV出力時の列順です。請求書番号は画面生成時に請求書単位で採番し、編集はできません。
 export const csvHeaders = ['請求書番号', '発行先コード', '会社名', '件名', '入金期限', '今回請求金額（税抜）', '今回消費税額', '今回請求金額（税込）', '締日', '備考', '明細項目１', '明細項目２', '数量', '単位', '単価', '金額', '消費税額', '請求金額', '税区分', '税率', '備考'];
 export const emptyValues = () => Array.from({ length: csvHeaders.length }, () => '');
@@ -79,8 +98,13 @@ export const invalidAmountRows = (rows: InvoiceRow[]) => rows.filter((row) => pa
 const fixedItems: Array<{ name: string; field: keyof Pick<RentRollSource, 'monthly_rent_amount' | 'monthly_common_charge_amount' | 'monthly_parking_amount' | 'other_monthly_amount'> }> = [
   { name: '賃料', field: 'monthly_rent_amount' }, { name: '共益費', field: 'monthly_common_charge_amount' }, { name: '駐車料', field: 'monthly_parking_amount' }, { name: 'その他', field: 'other_monthly_amount' },
 ];
-// 駐輪場の区画はレントロール上「その他」に入るため、明細では駐輪場利用料として分けます。
-const lineItemName = (source: RentRollSource, item: (typeof fixedItems)[number]) => item.field === 'other_monthly_amount' && source.unit_type === 'bicycle_parking' ? '駐輪場利用料' : item.name;
+// 駐輪場・看板の区画はレントロール上「その他」に入るため、請求書では契約種別に合う名称へ分けます。
+const lineItemName = (source: RentRollSource, item: (typeof fixedItems)[number]) => {
+  if (item.field !== 'other_monthly_amount') return item.name;
+  if (source.unit_type === 'bicycle_parking') return '駐輪場利用料';
+  if (source.unit_type === 'signage') return '看板料';
+  return item.name;
+};
 // 駐車場・駐輪場は区画ごとの契約なので、数量に台数、単位に「台」を出します。
 const countedItems = new Set(['駐車料', '駐輪場利用料']);
 const firstOf = <T,>(value: T | T[] | null) => Array.isArray(value) ? value[0] ?? null : value;

@@ -12,7 +12,7 @@ import './BillingStatementPage.css';
 // 小計・消費税・合計は請求書の金額（消費税は課税の明細の合計×10%、切り捨て）を使います。
 type StatementKind = 'payment' | 'invoice';
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string; sort_order?: number };
-type EnabledChargeType = { billing_charge_type_id: string };
+type BillingLineItem = { billing_charge_type_id: string };
 type Column = { key: string; label: string };
 const currency = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 0 });
 const amount = (value: number) => value ? currency.format(value) : '—';
@@ -35,17 +35,17 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period }:
       if (!supabase || !propertyId) { setRows([]); setChargeTypes([]); setLoading(false); return; }
       setLoading(true); setError('');
       try {
-        const [settingResult, typeResult, saved, savedOrder] = await Promise.all([
-          supabase.from('asset_billing_charge_type_setting').select('billing_charge_type_id').eq('asset_id', propertyId).eq('is_enabled', true),
+        const [lineItemResult, typeResult, saved, savedOrder] = await Promise.all([
+          supabase.from('asset_billing_line_item').select('billing_charge_type_id').eq('asset_id', propertyId).eq('is_active', true),
           supabase.from('billing_charge_type').select('billing_charge_type_id, charge_type_name, sort_order').eq('is_active', true).order('sort_order'),
           loadSavedInvoiceSheet(supabase, propertyId, calendarYear, period.month),
           loadSavedTenantOrder(supabase, propertyId),
         ]);
-        if (settingResult.error || typeResult.error) throw new Error(`請求種別設定を読み込めませんでした: ${settingResult.error?.message ?? typeResult.error?.message}`);
+        if (lineItemResult.error || typeResult.error) throw new Error(`明細項目の請求種別を読み込めませんでした: ${lineItemResult.error?.message ?? typeResult.error?.message}`);
         const sheet = saved?.sheet ?? (await buildInvoiceSheet(supabase, propertyId, propertyName, calendarYear, period.month)).sheet;
         if (cancelled) return;
-        const enabledIds = new Set(((settingResult.data ?? []) as EnabledChargeType[]).map((item) => item.billing_charge_type_id));
-        setChargeTypes(((typeResult.data ?? []) as ChargeType[]).filter((type) => enabledIds.has(type.billing_charge_type_id)));
+        const usedTypeIds = new Set(((lineItemResult.data ?? []) as BillingLineItem[]).map((item) => item.billing_charge_type_id));
+        setChargeTypes(((typeResult.data ?? []) as ChargeType[]).filter((type) => usedTypeIds.has(type.billing_charge_type_id)));
         const tenantRank = new Map(savedOrder.sort((left, right) => left.sort_order - right.sort_order).map((item, index) => [item.tenant_id, index]));
         setRows(statementRows(sheet.rows).sort((left, right) => (tenantRank.get(left.tenantId) ?? Number.MAX_SAFE_INTEGER) - (tenantRank.get(right.tenantId) ?? Number.MAX_SAFE_INTEGER)));
         setSavedAt(saved?.savedAt ?? '');
@@ -75,13 +75,10 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period }:
     catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'テナント並び順を保存できませんでした'); setNotice(''); }
   };
 
-  // 列は請求設定で使う請求種別の順に並べ、請求書に載っているのに設定に無い請求種別は後ろに足します（金額を落とさないため）。
+  // 列は明細項目で使っている請求種別だけを並べます。
   const columns = useMemo<Column[]>(() => {
-    const result: Column[] = chargeTypes.map((type) => ({ key: type.charge_type_name, label: type.charge_type_name }));
-    const known = new Set(result.map((column) => column.key));
-    for (const row of rows) for (const key of Object.keys(row.amounts)) if (!known.has(key) && row.amounts[key]) { known.add(key); result.push({ key, label: key || '請求種別なし' }); }
-    return result;
-  }, [chargeTypes, rows]);
+    return chargeTypes.map((type) => ({ key: type.charge_type_name, label: type.charge_type_name }));
+  }, [chargeTypes]);
   const title = kind === 'payment' ? '入金明細表' : '請求明細表';
   const columnTotals = useMemo(() => columns.map((column) => rows.reduce((sum, row) => sum + (row.amounts[column.key] ?? 0), 0)), [rows, columns]);
   const subtotal = rows.reduce((sum, row) => sum + row.subtotal, 0);

@@ -402,7 +402,6 @@ function formatCurrency(value: number): string {
 type UtilityColumn = { key: string; group: string; label: string; kind: 'basic' | 'price'; id: string; fallback: { value: number; taxMode: string } | null };
 type UtilityValue = { value: number; taxMode: string; isDefault: boolean };
 const utilityCategoryNames: Record<string, string> = { electric: '電気', water: '水道', gas: 'ガス' };
-const utilityKindCategory: Record<string, string> = { electricity: 'electric', water: 'water', gas: 'gas' };
 const utilityCategoryOrder = ['electric', 'water', 'gas', 'other'];
 const unitPriceFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 4 });
 
@@ -443,7 +442,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     const loadUtility = async () => {
       const [settingResult, lineItemResult, contractResult, priceSettingResult] = await Promise.all([
         client.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
-        client.from('asset_billing_line_item').select('asset_billing_line_item_id, display_name, billing_content, default_unit_price, default_tax_mode, sort_order, charge:billing_charge_type(utility_kind)').eq('asset_id', propertyId).eq('is_active', true).eq('show_unit_price_in_rent_roll', true).order('sort_order'),
+        client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, category, sub_item_name, asset_billing_line_item_id, default_unit_price, tax_mode, sort_order').eq('asset_id', propertyId).eq('sub_item_kind', 'custom').order('sort_order'),
         client.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(property_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
         client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode, show_in_rent_roll').eq('asset_id', propertyId),
       ]);
@@ -454,11 +453,9 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const basicColumns: UtilityColumn[] = ['electric', 'water', 'gas']
         .filter((category) => settings.some((row) => row.category === category && row.is_basic_billable && (category === 'electric' || row.is_billable)))
         .map((category) => ({ key: `basic:${category}`, group: category, label: '基本料', kind: 'basic', id: category, fallback: null }));
-      const priceColumns: UtilityColumn[] = ((lineItemResult.data ?? []) as unknown as Array<{ asset_billing_line_item_id: string; display_name: string; billing_content: string | null; default_unit_price: number | null; default_tax_mode: string; charge: { utility_kind: string | null } | Array<{ utility_kind: string | null }> | null }>)
-        .map((item) => {
-          const charge = Array.isArray(item.charge) ? item.charge[0] : item.charge;
-          return { key: `price:${item.asset_billing_line_item_id}`, group: utilityKindCategory[charge?.utility_kind ?? ''] ?? 'other', label: `${item.billing_content || item.display_name}単価`, kind: 'price' as const, id: item.asset_billing_line_item_id, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.default_tax_mode } };
-        });
+      const priceColumns: UtilityColumn[] = ((lineItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; category: string; sub_item_name: string; asset_billing_line_item_id: string | null; default_unit_price: number | null; tax_mode: string }>)
+        .filter((item) => item.asset_billing_line_item_id !== null)
+        .map((item) => ({ key: `price:${item.asset_billing_line_item_id}`, group: item.category, label: `${item.sub_item_name}単価`, kind: 'price' as const, id: item.asset_billing_line_item_id!, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.tax_mode } }));
       // 単価を分類で共通にした分類は、明細項目ごとの列の代わりに分類の「単価」を1列出します。
       // 設定が無い分類は「分類で共通・レントロールに載せる」です。
       const priceSettings = (priceSettingResult.data ?? []) as Array<{ category: string; price_scope: string; default_unit_price: number | null; default_tax_mode: string; show_in_rent_roll: boolean }>;
@@ -476,7 +473,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         values[unit.lease_contract_unit_id] = target;
       }
       // 分類ごとに、基本料・単価（明細項目の並び順）の順に並べます。
-      const ordered = [...basicColumns, ...sharedColumns, ...priceColumns.filter((column) => !sharedGroups.has(column.group))].map((column, index) => ({ column, index }))
+      const ordered = [...basicColumns, ...sharedColumns, ...priceColumns.filter((column) => !sharedGroups.has(column.group) && (settingOf(column.group)?.show_in_rent_roll ?? true))].map((column, index) => ({ column, index }))
         .sort((left, right) => utilityCategoryOrder.indexOf(left.column.group) - utilityCategoryOrder.indexOf(right.column.group) || left.index - right.index).map(({ column }) => column);
       setUtilityColumns(ordered);
       setUtilityValues(values);
@@ -977,43 +974,40 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           }}
         >
           <table className="rent-roll-table">
+            <colgroup>
+              {Array.from({ length: 21 }, (_, index) => <col key={`base-${index}`} />)}
+              {shownUtilityColumns.map((column) => <col key={column.key} style={{ width: column.kind === 'basic' ? 130 : 68 }} />)}
+              {viewMode === "snapshot" && <col />}
+            </colgroup>
             <thead>
               <tr>
-                <th className="rent-roll-pinned rent-roll-pinned-1">状態</th>
-                <th className="rent-roll-pinned rent-roll-pinned-2">商品</th>
-                <th className="rent-roll-pinned rent-roll-pinned-3">種別</th>
-                <th className="rent-roll-pinned rent-roll-pinned-4">階</th>
-                <th className="rent-roll-pinned rent-roll-pinned-5">室・枠</th>
-                <th>契約期間</th>
-                <th>契約形態</th>
-                <th className="rent-roll-pinned rent-roll-pinned-tenant">テナント名</th>
-                <th>面積㎡</th>
-                <th>賃料</th>
-                <th>共益費</th>
-                <th>賃料＋共益費</th>
-                <th>駐車場代</th>
-                <th>その他月額</th>
-                <th>敷金</th>
-                <th>保証金</th>
-                <th>礼金</th>
-                <th>更新料</th>
-                <th>内外</th>
-                <th>暗証番号</th>
-                <th>車両</th>
-                {viewMode === "snapshot" && <th>操作</th>}
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-1">状態</th>
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-2">商品</th>
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-3">種別</th>
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-4">階</th>
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-5">室・枠</th>
+                {['契約期間', '契約形態'].map((label) => <th key={label} rowSpan={twoRowHeader ? 2 : 1}>{label}</th>)}
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-tenant">テナント名</th>
+                {['面積㎡', '賃料', '共益費', '賃料＋共益費', '駐車場代', 'その他月額', '敷金', '保証金', '礼金', '更新料', '内外', '暗証番号', '車両'].map((label) => <th key={label} rowSpan={twoRowHeader ? 2 : 1}>{label}</th>)}
+                {utilityGroups.map((group) => {
+                  const onlyColumn = group.count === 1 ? shownUtilityColumns.find((column) => column.group === group.group) : null;
+                  return <th key={group.group} colSpan={group.count} className={`rent-roll-utility-group utility-${group.group}${onlyColumn?.kind === 'price' ? ' utility-price-only' : ''}`}>{utilityCategoryNames[group.group] ?? 'その他'}</th>;
+                })}
+                {viewMode === "snapshot" && <th rowSpan={twoRowHeader ? 2 : 1}>操作</th>}
               </tr>
+              {twoRowHeader && <tr>{shownUtilityColumns.map((column) => <th key={column.key} className={`rent-roll-utility-column utility-${column.group} utility-${column.kind}`}>{column.label}</th>)}</tr>}
             </thead>
             <tbody>
               {loadingRows && (
                 <tr>
-                  <td colSpan={viewMode === "snapshot" ? 22 : 21} className="rent-roll-empty">
+                  <td colSpan={21 + shownUtilityColumns.length + (viewMode === "snapshot" ? 1 : 0)} className="rent-roll-empty">
                     レントロールを読み込んでいます。
                   </td>
                 </tr>
               )}
               {!loadingRows && filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={viewMode === "snapshot" ? 22 : 21} className="rent-roll-empty">
+                  <td colSpan={21 + shownUtilityColumns.length + (viewMode === "snapshot" ? 1 : 0)} className="rent-roll-empty">
                     条件に一致する区画はありません。
                   </td>
                 </tr>
@@ -1138,7 +1132,12 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                     <td className="access-code">
                       {row.parkingAccessCode || "—"}
                     </td>
-                    <td>{row.parkingVehicle || "—"}</td>
+                    <td className="rent-roll-vehicle-cell" title={row.parkingVehicle || undefined}>{row.parkingVehicle || "—"}</td>
+                    {shownUtilityColumns.map((column) => {
+                      const utility = utilityValueOf(row, column);
+                      const note = utility?.taxMode === 'inclusive' ? '税込' : '';
+                      return <td key={column.key} className={`numeric rent-roll-utility-value utility-${column.kind}`}>{utility ? <>{column.kind === 'basic' ? formatCurrency(utility.value) : unitPriceFormatter.format(utility.value)}{note && <small>{note}</small>}</> : '—'}</td>;
+                    })}
                     {viewMode === "snapshot" && row.status !== "vacant" && (
                       <td>
                         <button
@@ -1209,9 +1208,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   <td className="numeric">{formatCurrency(columnTotals.securityDeposit)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.keyMoney)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.renewalFee)}</td>
-                  <td />
-                  <td />
-                  <td />
+                  <td colSpan={3} />
+                  {shownUtilityColumns.map((column) => <td key={column.key} />)}
                   {viewMode === "snapshot" && <td />}
                 </tr>
               </tbody>
