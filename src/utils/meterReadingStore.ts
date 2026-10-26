@@ -141,7 +141,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('unit_master').select('unit_id, unit_code, unit_name, floor_label, unit_type').eq('property_id', assetId).eq('is_active', true).order('floor_label').order('unit_code'),
     // 公共料金の単価・基本料は契約区画で持ちます。明細項目の既定単価は、契約区画に単価が無いときに使います。
     client.from('asset_billing_line_item').select('asset_billing_line_item_id, default_unit_price, default_tax_mode').eq('asset_id', assetId),
-    client.from('lease_contract_unit').select('unit_id, rounding:utility_amount_rounding_mode, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, monthly_unit_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, monthly_unit_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', assetId),
+    client.from('lease_contract_unit').select('unit_id, rounding:utility_amount_rounding_mode, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, billing_month_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', assetId),
     client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode').eq('asset_id', assetId),
   ]);
 
@@ -327,7 +327,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     tenantConfig(id, name, savedContracts[id] ?? [emptyContractRow(subItems)], splitTenants.has(id)));
 
   return {
-    building: { categories, subItems, surcharges, taxRate, periodPatterns: Object.fromEntries(patternRows.map(({ billing_period_pattern_id: id, ...pattern }) => [id, pattern])), ...contractUtilityTerms((lineItemResult.data ?? []) as LineItemPriceRow[], (contractPriceResult.data ?? []) as unknown as ContractUnitPriceRow[], month, (priceSettingResult.data ?? []) as PriceSettingRow[]) },
+    building: { categories, subItems, surcharges, taxRate, periodPatterns: Object.fromEntries(patternRows.map(({ billing_period_pattern_id: id, ...pattern }) => [id, pattern])), ...contractUtilityTerms((lineItemResult.data ?? []) as LineItemPriceRow[], (contractPriceResult.data ?? []) as unknown as ContractUnitPriceRow[], billingMonth.slice(0, 7), (priceSettingResult.data ?? []) as PriceSettingRow[]) },
     tenants, meters, meterDate, previousMeterDate,
     status: currentMonth?.status ?? 'draft',
     units, occupancy,
@@ -339,13 +339,17 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 type LineItemPriceRow = { asset_billing_line_item_id: string; default_unit_price: number | null; default_tax_mode: TaxMode };
 export type ContractUnitPriceRow = {
   unit_id: string; rounding?: RoundingMode | null; contract: { tenant_id: string } | { tenant_id: string }[] | null;
-  prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: TaxMode; monthly_unit_prices: Record<string, number> | null }> | null;
-  categoryPrices?: Array<{ category: CategoryId; unit_price: number; tax_mode: TaxMode; monthly_unit_prices: Record<string, number> | null }> | null;
+  prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: TaxMode; billing_month_prices: Array<{ start_month: number; end_month: number; unit_price: number }> | null }> | null;
+  categoryPrices?: Array<{ category: CategoryId; unit_price: number; tax_mode: TaxMode; billing_month_prices: Array<{ start_month: number; end_month: number; unit_price: number }> | null }> | null;
   basics: Array<{ category: CategoryId; amount: number; tax_mode: TaxMode }> | null;
 };
 type PriceSettingRow = { category: CategoryId; price_scope: 'line_item' | 'category'; default_unit_price: number | null; default_tax_mode: TaxMode };
-// 契約区画の単価（検針月の例外単価があればそれ）・基本料と、明細項目の既定単価を計算用の形にします。
-export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnits: ContractUnitPriceRow[], month: number, settings: PriceSettingRow[] = []): Pick<BuildingConfig, 'contractPrices' | 'contractBasics' | 'lineItemDefaults' | 'categoryPriceScopes' | 'contractCategoryPrices' | 'categoryDefaults' | 'contractRoundings'> {
+// 契約区画の単価（請求月に該当する期間単価があればそれ）・基本料と、明細項目の既定単価を計算用の形にします。
+export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnits: ContractUnitPriceRow[], billingMonth: string, settings: PriceSettingRow[] = []): Pick<BuildingConfig, 'contractPrices' | 'contractBasics' | 'lineItemDefaults' | 'categoryPriceScopes' | 'contractCategoryPrices' | 'categoryDefaults' | 'contractRoundings'> {
+  const month = Number(billingMonth.slice(5, 7));
+  const matchesMonth = (row: { start_month: number; end_month: number }) => row.start_month <= row.end_month
+    ? row.start_month <= month && month <= row.end_month
+    : month >= row.start_month || month <= row.end_month;
   const categoryPriceScopes: NonNullable<BuildingConfig['categoryPriceScopes']> = {};
   const categoryDefaults: NonNullable<BuildingConfig['categoryDefaults']> = {};
   for (const setting of settings) {
@@ -364,12 +368,12 @@ export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnit
     const key = contractPriceKey(unit.unit_id, tenantId);
     contractRoundings[key] = unit.rounding ?? 'floor';
     for (const price of unit.prices ?? []) {
-      const monthly = price.monthly_unit_prices?.[String(month)];
-      (contractPrices[key] ??= {})[price.asset_billing_line_item_id] = { unitPrice: Number(monthly ?? price.unit_price), taxMode: price.tax_mode };
+      const period = price.billing_month_prices?.find(matchesMonth);
+      (contractPrices[key] ??= {})[price.asset_billing_line_item_id] = { unitPrice: Number(period?.unit_price ?? price.unit_price), taxMode: price.tax_mode };
     }
     for (const price of unit.categoryPrices ?? []) {
-      const monthly = price.monthly_unit_prices?.[String(month)];
-      (contractCategoryPrices[key] ??= {})[price.category] = { unitPrice: Number(monthly ?? price.unit_price), taxMode: price.tax_mode };
+      const period = price.billing_month_prices?.find(matchesMonth);
+      (contractCategoryPrices[key] ??= {})[price.category] = { unitPrice: Number(period?.unit_price ?? price.unit_price), taxMode: price.tax_mode };
     }
     for (const basic of unit.basics ?? []) (contractBasics[key] ??= {})[basic.category] = { amount: Number(basic.amount), taxMode: basic.tax_mode };
   }

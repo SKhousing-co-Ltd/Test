@@ -16,7 +16,7 @@ declare
 begin
   foreach table_name in array array[
     'asset_meter_category_setting', 'asset_meter_sub_item', 'asset_meter_surcharge',
-    'meter_reading_contract', 'meter_reading_contract_item', 'asset_meter',
+    'meter_reading_contract', 'meter_reading_contract_item', 'asset_meter', 'asset_meter_tag',
     'meter_reading_month', 'meter_reading_month_surcharge', 'meter_reading_entry',
     'meter_reading_confirmed_amount',
     'asset_meter_unit_assignment', 'meter_reading_contract_unit', 'meter_reading_break'
@@ -36,6 +36,23 @@ begin
       raise exception 'authenticated must update %', table_name;
     end if;
   end loop;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'asset_meter' and column_name = 'asset_meter_tag_id'
+  ) then
+    raise exception 'asset_meter.asset_meter_tag_id column is missing';
+  end if;
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'asset_meter_unit_assignment'
+      and column_name = 'allocation_method'
+  ) then
+    raise exception 'asset_meter_unit_assignment allocation columns are missing';
+  end if;
+  if to_regprocedure('public.assign_kanameter_meter_units_from(uuid,text,jsonb,date)') is null then
+    raise exception 'assign_kanameter_meter_units_from is missing';
+  end if;
 
   insert into public.asset_master(asset_code, asset_name) values (999951, '検針データテスト物件')
   returning asset_id into property_uuid;

@@ -10,6 +10,19 @@ begin
   if to_regclass('public.lease_contract_unit_utility_price') is null or to_regclass('public.lease_contract_unit_basic_charge') is null or to_regclass('public.lease_contract_unit_category_price') is null or to_regclass('public.asset_utility_price_setting') is null then
     raise exception 'contract unit utility price tables are missing';
   end if;
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'lease_contract_unit_utility_price'
+      and column_name = 'billing_month_prices'
+  ) or not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'lease_contract_unit_category_price'
+      and column_name = 'billing_month_prices'
+  ) then
+    raise exception 'billing month period price columns are missing';
+  end if;
   if has_table_privilege('authenticated', 'public.lease_contract_unit_utility_price', 'INSERT') and exists (
     select 1 from pg_policies where tablename = 'lease_contract_unit_utility_price' and cmd in ('INSERT', 'ALL')
   ) then
@@ -23,5 +36,8 @@ begin
   end if;
   if pg_get_functiondef('public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb,jsonb)'::regprocedure) !~ 'current_account_is_accounting_department' then
     raise exception 'save_lease_contract_unit_utility_terms must check accounting department membership';
+  end if;
+  if pg_get_functiondef('public.save_lease_contract_unit_utility_terms(uuid,jsonb,jsonb,jsonb)'::regprocedure) !~ 'billing_month_prices' then
+    raise exception 'save_lease_contract_unit_utility_terms must persist billing month period prices';
   end if;
 end $$;

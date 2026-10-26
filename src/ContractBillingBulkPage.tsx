@@ -12,8 +12,9 @@ type CategoryId = 'electric' | 'water' | 'gas';
 type TaxMode = 'exclusive' | 'inclusive';
 type Rounding = 'floor' | 'round' | 'ceil';
 type Terms = { due_month_offset: number; due_day_of_month: number; due_holiday_adjustment: 'previous' | 'next'; period_month_offset: number; is_annual_billing: boolean; annual_billing_month: number | null; annual_start_offset: number | null };
-type SavedPrice = { asset_billing_line_item_id: string; unit_price: number; tax_mode: TaxMode; monthly_unit_prices: Record<string, number> | null };
-type SavedCategoryPrice = { category: CategoryId; unit_price: number; tax_mode: TaxMode; monthly_unit_prices: Record<string, number> | null };
+type BillingMonthPrice = { start_month: number; end_month: number; unit_price: number };
+type SavedPrice = { asset_billing_line_item_id: string; unit_price: number; tax_mode: TaxMode; billing_month_prices: BillingMonthPrice[] | null };
+type SavedCategoryPrice = { category: CategoryId; unit_price: number; tax_mode: TaxMode; billing_month_prices: BillingMonthPrice[] | null };
 type SavedBasic = { category: CategoryId; amount: number; tax_mode: TaxMode };
 type UnitRecord = {
   lease_contract_unit_id: string; utility_amount_rounding_mode: Rounding;
@@ -51,8 +52,8 @@ const emptyBulk: Bulk = { dueMonth: '', dueDay: '', holiday: '', period: '', rou
 // 契約区画の公共料金（単価・分類共通の単価・基本料）の保存済みの内容を読み直します。
 async function loadSavedTerms(client: NonNullable<typeof supabase>, leaseContractUnitId: string): Promise<Row['saved'] | { error: string }> {
   const [prices, categoryPrices, basics] = await Promise.all([
-    client.from('lease_contract_unit_utility_price').select('asset_billing_line_item_id, unit_price, tax_mode, monthly_unit_prices').eq('lease_contract_unit_id', leaseContractUnitId),
-    client.from('lease_contract_unit_category_price').select('category, unit_price, tax_mode, monthly_unit_prices').eq('lease_contract_unit_id', leaseContractUnitId),
+    client.from('lease_contract_unit_utility_price').select('asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices').eq('lease_contract_unit_id', leaseContractUnitId),
+    client.from('lease_contract_unit_category_price').select('category, unit_price, tax_mode, billing_month_prices').eq('lease_contract_unit_id', leaseContractUnitId),
     client.from('lease_contract_unit_basic_charge').select('category, amount, tax_mode').eq('lease_contract_unit_id', leaseContractUnitId),
   ]);
   const failed = prices.error ?? categoryPrices.error ?? basics.error;
@@ -120,7 +121,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
     // URLが長くなりすぎないよう、区画は分けて読み込みます。
     for (let start = 0; start < ids.length; start += 100) {
       const { data, error: unitError } = await client.from('lease_contract_unit')
-        .select('lease_contract_unit_id, utility_amount_rounding_mode, contract:lease_contract!inner(lease_contract_id, due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, monthly_unit_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, monthly_unit_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)')
+        .select('lease_contract_unit_id, utility_amount_rounding_mode, contract:lease_contract!inner(lease_contract_id, due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, billing_month_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)')
         .in('lease_contract_unit_id', ids.slice(start, start + 100));
       if (unitError) { setError(`契約の請求条件を読み込めませんでした: ${unitError.message}`); setLoading(false); return; }
       for (const record of (data ?? []) as unknown as UnitRecord[]) records.set(record.lease_contract_unit_id, record);
@@ -237,7 +238,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
             if (!row.sharedCategories.includes(category)) return kept ? [kept] : [];
             const value = (draft.prices[`category:${category}`] ?? '').trim();
             if (!value) return [];
-            return [{ category, unit_price: Number(value), tax_mode: kept?.tax_mode ?? 'exclusive', monthly_unit_prices: kept?.monthly_unit_prices ?? {} }];
+            return [{ category, unit_price: Number(value), tax_mode: kept?.tax_mode ?? 'exclusive', billing_month_prices: kept?.billing_month_prices ?? [] }];
           });
           const lineItemPrices = latest.prices.flatMap((item) => {
             const definition = row.priceDefinitions.find((candidate) => candidate.scope === 'line_item' && candidate.lineItemId === item.asset_billing_line_item_id);
@@ -248,7 +249,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
           for (const definition of row.priceDefinitions.filter((candidate) => candidate.scope === 'line_item' && candidate.lineItemId)) {
             const value = (draft.prices[definition.key] ?? '').trim();
             if (!value || lineItemPrices.some((item) => item.asset_billing_line_item_id === definition.lineItemId)) continue;
-            lineItemPrices.push({ asset_billing_line_item_id: definition.lineItemId as string, unit_price: Number(value), tax_mode: 'exclusive', monthly_unit_prices: {} });
+            lineItemPrices.push({ asset_billing_line_item_id: definition.lineItemId as string, unit_price: Number(value), tax_mode: 'exclusive', billing_month_prices: [] });
           }
           const keptBasic = latest.basics.find((item) => item.category === 'electric');
           const basics = [
@@ -256,7 +257,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
             ...(draft.basic.trim() ? [{ category: 'electric' as CategoryId, amount: Number(draft.basic), tax_mode: keptBasic?.tax_mode ?? 'exclusive' }] : []),
           ];
           const { error: priceError } = await supabase.rpc('save_lease_contract_unit_utility_terms', {
-            p_lease_contract_unit_id: row.id, p_prices: lineItemPrices.map((item) => ({ ...item, monthly_unit_prices: item.monthly_unit_prices ?? {} })),
+            p_lease_contract_unit_id: row.id, p_prices: lineItemPrices.map((item) => ({ ...item, billing_month_prices: item.billing_month_prices ?? [] })),
             p_category_prices: categoryPrices, p_basic_charges: basics,
           });
           if (priceError) errors.push(`公共料金：${priceError.message}`); else saved.push('公共料金');

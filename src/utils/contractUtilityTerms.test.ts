@@ -6,23 +6,28 @@ import { subItemDefaults, type BuildingConfig, type ContractRow, type TenantConf
 import type { Occupancy } from './meterAllocation.ts';
 
 const contractUnits = [
-  { unit_id: 'U1', contract: { tenant_id: 'T1' }, prices: [{ asset_billing_line_item_id: 'L1', unit_price: 30, tax_mode: 'exclusive' as const, monthly_unit_prices: { '7': 35, '8': 35 } }], basics: [{ category: 'electric' as const, amount: 11000, tax_mode: 'inclusive' as const }] },
+  { unit_id: 'U1', contract: { tenant_id: 'T1' }, prices: [{ asset_billing_line_item_id: 'L1', unit_price: 30, tax_mode: 'exclusive' as const, billing_month_prices: [{ start_month: 8, end_month: 10, unit_price: 35 }] }], basics: [{ category: 'electric' as const, amount: 11000, tax_mode: 'inclusive' as const }] },
   { unit_id: 'U2', contract: [{ tenant_id: 'T1' }], prices: [], basics: [{ category: 'electric' as const, amount: 5000, tax_mode: 'exclusive' as const }] },
 ];
 
-test('検針月に月別単価があればその単価、なければ通常単価を使う。既定単価は明細項目から取る', () => {
+test('請求月が期間内なら期間単価、期間外なら通常単価を使う。既定単価は明細項目から取る', () => {
   const lineItems = [{ asset_billing_line_item_id: 'L1', default_unit_price: 25, default_tax_mode: 'inclusive' as const }, { asset_billing_line_item_id: 'L2', default_unit_price: null, default_tax_mode: 'exclusive' as const }];
-  assert.deepEqual(contractUtilityTerms(lineItems, contractUnits, 7).contractPrices, { 'U1:T1': { L1: { unitPrice: 35, taxMode: 'exclusive' } } });
-  const october = contractUtilityTerms(lineItems, contractUnits, 10);
-  assert.equal(october.contractPrices?.['U1:T1'].L1.unitPrice, 30);
-  assert.deepEqual(october.lineItemDefaults, { L1: { unitPrice: 25, taxMode: 'inclusive' } });
+  assert.deepEqual(contractUtilityTerms(lineItems, contractUnits, '2026-08').contractPrices, { 'U1:T1': { L1: { unitPrice: 35, taxMode: 'exclusive' } } });
+  const november = contractUtilityTerms(lineItems, contractUnits, '2026-11');
+  assert.equal(november.contractPrices?.['U1:T1'].L1.unitPrice, 30);
+  assert.deepEqual(november.lineItemDefaults, { L1: { unitPrice: 25, taxMode: 'inclusive' } });
+  assert.equal(contractUtilityTerms(lineItems, contractUnits, '2027-08').contractPrices?.['U1:T1'].L1.unitPrice, 35);
+  const winterUnits = [{ ...contractUnits[0], prices: [{ ...contractUnits[0].prices[0], billing_month_prices: [{ start_month: 11, end_month: 2, unit_price: 40 }] }] }];
+  assert.equal(contractUtilityTerms(lineItems, winterUnits, '2026-12').contractPrices?.['U1:T1'].L1.unitPrice, 40);
+  assert.equal(contractUtilityTerms(lineItems, winterUnits, '2027-02').contractPrices?.['U1:T1'].L1.unitPrice, 40);
+  assert.equal(contractUtilityTerms(lineItems, winterUnits, '2027-03').contractPrices?.['U1:T1'].L1.unitPrice, 30);
 });
 
 const row = (unitIds: string[]): ContractRow => ({ id: 'R', invoiceNo: 1, categoryBillable: { electric: true, water: true, gas: true }, billable: { basic: true }, fixedCharges: { basic: 999 }, sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' }, amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds });
 const building = (): BuildingConfig => ({
   categories: [{ id: 'electric', name: '電気', unit: 'kWh', billable: true, fixedBillable: true }],
   subItems: [{ id: 'basic', categoryId: 'electric', name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 0, usageDisplayDigits: 0, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() }],
-  surcharges: [], taxRate: 0.1, ...contractUtilityTerms([], contractUnits, 10),
+  surcharges: [], taxRate: 0.1, ...contractUtilityTerms([], contractUnits, '2026-10'),
 });
 const occupancyOf = (units: string[]): Occupancy => new Map([['2026-10-01', new Map(units.map((unit) => [unit, { tenantId: 'T1', tenantName: 'A', unitType: 'office' }]))]]);
 const period = { start: '2026-10-01', end: '2026-10-01' };
@@ -44,12 +49,12 @@ test('入居していない区画の基本料は含めず、契約区画に基�
   assert.equal(none.billable.basic, false);
 });
 
-test('分類で共通の単価は、検針月の月別単価と分類の既定単価を取り込む', () => {
-  const units = [{ unit_id: 'U1', contract: { tenant_id: 'T1' }, prices: [], basics: [], categoryPrices: [{ category: 'electric' as const, unit_price: 20, tax_mode: 'exclusive' as const, monthly_unit_prices: { '8': 24 } }] }];
+test('分類で共通の単価は、請求月の期間単価と分類の既定単価を取り込む', () => {
+  const units = [{ unit_id: 'U1', contract: { tenant_id: 'T1' }, prices: [], basics: [], categoryPrices: [{ category: 'electric' as const, unit_price: 20, tax_mode: 'exclusive' as const, billing_month_prices: [{ start_month: 8, end_month: 10, unit_price: 24 }] }] }];
   const settings = [{ category: 'electric' as const, price_scope: 'category' as const, default_unit_price: 18, default_tax_mode: 'exclusive' as const }, { category: 'water' as const, price_scope: 'line_item' as const, default_unit_price: 300, default_tax_mode: 'exclusive' as const }];
-  const august = contractUtilityTerms([], units, 8, settings);
+  const august = contractUtilityTerms([], units, '2026-08', settings);
   assert.deepEqual(august.contractCategoryPrices, { 'U1:T1': { electric: { unitPrice: 24, taxMode: 'exclusive' } } });
   assert.deepEqual(august.categoryPriceScopes, { electric: 'category', water: 'line_item' });
   assert.deepEqual(august.categoryDefaults, { electric: { unitPrice: 18, taxMode: 'exclusive' } });
-  assert.equal(contractUtilityTerms([], units, 9, settings).contractCategoryPrices?.['U1:T1'].electric?.unitPrice, 20);
+  assert.equal(contractUtilityTerms([], units, '2026-11', settings).contractCategoryPrices?.['U1:T1'].electric?.unitPrice, 20);
 });
