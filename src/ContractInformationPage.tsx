@@ -7,6 +7,7 @@ import { type BillingTerms } from './utils/billingDates';
 
 type AmountRounding = 'floor' | 'round' | 'ceil';
 import { ContractUtilityPricesSection } from './ContractUtilityPricesSection';
+import { ContractBillingUnitsSection } from './ContractBillingUnitsSection';
 import { allProductCategories, normalizeProductCategory, productCategories, type ProductCategory } from './lib/product-categories';
 
 type PropertyOption = {
@@ -56,6 +57,7 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingError, setBillingError] = useState('');
   const [savingBillingTerms, setSavingBillingTerms] = useState(false);
+  const [billingUnitsEnabled, setBillingUnitsEnabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -389,7 +391,8 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
           </div>;
         })()}
 
-        {selectedLeaseContractUnitId && propertyId && <ContractUtilityPricesSection leaseContractUnitId={selectedLeaseContractUnitId} propertyId={propertyId} canEdit={canEditBillingTerms} />}
+        <ContractBillingUnitsSection leaseContractId={contract.lease_contract_id} propertyId={propertyId} canEdit={canEditBillingTerms} onEnabledChange={setBillingUnitsEnabled} />
+        {!billingUnitsEnabled && selectedLeaseContractUnitId && propertyId && <ContractUtilityPricesSection leaseContractUnitId={selectedLeaseContractUnitId} propertyId={propertyId} canEdit={canEditBillingTerms} />}
       </>}
       </div>
     </Dialog>}

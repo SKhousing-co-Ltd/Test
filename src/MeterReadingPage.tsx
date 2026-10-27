@@ -94,6 +94,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   const [meters, setMetersState] = useState<AssetMeter[]>([]);
   // 物件の区画と、日ごとの入居状況です（読み込み時に決まり、画面では編集しません）。
   const [units, setUnits] = useState<UnitOption[]>([]);
+  const [billingUnits, setBillingUnits] = useState<NonNullable<MeterReadingSnapshot['billingUnits']>>([]);
   const [occupancy, setOccupancy] = useState<Occupancy>(new Map());
   // 読み込んだ時点の内容です。保存時に「消えた行」を見つけるために使います。
   const [baseline, setBaseline] = useState<MeterReadingSnapshot | null>(null);
@@ -126,7 +127,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!supabase || !propertyId) { setBaseline(null); setBuildingState(emptyBuilding); setTenantsState([]); setMetersState([]); setUnits([]); setOccupancy(new Map()); return; }
+      if (!supabase || !propertyId) { setBaseline(null); setBuildingState(emptyBuilding); setTenantsState([]); setMetersState([]); setUnits([]); setBillingUnits([]); setOccupancy(new Map()); return; }
       setLoading(true);
       try {
         const snapshot = await loadMeterReading(supabase, propertyId, calendarYear, period.month);
@@ -136,6 +137,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         setTenantsState(snapshot.tenants);
         setMetersState(snapshot.meters);
         setUnits(snapshot.units);
+        setBillingUnits(snapshot.billingUnits ?? []);
         setOccupancy(snapshot.occupancy);
         setMeterDateState(snapshot.meterDate);
         setPreviousMeterDate(snapshot.previousMeterDate);
@@ -364,11 +366,27 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         : checked ? row.unitIds.filter((id) => id !== unitId) : row.unitIds,
     })),
   });
+  const toggleRowUnits = (tenant: TenantConfig, index: number, unitIds: string[], checked: boolean) => updateTenant(tenant.id, {
+    rows: tenant.rows.map((row, position) => ({
+      ...row,
+      unitIds: position === index
+        ? checked ? [...new Set([...row.unitIds, ...unitIds])] : row.unitIds.filter((id) => !unitIds.includes(id))
+        : checked ? row.unitIds.filter((id) => !unitIds.includes(id)) : row.unitIds,
+    })),
+  });
   // テナントが検針期間の前後に借りている貸室です（分割行の区画の選択肢）。
   const tenantUnits = (tenantId: string) => {
     const found = new Set<string>();
     for (const day of occupancy.values()) for (const [unitId, occupant] of day) if (occupant.tenantId === tenantId) found.add(unitId);
     return units.filter((row) => found.has(row.id));
+  };
+  const tenantBillingUnitOptions = (tenantId: string) => {
+    const groups = billingUnits.filter((row) => row.tenantId === tenantId);
+    const ownUnits = tenantUnits(tenantId);
+    const groupedIds = new Set(groups.flatMap((row) => row.memberUnitIds));
+    const physicalUnits = ownUnits.map((unit, index) => ({ unit, index })).filter(({ unit }) => !groupedIds.has(unit.id)).map(({ unit, index }) => ({ id: unit.id, label: unitLabel(unit), memberUnitIds: [unit.id], order: index }));
+    const splitUnits = groups.map((row, index) => { const firstMember = ownUnits.find((unit) => row.memberUnitIds.includes(unit.id)); return { id: row.id, label: [firstMember?.floor, row.name].filter(Boolean).join(' '), memberUnitIds: row.memberUnitIds, order: Math.min(...row.memberUnitIds.map((id) => ownUnits.findIndex((unit) => unit.id === id)).filter((position) => position >= 0), ownUnits.length) + index / 100 }; });
+    return [...physicalUnits, ...splitUnits].sort((left, right) => left.order - right.order);
   };
   const addSubItem = (categoryId: CategoryId) => {
     const id = newId();
@@ -896,7 +914,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 {tenant.splitEnabled && <input type="number" min="1" max="9" className="meter-narrow" value={tenant.rows.length} onChange={(event) => setSplitCount(tenant, Number(event.target.value))} />}
               </span> : null}</td>
               {tenants.some((item) => item.splitEnabled) && <td className="meter-row-units">{tenant.splitEnabled
-                ? tenantUnits(tenant.id).map((unit) => <label key={unit.id} className="meter-check"><input type="checkbox" checked={row.unitIds.includes(unit.id)} onChange={(event) => toggleRowUnit(tenant, index, unit.id, event.target.checked)} />{unitLabel(unit)}</label>)
+                ? tenantBillingUnitOptions(tenant.id).map((unit) => <label key={unit.id} className="meter-check"><input type="checkbox" checked={unit.memberUnitIds.every((id) => row.unitIds.includes(id))} onChange={(event) => toggleRowUnits(tenant, index, unit.memberUnitIds, event.target.checked)} />{unit.label}</label>)
                 : <span className="meter-muted">—</span>}</td>}
               {tenants.some((item) => item.invoiceSplitByUnit) && <td>{tenant.invoiceSplitByUnit
                 ? <select value={row.invoiceNo} onChange={(event) => updateRow(tenant.id, index, { invoiceNo: Number(event.target.value) })}>{[1, 2, 3].map((no) => <option key={no} value={no}>請求書 {no}</option>)}</select>
