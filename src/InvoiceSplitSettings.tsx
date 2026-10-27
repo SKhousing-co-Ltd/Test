@@ -4,14 +4,16 @@ import { Dialog } from './components/Dialog';
 
 type Item = { asset_billing_line_item_id: string; line_item_name: string; display_name: string };
 type Code = { billing_code_id: string; tenant_id: string | null; issue_code: string; recipient_name: string; tenant: { tenant_name: string } | { tenant_name: string }[] | null };
-type ContractUnit = { lease_contract_unit_id: string; unit: { unit_code: string; unit_name: string | null } | { unit_code: string; unit_name: string | null }[] | null; contract: { tenant_id: string; contract_status: string } | { tenant_id: string; contract_status: string }[] | null };
-type Assignment = { asset_billing_line_item_id: string; lease_contract_unit_id: string | null; invoice_number: number | null };
+type ContractUnit = { lease_contract_unit_id: string; unit: { unit_code: string; unit_name: string | null; floor_label: string | null } | { unit_code: string; unit_name: string | null; floor_label: string | null }[] | null; contract: { tenant_id: string; contract_status: string } | { tenant_id: string; contract_status: string }[] | null };
+type BillingUnit = { lease_contract_billing_unit_id: string; billing_unit_name: string; contract: { tenant_id: string; contract_status: string } | { tenant_id: string; contract_status: string }[] | null; members: Array<{ lease_contract_unit_id: string }> };
+type Assignment = { asset_billing_line_item_id: string; lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number | null };
 type Setting = { billing_invoice_split_setting_id: string; billing_code_id: string; split_mode: 'unit' | 'line_item'; assignments: Assignment[] | null };
 const firstOf = <T,>(value: T | T[] | null) => Array.isArray(value) ? value[0] ?? null : value;
 
 export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { propertyId: string; lineItems: Item[]; canEdit: boolean }) {
   const [codes, setCodes] = useState<Code[]>([]);
   const [contractUnits, setContractUnits] = useState<ContractUnit[]>([]);
+  const [billingUnits, setBillingUnits] = useState<BillingUnit[]>([]);
   const [settings, setSettings] = useState<Setting[]>([]);
   const [selectedCodeId, setSelectedCodeId] = useState('');
   const [mode, setMode] = useState<'unit' | 'line_item'>('unit');
@@ -24,15 +26,17 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
     const load = async () => {
       if (!supabase || !propertyId) { setLoading(false); return; }
       setLoading(true); setNotice('');
-      const [codeResult, unitResult, settingResult] = await Promise.all([
+      const [codeResult, unitResult, billingUnitResult, settingResult] = await Promise.all([
         supabase.from('billing_code').select('billing_code_id, tenant_id, issue_code, recipient_name, tenant:tenant_master(tenant_name)').eq('property_id', propertyId).eq('is_active', true).order('issue_code'),
-        supabase.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(unit_code, unit_name, property_id), contract:lease_contract!inner(tenant_id, contract_status)').eq('unit.property_id', propertyId).eq('contract.contract_status', 'active'),
-        supabase.from('billing_invoice_split_setting').select('billing_invoice_split_setting_id, billing_code_id, split_mode, assignments:billing_invoice_split_assignment(asset_billing_line_item_id, lease_contract_unit_id, invoice_number)').eq('asset_id', propertyId),
+        supabase.from('lease_contract_unit').select('lease_contract_unit_id, unit:unit_master!inner(unit_code, unit_name, floor_label, property_id), contract:lease_contract!inner(tenant_id, contract_status)').eq('unit.property_id', propertyId).eq('contract.contract_status', 'active'),
+        supabase.from('lease_contract_billing_unit').select('lease_contract_billing_unit_id, billing_unit_name, contract:lease_contract!inner(tenant_id, contract_status), members:lease_contract_billing_unit_member(lease_contract_unit_id, contractUnit:lease_contract_unit!inner(unit:unit_master!inner(property_id)))').eq('members.contractUnit.unit.property_id', propertyId).eq('contract.contract_status', 'active').order('sort_order'),
+        supabase.from('billing_invoice_split_setting').select('billing_invoice_split_setting_id, billing_code_id, split_mode, assignments:billing_invoice_split_assignment(asset_billing_line_item_id, lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number)').eq('asset_id', propertyId),
       ]);
-      if (codeResult.error || unitResult.error) setNotice(`請求書分割の候補を読み込めませんでした: ${codeResult.error?.message ?? unitResult.error?.message}`);
+      if (codeResult.error || unitResult.error || billingUnitResult.error) setNotice(`請求書分割の候補を読み込めませんでした: ${codeResult.error?.message ?? unitResult.error?.message ?? billingUnitResult.error?.message}`);
       else if (settingResult.error) setNotice('請求書分割設定のマイグレーションを適用してください。');
       setCodes((codeResult.data ?? []) as unknown as Code[]);
       setContractUnits((unitResult.data ?? []) as unknown as ContractUnit[]);
+      setBillingUnits((billingUnitResult.data ?? []) as unknown as BillingUnit[]);
       setSettings((settingResult.data ?? []) as unknown as Setting[]);
       setLoading(false);
     };
@@ -44,11 +48,17 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
   const selectedCode = activeCodes.find((code) => code.billing_code_id === selectedCodeId);
   const selectedSetting = settings.find((setting) => setting.billing_code_id === selectedCodeId);
   const tenantUnits = contractUnits.filter((unit) => firstOf(unit.contract)?.tenant_id === selectedCode?.tenant_id);
+  const tenantBillingUnits = billingUnits.filter((unit) => firstOf(unit.contract)?.tenant_id === selectedCode?.tenant_id);
   const tenantName = (code: Code) => firstOf(code.tenant)?.tenant_name ?? code.recipient_name;
-  const unitLabel = (unit: ContractUnit) => { const value = firstOf(unit.unit); return value ? value.unit_name || value.unit_code : '区画名なし'; };
+  const unitLabel = (unit: ContractUnit) => { const value = firstOf(unit.unit); return value ? [value.floor_label, value.unit_name || value.unit_code].filter(Boolean).join(' ') : '区画名なし'; };
+  const groupedContractUnitIds = new Set(tenantBillingUnits.flatMap((unit) => (unit.members ?? []).map((member) => member.lease_contract_unit_id)));
+  const unitTargets = [
+    ...tenantUnits.map((unit, index) => ({ unit, index })).filter(({ unit }) => !groupedContractUnitIds.has(unit.lease_contract_unit_id)).map(({ unit, index }) => ({ key: `unit:${unit.lease_contract_unit_id}`, label: unitLabel(unit), order: index })),
+    ...tenantBillingUnits.map((unit, index) => { const members = unit.members ?? []; const firstMember = tenantUnits.find((row) => members.some((member) => member.lease_contract_unit_id === row.lease_contract_unit_id)); const floor = firstOf(firstMember?.unit ?? null)?.floor_label; return { key: `billing:${unit.lease_contract_billing_unit_id}`, label: [floor, unit.billing_unit_name].filter(Boolean).join(' '), order: Math.min(...members.map((member) => tenantUnits.findIndex((row) => row.lease_contract_unit_id === member.lease_contract_unit_id)).filter((position) => position >= 0), tenantUnits.length) + index / 100 }; }),
+  ].sort((left, right) => left.order - right.order);
   const chooseCode = (codeId: string) => {
     const setting = settings.find((row) => row.billing_code_id === codeId); setSelectedCodeId(codeId); setMode(setting?.split_mode ?? 'unit');
-    setAssignments(Object.fromEntries((setting?.assignments ?? []).map((row) => [row.asset_billing_line_item_id, setting?.split_mode === 'unit' ? row.lease_contract_unit_id ?? '' : String(row.invoice_number ?? '')])));
+    setAssignments(Object.fromEntries((setting?.assignments ?? []).map((row) => [row.asset_billing_line_item_id, setting?.split_mode === 'unit' ? row.lease_contract_billing_unit_id ? `billing:${row.lease_contract_billing_unit_id}` : row.lease_contract_unit_id ? `unit:${row.lease_contract_unit_id}` : '' : String(row.invoice_number ?? '')])));
     setNotice(''); setEditorOpen(true);
   };
   const closeEditor = () => { setEditorOpen(false); setSelectedCodeId(''); setAssignments({}); };
@@ -64,10 +74,10 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
     }
     const { data, error } = await supabase.from('billing_invoice_split_setting').insert({ asset_id: propertyId, billing_code_id: selectedCodeId, split_mode: mode }).select('billing_invoice_split_setting_id, billing_code_id, split_mode').single();
     if (error || !data) { setNotice(`請求書分割設定を保存できませんでした: ${error?.message ?? ''}`); return; }
-    const rows = lineItems.map((item) => ({ billing_invoice_split_setting_id: data.billing_invoice_split_setting_id, asset_billing_line_item_id: item.asset_billing_line_item_id, lease_contract_unit_id: mode === 'unit' ? assignments[item.asset_billing_line_item_id] : null, invoice_number: mode === 'line_item' ? Number(assignments[item.asset_billing_line_item_id]) : null }));
+    const rows = lineItems.map((item) => { const target = assignments[item.asset_billing_line_item_id] ?? ''; return { billing_invoice_split_setting_id: data.billing_invoice_split_setting_id, asset_billing_line_item_id: item.asset_billing_line_item_id, lease_contract_unit_id: mode === 'unit' && target.startsWith('unit:') ? target.slice(5) : null, lease_contract_billing_unit_id: mode === 'unit' && target.startsWith('billing:') ? target.slice(8) : null, invoice_number: mode === 'line_item' ? Number(target) : null }; });
     const assignmentResult = await supabase.from('billing_invoice_split_assignment').insert(rows);
     if (assignmentResult.error) { setNotice(`明細項目の分割先を保存できませんでした: ${assignmentResult.error.message}`); return; }
-    const next: Setting = { ...data, assignments: rows.map((row) => ({ asset_billing_line_item_id: row.asset_billing_line_item_id, lease_contract_unit_id: row.lease_contract_unit_id, invoice_number: row.invoice_number })) } as Setting;
+    const next: Setting = { ...data, assignments: rows.map((row) => ({ asset_billing_line_item_id: row.asset_billing_line_item_id, lease_contract_unit_id: row.lease_contract_unit_id, lease_contract_billing_unit_id: row.lease_contract_billing_unit_id, invoice_number: row.invoice_number })) } as Setting;
     setSettings((current) => [...current.filter((row) => row.billing_code_id !== selectedCodeId), next]); setNotice('請求書分割設定を保存しました。'); setEditorOpen(false);
   };
   const remove = async (setting: Setting) => {
@@ -107,8 +117,8 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
         <label><input type="radio" checked={mode === 'line_item'} onChange={() => changeMode('line_item')} /> 明細項目で分ける</label>
         <h5>2. 明細項目の分割先</h5>
         <div className="allocation-targets">
-          {lineItems.map((item) => <label key={item.asset_billing_line_item_id}><span>{item.display_name || item.line_item_name}</span><select value={assignments[item.asset_billing_line_item_id] ?? ''} onChange={(event) => setAssignments({ ...assignments, [item.asset_billing_line_item_id]: event.target.value })}><option value="">選択してください</option>{mode === 'unit' ? tenantUnits.map((unit) => <option key={unit.lease_contract_unit_id} value={unit.lease_contract_unit_id}>{unitLabel(unit)}</option>) : [1, 2, 3].map((number) => <option key={number} value={number}>請求書 {number}</option>)}</select></label>)}
-          {mode === 'unit' && !tenantUnits.length && <p>契約中の区画がありません。</p>}
+          {lineItems.map((item) => <label key={item.asset_billing_line_item_id}><span>{item.display_name || item.line_item_name}</span><select value={assignments[item.asset_billing_line_item_id] ?? ''} onChange={(event) => setAssignments({ ...assignments, [item.asset_billing_line_item_id]: event.target.value })}><option value="">選択してください</option>{mode === 'unit' ? unitTargets.map((target) => <option key={target.key} value={target.key}>{target.label}</option>) : [1, 2, 3].map((number) => <option key={number} value={number}>請求書 {number}</option>)}</select></label>)}
+          {mode === 'unit' && !unitTargets.length && <p>契約中の区画がありません。</p>}
           {!lineItems.length && <p>請求対象の明細項目が未登録です。</p>}
         </div>
         <div className="billing-settings-dialog-actions">

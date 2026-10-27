@@ -24,6 +24,7 @@ export type MeterReadingSnapshot = {
   status: 'draft' | 'confirmed';
   // 物件の区画と、前月1日から翌月末日までの日ごとの入居状況です。
   units: UnitOption[];
+  billingUnits?: Array<{ id: string; name: string; tenantId: string; memberUnitIds: string[] }>;
   occupancy: Occupancy;
   // 前月の当月指針（メーターごと）です。前月指針を手入力から自動に戻すときに使います。
   previousMonthReadings: Record<string, number>;
@@ -123,7 +124,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   const offsets = patternRows.flatMap((row) => [row.start_month_offset, row.end_month_offset]);
   const range = occupancyRange(year, month, -Math.min(0, ...offsets), Math.max(0, ...offsets));
 
-  const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult, priceSettingResult] = await Promise.all([
+  const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, billingUnitResult, lineItemResult, contractPriceResult, priceSettingResult] = await Promise.all([
     client.from('asset_meter_category_setting').select('asset_id, category, usage_unit, is_billable, is_basic_billable').eq('asset_id', assetId),
     client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, usage_display_digits, billing_period_pattern_id, sort_order, variable_price_method, unit_price_rounding_digits, unit_price_rounding_mode, show_unit_price_on_invoice, input_mode, is_monthly_fixed').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable, billing_period_pattern_id').eq('asset_id', assetId).order('surcharge_name'),
@@ -139,13 +140,14 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('meter_reading_break').select('asset_meter_id, break_date, reading, usage_amount').eq('asset_id', assetId).eq('billing_month', billingMonth).order('break_date'),
     client.rpc('meter_unit_occupancy', { p_property_id: assetId, p_from: range.start, p_to: range.end }),
     client.from('unit_master').select('unit_id, unit_code, unit_name, floor_label, unit_type').eq('property_id', assetId).eq('is_active', true).order('floor_label').order('unit_code'),
+    client.from('lease_contract_billing_unit').select('lease_contract_billing_unit_id, billing_unit_name, contract:lease_contract!inner(tenant_id), members:lease_contract_billing_unit_member(contractUnit:lease_contract_unit!inner(unit_id, unit:unit_master!inner(property_id)))').eq('members.contractUnit.unit.property_id', assetId).order('sort_order'),
     // 公共料金の単価・基本料は契約区画で持ちます。明細項目の既定単価は、契約区画に単価が無いときに使います。
     client.from('asset_billing_line_item').select('asset_billing_line_item_id, default_unit_price, default_tax_mode').eq('asset_id', assetId),
     client.from('lease_contract_unit').select('unit_id, rounding:utility_amount_rounding_mode, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, billing_month_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', assetId),
     client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode').eq('asset_id', assetId),
   ]);
 
-  const failed = firstError(settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, lineItemResult, contractPriceResult, priceSettingResult);
+  const failed = firstError(settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult, monthSurchargeResult, entryResult, splitResult, monthSubItemResult, assignmentResult, breakResult, occupancyResult, unitResult, billingUnitResult, lineItemResult, contractPriceResult, priceSettingResult);
   if (failed) throw new Error(`検針データを読み込めませんでした: ${failed.message}`);
 
   const settingRows = (settingResult.data ?? []) as CategorySettingRow[];
@@ -309,6 +311,12 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   }
   const units: UnitOption[] = ((unitResult.data ?? []) as UnitRow[]).filter((row) => !meterUnitExcluded.has(row.unit_type))
     .map((row) => ({ id: row.unit_id, code: row.unit_code, name: row.unit_name ?? '', floor: row.floor_label ?? '', type: row.unit_type }));
+  const billingUnits = ((billingUnitResult.data ?? []) as unknown as Array<{ lease_contract_billing_unit_id: string; billing_unit_name: string; contract: { tenant_id: string } | Array<{ tenant_id: string }>; members: Array<{ contractUnit: { unit_id: string } | Array<{ unit_id: string }> }> }>).map((row) => ({
+    id: row.lease_contract_billing_unit_id,
+    name: row.billing_unit_name,
+    tenantId: (Array.isArray(row.contract) ? row.contract[0] : row.contract)?.tenant_id ?? '',
+    memberUnitIds: row.members.map((member) => (Array.isArray(member.contractUnit) ? member.contractUnit[0] : member.contractUnit)?.unit_id).filter(Boolean),
+  }));
 
   const currentMonth = monthRows.find((row) => row.billing_month === billingMonth);
   const previousRow = monthRows.find((row) => row.billing_month === previousMonth);
@@ -330,7 +338,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     building: { categories, subItems, surcharges, taxRate, periodPatterns: Object.fromEntries(patternRows.map(({ billing_period_pattern_id: id, ...pattern }) => [id, pattern])), ...contractUtilityTerms((lineItemResult.data ?? []) as LineItemPriceRow[], (contractPriceResult.data ?? []) as unknown as ContractUnitPriceRow[], billingMonth.slice(0, 7), (priceSettingResult.data ?? []) as PriceSettingRow[]) },
     tenants, meters, meterDate, previousMeterDate,
     status: currentMonth?.status ?? 'draft',
-    units, occupancy,
+    units, billingUnits, occupancy,
     previousMonthReadings: Object.fromEntries(previousReadingByMeter),
     savedContracts, invoiceSplitTenantIds: [...splitTenants], persistedContractIds: contractIds,
   };
