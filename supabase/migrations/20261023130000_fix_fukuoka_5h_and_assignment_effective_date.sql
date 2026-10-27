@@ -21,18 +21,16 @@ begin
    order by assignment.effective_from desc
    limit 1;
 
-  if v_meter_id is null or v_unit_id is null then
-    raise exception '三共福岡ビル 5-Hの現在区画を特定できません';
+  if v_meter_id is not null and v_unit_id is not null then
+    delete from public.asset_meter_unit_assignment
+     where asset_meter_id = v_meter_id;
+
+    insert into public.asset_meter_unit_assignment (
+      asset_meter_id, unit_id, effective_from, effective_to
+    ) values (
+      v_meter_id, v_unit_id, date '1900-01-01', null
+    );
   end if;
-
-  delete from public.asset_meter_unit_assignment
-   where asset_meter_id = v_meter_id;
-
-  insert into public.asset_meter_unit_assignment (
-    asset_meter_id, unit_id, effective_from, effective_to
-  ) values (
-    v_meter_id, v_unit_id, date '1900-01-01', null
-  );
 end;
 $$;
 
