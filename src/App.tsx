@@ -33,6 +33,7 @@ import { CaseProgressMigrationPage } from './CaseProgressMigrationPage';
 import { ContractAdminPage } from './ContractAdminPage';
 import { PropertyProfitabilityPage } from './PropertyProfitabilityPage';
 import { PropertyAcquisitionPlanPage } from './PropertyAcquisitionPlanPage';
+import { RentRollReconciliationPage } from './RentRollReconciliationPage';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
@@ -146,6 +147,7 @@ function App() {
             <Route path="/property-profitability/plan" element={<PropertyAcquisitionPlanPage />} />
             <Route path="/procurement" element={<ProcurementPage canEdit={profile?.role !== 'viewer'} canManageVendors={profile?.role === 'admin' || profile?.role === 'manager'} />} />
             <Route path="/rent-roll" element={<RentRollPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} />} />
+            <Route path="/rent-roll/reconciliation" element={<AuditDataOnly role={profile?.role ?? 'viewer'}><RentRollReconciliationPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} /></AuditDataOnly>} />
             <Route path="/contract-information" element={<ContractInformationPage canEditBillingTerms={canEditContractBillingTerms} />} />
             <Route path="/admin/contracts" element={<AdminContractPage role={profile?.role ?? 'viewer'} />} />
             <Route path="/billing-codes" element={<TenantBillingPage canEdit={profile?.role !== 'viewer'} canManageSettings={profile?.role === 'admin'} />} />
@@ -184,6 +186,10 @@ function ProtectedRoute({ session, profile, isLoading }: { session: Session | nu
 
 function AdminOnly({ role, children }: { role: AccountRole; children: ReactNode }) {
   return role === 'admin' ? <>{children}</> : <Navigate to="/dashboard" replace />;
+}
+
+function AuditDataOnly({ role, children }: { role: AccountRole; children: ReactNode }) {
+  return contractCapabilitiesForRole(role).canViewAuditData ? <>{children}</> : <Navigate to="/dashboard" replace />;
 }
 
 function AdminContractPage({ role }: { role: AccountRole }) {
