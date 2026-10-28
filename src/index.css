@@ -234,6 +234,24 @@ a {
   padding-block: 13px;
   margin-top: 4px;
 }
+.auth-console-entry {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+.auth-console-button {
+  border: 0;
+  padding: 3px 2px;
+  background: transparent;
+  color: #78849a;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.auth-console-button:hover {
+  color: #1766c2;
+}
 .form-error {
   margin: -4px 0 -2px;
   color: #cb3f4c;
