@@ -168,6 +168,13 @@ const parkingTypeSortOrder: Record<string, number> = {
   "平面駐車場": 2,
   "駐輪場": 3,
 };
+const rentRollProductCategoryCodes = allProductCategories.filter(
+  (category) => category !== "bicycle_parking",
+);
+const rentRollProductCategoryLabel: Record<ProductCategory, string> = {
+  ...productCategoryLabel,
+  parking: "駐車場・駐輪場",
+};
 
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: "入居中",
@@ -186,17 +193,18 @@ function formatJapaneseDate(value: string): string {
 }
 
 function storedProductCategories(propertyId: string): ProductCategory[] {
-  if (!propertyId) return allProductCategories;
+  if (!propertyId) return rentRollProductCategoryCodes;
   try {
     const stored = localStorage.getItem(
       `rent-roll-product-filters:v1:${propertyId}`,
     );
-    if (!stored) return allProductCategories;
+    if (!stored) return rentRollProductCategoryCodes;
     const parsed = JSON.parse(stored) as unknown;
-    if (!Array.isArray(parsed)) return allProductCategories;
-    return allProductCategories.filter((category) => parsed.includes(category));
+    if (!Array.isArray(parsed)) return rentRollProductCategoryCodes;
+    const selected = new Set(parsed.map((category) => category === "bicycle_parking" ? "parking" : category));
+    return rentRollProductCategoryCodes.filter((category) => selected.has(category));
   } catch {
-    return allProductCategories;
+    return rentRollProductCategoryCodes;
   }
 }
 
@@ -434,7 +442,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   );
   const [monthlyTotalSort, setMonthlyTotalSort] = useState(false);
   const [selectedProductCategories, setSelectedProductCategories] =
-    useState<ProductCategory[]>(allProductCategories);
+    useState<ProductCategory[]>(rentRollProductCategoryCodes);
   const [unitTypeFilter, setUnitTypeFilter] = useState<
     "all" | "space" | "parking"
   >("all");
@@ -795,7 +803,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const toggleProductCategory = (category: ProductCategory) => {
     const nextCategories = selectedProductCategories.includes(category)
       ? selectedProductCategories.filter((item) => item !== category)
-      : allProductCategories.filter(
+      : rentRollProductCategoryCodes.filter(
           (item) =>
             item === category || selectedProductCategories.includes(item),
         );
@@ -933,7 +941,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
             <button
               type="button"
               onClick={() =>
-                saveSelectedProductCategories(allProductCategories)
+                saveSelectedProductCategories(rentRollProductCategoryCodes)
               }
             >
               全選択
@@ -947,7 +955,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           </div>
         </div>
         <div className="rent-roll-product-options">
-          {productCategories.map(({ code, label }) => (
+          {productCategories.filter(({ code }) => code !== "bicycle_parking").map(({ code }) => (
             <label
               key={code}
               className={
@@ -959,7 +967,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                 checked={selectedProductCategories.includes(code)}
                 onChange={() => toggleProductCategory(code)}
               />
-              <span>{label}</span>
+              <span>{rentRollProductCategoryLabel[code]}</span>
               <small>{numberFormatter.format(productCounts[code])}</small>
             </label>
           ))}
@@ -968,7 +976,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           <strong>選択中</strong>
           {selectedProductCategories.length > 0 ? (
             selectedProductCategories.map((category) => (
-              <span key={category}>{productCategoryLabel[category]}</span>
+              <span key={category}>{rentRollProductCategoryLabel[category]}</span>
             ))
           ) : (
             <em>選択されている商品はありません</em>
@@ -1120,7 +1128,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                       <span
                         className={`rent-roll-product-badge ${row.productCategory}`}
                       >
-                        {productCategoryLabel[row.productCategory]}
+                        {rentRollProductCategoryLabel[row.productCategory]}
                       </span>
                     </td>
                     <td className="rent-roll-pinned rent-roll-pinned-3">
