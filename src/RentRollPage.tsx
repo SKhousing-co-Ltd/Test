@@ -162,6 +162,13 @@ function parkingFacilityDisplayType(code: string, masterType: string | null | un
   return masterType || code || "駐車場";
 }
 
+const parkingTypeSortOrder: Record<string, number> = {
+  "機械式駐車場": 0,
+  "自走式駐車場": 1,
+  "平面駐車場": 2,
+  "駐輪場": 3,
+};
+
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: "入居中",
   scheduled: "退去予定",
@@ -688,9 +695,15 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     () =>
       [...rows].sort((a, b) => {
         const floorDifference = floorOrder(a.floor) - floorOrder(b.floor);
+        const floorLabelDifference = collator.compare(a.floor, b.floor);
+        const parkingTypeDifference = a.productCategory === "parking" && b.productCategory === "parking"
+          ? (parkingTypeSortOrder[a.displayType] ?? 99) - (parkingTypeSortOrder[b.displayType] ?? 99)
+            || collator.compare(a.displayType, b.displayType)
+          : 0;
         return (
           floorDifference ||
-          collator.compare(a.floor, b.floor) ||
+          floorLabelDifference ||
+          parkingTypeDifference ||
           collator.compare(a.unitName, b.unitName) ||
           collator.compare(a.unitCode, b.unitCode)
         );
