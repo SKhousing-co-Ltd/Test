@@ -4493,6 +4493,21 @@ td small {
 .parking-import-table small {
   color: #8390a1;
 }
+.parking-import-row-status {
+  display: inline-block;
+  white-space: nowrap;
+}
+.parking-import-row-status.committed {
+  color: #18794e;
+}
+.parking-import-row-status.error,
+.parking-import-table .parking-import-row-error {
+  color: #b54735;
+}
+.parking-import-row-error {
+  min-width: 180px;
+  white-space: normal;
+}
 .parking-import-empty {
   display: grid;
   place-content: center;

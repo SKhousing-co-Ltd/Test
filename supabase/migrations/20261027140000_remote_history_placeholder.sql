@@ -1,0 +1,3 @@
+-- Remote migration history placeholder.
+-- The migration was already applied directly to the linked remote database.
+-- Its SQL is not available locally; this file only preserves history alignment.

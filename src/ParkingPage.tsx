@@ -85,6 +85,7 @@ type ImportRow = {
   chassis_number: string | null;
   notes: string | null;
   monthly_parking_fee: number | null;
+  validation_status: 'action_required' | 'ready' | 'committed' | 'error';
   validation_messages: string[];
   raw_payload: Record<string, unknown> | null;
 };
@@ -698,7 +699,9 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
   };
 
   const updateRow = (rowId: string, patch: Partial<ImportRow>) => {
-    setRows((current) => current.map((row) => row.parking_import_row_id === rowId ? { ...row, ...patch } : row));
+    setRows((current) => current.map((row) => row.parking_import_row_id === rowId && row.validation_status !== 'committed'
+      ? { ...row, ...patch, validation_status: row.validation_status === 'error' ? 'ready' : row.validation_status, validation_messages: row.validation_status === 'error' ? [] : row.validation_messages }
+      : row));
   };
 
   const setImportStatus = (row: ImportRow, status: ParkingImportStatus) => {
@@ -741,7 +744,8 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
     if (!supabase || !batchId || !ready) return;
     setBusy(true); setMessage('取込内容を反映しています…');
     try {
-      const results = await Promise.all(rows.map((row) => {
+      const pendingRows = rows.filter((row) => row.validation_status !== 'committed');
+      const results = await Promise.all(pendingRows.map((row) => {
         const status = importRowStatus(row);
         const nonContract = status !== 'occupied';
         return supabase!.from('parking_import_row').update({
@@ -760,9 +764,18 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
       }));
       const updateError = results.find((result) => result.error)?.error;
       if (updateError) throw updateError;
-      const { error } = await supabase.rpc('commit_parking_import', { p_batch_id: batchId });
+      const { data, error } = await supabase.rpc('commit_parking_import', { p_batch_id: batchId });
       if (error) throw error;
-      await onCommitted();
+      const commitResult = data as { failed_count?: number; committed_count?: number } | null;
+      const failedRows = Number(commitResult?.failed_count ?? 0);
+      const committedRows = Number(commitResult?.committed_count ?? 0);
+      await loadBatchRows(batchId);
+      if (failedRows > 0) {
+        setMessage(`${committedRows}行を反映しました。${failedRows}行はエラーのため未反映です。エラー内容を確認して修正後、再度反映してください。`);
+      } else {
+        setMessage(`${committedRows}行を反映しました。`);
+        await onCommitted();
+      }
     } catch (commitError) {
       console.error('Parking Excel commit failed', commitError);
       setMessage(`反映できませんでした: ${describeUnknownError(commitError)}`);
@@ -774,6 +787,8 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
     row.matched_tenant_id && row.parking_scope
       && (row.parking_scope === 'external' || row.main_lease_contract_id),
   )).length;
+  const committedRowsCount = rows.filter((row) => row.validation_status === 'committed').length;
+  const failedRowsCount = rows.filter((row) => row.validation_status === 'error').length;
 
   return <div className="parking-import-backdrop"><div className="parking-import-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-import-title">
     <header><div><p className="section-kicker">PARKING IMPORT</p><h2 id="parking-import-title">駐車場Excel取込</h2></div><button onClick={onClose} aria-label="取込画面を閉じる">×</button></header>
@@ -804,32 +819,34 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
     {rows.length ? <>
       <div className="parking-import-bulk"><span>契約中の行を一括設定</span><button onClick={() => applyScopeToAll('internal')}>すべて内部</button><button onClick={() => applyScopeToAll('external')}>すべて外部</button></div>
       <p className="parking-import-message">月額駐車料はこの画面では入力しません。反映後、契約中の未設定枠が「対応依頼」に表示されます。</p>
-      <div className="parking-import-table-wrap"><table className="parking-import-table"><thead><tr><th>行</th><th>枠</th><th>状態</th><th>契約先</th><th>内外</th><th>主契約</th><th>暗証番号</th><th>車両</th><th>備考</th></tr></thead><tbody>
+      <div className="parking-import-table-wrap"><table className="parking-import-table"><thead><tr><th>行</th><th>枠</th><th>状態</th><th>契約先</th><th>内外</th><th>主契約</th><th>暗証番号</th><th>車両</th><th>備考</th><th>反映結果</th></tr></thead><tbody>
         {rows.map((row) => {
           const status = importRowStatus(row);
+          const locked = row.validation_status === 'committed';
           const nonContract = status !== 'occupied';
           const candidates = mainContracts.filter((contract) => contract.tenant_id === row.matched_tenant_id);
           const choices = tenantChoices(row);
           const needsAction = status === 'occupied' && (!row.matched_tenant_id || !row.parking_scope || row.parking_scope === 'internal' && !row.main_lease_contract_id);
           return <tr key={row.parking_import_row_id} className={needsAction ? 'needs-action' : ''}>
             <td>{row.source_row_number}</td><td><strong>{row.space_number}</strong></td>
-            <td><select value={status} onChange={(event) => setImportStatus(row, event.target.value as ParkingImportStatus)}><option value="occupied">契約中</option><option value="vacant">空き</option><option value="unavailable">使用不可</option></select></td>
+            <td><select value={status} disabled={locked} onChange={(event) => setImportStatus(row, event.target.value as ParkingImportStatus)}><option value="occupied">契約中</option><option value="vacant">空き</option><option value="unavailable">使用不可</option></select></td>
             <td>{nonContract ? <strong>{status === 'unavailable' ? '使用不可区画' : '空き区画'}</strong> : <>
               <span>{row.tenant_name}</span>
-              <input value={tenantQueries[row.parking_import_row_id] ?? ''} onChange={(event) => setTenantQueries((current) => ({ ...current, [row.parking_import_row_id]: event.target.value }))} placeholder="契約先を検索" aria-label={`枠${row.space_number}の契約先を検索`} />
-              <select value={row.matched_tenant_id ?? ''} onChange={(event) => updateRow(row.parking_import_row_id, { matched_tenant_id: event.target.value || null, main_lease_contract_id: null })}>
+              <input value={tenantQueries[row.parking_import_row_id] ?? ''} disabled={locked} onChange={(event) => setTenantQueries((current) => ({ ...current, [row.parking_import_row_id]: event.target.value }))} placeholder="契約先を検索" aria-label={`枠${row.space_number}の契約先を検索`} />
+              <select value={row.matched_tenant_id ?? ''} disabled={locked} onChange={(event) => updateRow(row.parking_import_row_id, { matched_tenant_id: event.target.value || null, main_lease_contract_id: null })}>
                 <option value="">契約先を選択</option>{choices.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{propertyTenantIds.has(tenant.tenant_id) ? '【物件内】' : ''}{tenant.tenant_name}</option>)}
               </select>
               <small>{tenantQueries[row.parking_import_row_id]?.trim() ? `検索結果 ${choices.length}件` : `物件内候補 ${propertyTenantIds.size}件。見つからない場合は検索`}</small>
             </>}</td>
-            <td>{nonContract ? '—' : <select value={row.parking_scope ?? ''} onChange={(event) => updateRow(row.parking_import_row_id, { parking_scope: event.target.value as ParkingScope || null, main_lease_contract_id: event.target.value === 'external' ? null : row.main_lease_contract_id })}><option value="">未選択</option><option value="internal">内部</option><option value="external">外部</option></select>}</td>
-            <td>{!nonContract && row.parking_scope === 'internal' ? <select value={row.main_lease_contract_id ?? ''} onChange={(event) => updateRow(row.parking_import_row_id, { main_lease_contract_id: event.target.value || null })}><option value="">主契約を選択</option>{candidates.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.unit_labels} / {displayDate(contract.contract_start_date)}</option>)}</select> : '—'}</td>
+            <td>{nonContract ? '—' : <select value={row.parking_scope ?? ''} disabled={locked} onChange={(event) => updateRow(row.parking_import_row_id, { parking_scope: event.target.value as ParkingScope || null, main_lease_contract_id: event.target.value === 'external' ? null : row.main_lease_contract_id })}><option value="">未選択</option><option value="internal">内部</option><option value="external">外部</option></select>}</td>
+            <td>{!nonContract && row.parking_scope === 'internal' ? <select value={row.main_lease_contract_id ?? ''} disabled={locked} onChange={(event) => updateRow(row.parking_import_row_id, { main_lease_contract_id: event.target.value || null })}><option value="">主契約を選択</option>{candidates.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.unit_labels} / {displayDate(contract.contract_start_date)}</option>)}</select> : '—'}</td>
             <td className="access-code">{row.access_code || '—'}</td>
             <td>{nonContract ? '—' : <>{row.vehicle_model || '—'}<small>{row.registration_number || ''}</small></>}</td><td>{row.notes || '—'}</td>
+            <td><strong className={`parking-import-row-status ${row.validation_status}`}>{row.validation_status === 'committed' ? '反映済み' : row.validation_status === 'error' ? 'エラー' : '未反映'}</strong>{row.validation_messages?.map((item, index) => <small className="parking-import-row-error" key={`${row.parking_import_row_id}-${index}`}>{item}</small>)}</td>
           </tr>;
         })}
       </tbody></table></div>
     </> : <div className="parking-import-empty"><strong>.xlsxを選択してください</strong><p>標準ひな型を利用すると、列名の表記ゆれを気にせず取り込めます。既存ファイルも代表的な表記ゆれを吸収します。</p></div>}
-    <footer><span>{rows.length ? `${completedRows} / ${rows.length} 行の確認完了` : ''}</span><div><button className="secondary-button" onClick={onClose}>キャンセル</button><button className="primary-button" disabled={!ready || busy} onClick={() => void commit()}>{busy ? '処理中…' : '確認して反映'}</button></div></footer>
+    <footer><span>{rows.length ? `${completedRows} / ${rows.length} 行の確認完了　・　反映済み ${committedRowsCount} 行${failedRowsCount ? `　・　エラー ${failedRowsCount} 行` : ''}` : ''}</span><div><button className="secondary-button" onClick={onClose}>キャンセル</button><button className="primary-button" disabled={!ready || busy || committedRowsCount === rows.length} onClick={() => void commit()}>{busy ? '処理中…' : failedRowsCount ? '未反映行を再反映' : '確認して反映'}</button></div></footer>
   </div></div>;
 }
