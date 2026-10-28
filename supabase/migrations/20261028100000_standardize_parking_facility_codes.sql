@@ -44,6 +44,18 @@ begin
       (50, 'MAIN', '三共小山ビル 平面駐車場', 'FLAT')
     ) as mapping(asset_code, old_code, expected_facility_name, new_code)
   loop
+    -- Safe to re-run after a prior application of this migration.
+    if exists (
+      select 1
+      from public.parking_facility_master facility
+      join public.asset_master asset on asset.asset_id = facility.property_id
+      where asset.asset_code = item.asset_code
+        and facility.facility_code = item.new_code
+        and facility.facility_name = item.expected_facility_name
+    ) then
+      continue;
+    end if;
+
     if exists (
       select 1
       from public.parking_facility_master target
@@ -64,7 +76,7 @@ begin
        and facility.facility_name = item.expected_facility_name;
 
     get diagnostics changed_count = row_count;
-    if changed_count <> 1 then
+    if changed_count > 1 then
       raise exception '物件コード % の施設 % (% → %) を一意に特定できませんでした。',
         item.asset_code, item.expected_facility_name, item.old_code, item.new_code;
     end if;
