@@ -81,6 +81,7 @@ type RentRollRow = {
   unitId: string;
   leaseContractUnitId: string | null;
   unitType: string;
+  displayType: string;
   status: RentRollStatus;
   productCategory: ProductCategory;
   floor: string;
@@ -152,6 +153,14 @@ const collator = new Intl.Collator("ja-JP", {
   numeric: true,
   sensitivity: "base",
 });
+
+function parkingFacilityDisplayType(code: string, masterType: string | null | undefined): string {
+  const normalizedCode = code.normalize("NFKC").toUpperCase().replace(/[\s　_-]/g, "");
+  if (normalizedCode.includes("BIKE")) return "駐輪場";
+  if (normalizedCode.startsWith("MACHINE")) return "機械式駐車場";
+  if (normalizedCode === "FLAT") return "平面駐車場";
+  return masterType || code || "駐車場";
+}
 
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: "入居中",
@@ -291,9 +300,10 @@ function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
     unitId: source.unit_id,
     leaseContractUnitId: source.lease_contract_unit_id,
     unitType: source.unit_type,
+    displayType: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : "貸室等",
     status,
-    productCategory: normalizeProductCategory(source.unit_type),
-    floor: source.floor_label ?? "",
+    productCategory: ["parking", "bicycle_parking"].includes(source.unit_type) ? "parking" : normalizeProductCategory(source.unit_type),
+    floor: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : source.floor_label ?? "",
     unitCode: source.unit_code,
     unitName: source.unit_name ?? source.unit_code,
     discriminator: source.source_discriminator,
@@ -358,9 +368,10 @@ function toSnapshotRow(
     unitId: source.rent_roll_snapshot_row_id,
     leaseContractUnitId: null,
     unitType: source.unit_type ?? "office",
+    displayType: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : "貸室等",
     status,
-    productCategory: normalizeProductCategory(source.unit_type ?? "office"),
-    floor: source.floor_label ?? "",
+    productCategory: ["parking", "bicycle_parking"].includes(source.unit_type ?? "") ? "parking" : normalizeProductCategory(source.unit_type ?? "office"),
+    floor: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : source.floor_label ?? "",
     unitCode: source.unit_code ?? "",
     unitName: source.unit_code ?? "",
     discriminator: null,
@@ -615,9 +626,33 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           p_as_of_date: asOfDate,
         });
         loadError = result.error;
-        loadedRows = ((result.data ?? []) as RentRollSource[]).map(
+        const sourceRows = (result.data ?? []) as RentRollSource[];
+        loadedRows = sourceRows.map(
           (row) => toRentRollRow(row, asOfDate),
         );
+        const parkingUnitIds = sourceRows.filter((row) => row.unit_type === "parking").map((row) => row.unit_id);
+        if (!loadError && parkingUnitIds.length) {
+          const facilityResult = await supabase.from("parking_space_master")
+            .select("unit_id, facility:parking_facility_master(facility_code, parking_type:parking_type_master(parking_type_name))")
+            .in("unit_id", parkingUnitIds);
+          if (facilityResult.error) loadError = facilityResult.error;
+          else {
+            const facilityRows = (facilityResult.data ?? []) as unknown as Array<{
+              unit_id: string;
+              facility: { facility_code: string; parking_type?: { parking_type_name?: string } | { parking_type_name?: string }[] | null } | null;
+            }>;
+            const facilityByUnitId = new Map(facilityRows.map((entry) => {
+              const parkingType = Array.isArray(entry.facility?.parking_type) ? entry.facility?.parking_type[0] : entry.facility?.parking_type;
+              const facilityCode = entry.facility?.facility_code ?? "";
+              return [entry.unit_id, { code: facilityCode, type: parkingFacilityDisplayType(facilityCode, parkingType?.parking_type_name) }] as const;
+            }));
+            loadedRows = loadedRows.map((row) => {
+              if (row.unitType !== "parking") return row;
+              const facility = facilityByUnitId.get(row.unitId);
+              return { ...row, displayType: facility?.type ?? "駐車場", floor: facility?.code.toUpperCase().includes("BIKE") ? "駐輪場" : "駐車場" };
+            });
+          }
+        }
       }
 
       if (cancelled) return;
@@ -677,8 +712,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const matchesType =
         unitTypeFilter === "all" ||
         (unitTypeFilter === "parking"
-          ? row.unitType === "parking"
-          : row.unitType !== "parking");
+          ? row.productCategory === "parking"
+          : row.productCategory !== "parking");
       const matchesQuery =
         !normalizedQuery ||
         [
@@ -1079,7 +1114,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                       <span
                         className={`unit-type-badge ${row.unitType === "parking" ? "parking" : ""}`}
                       >
-                        {row.unitType === "parking" ? "駐車場" : "貸室等"}
+                        {row.displayType}
                       </span>
                     </td>
                     <td className="rent-roll-pinned rent-roll-pinned-4">{row.floor || "—"}</td>

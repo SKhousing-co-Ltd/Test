@@ -68,6 +68,7 @@ type MainContractCandidate = {
 };
 
 type TenantOption = { tenant_id: string; tenant_name: string };
+type BicycleLedgerRow = { unit_id: string; unit_code: string; unit_name: string | null; lease_contract_id: string | null; contract_start_date: string | null; contract_end_date: string | null; tenant_name: string | null; monthly_total_amount: number | null };
 
 type ImportRow = {
   parking_import_row_id: string;
@@ -348,6 +349,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const [facilities, setFacilities] = useState<ParkingFacility[]>([]);
   const [parkingTypes, setParkingTypes] = useState<ParkingType[]>([]);
   const [rows, setRows] = useState<ParkingCurrentRow[]>([]);
+  const [bicycleRows, setBicycleRows] = useState<BicycleLedgerRow[]>([]);
   const [propertyId, setPropertyId] = useState('');
   const [asOfDate, setAsOfDate] = useState(today);
   const [scopeFilter, setScopeFilter] = useState<'all' | ParkingScope | 'vacant' | 'unavailable'>('all');
@@ -388,6 +390,9 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       p_property_id: nextPropertyId,
       p_as_of_date: nextAsOfDate,
     });
+    const bicycleResult = await supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: nextPropertyId, p_as_of_date: nextAsOfDate });
+    if (bicycleResult.error) setError(`駐輪場契約を読み込めませんでした: ${bicycleResult.error.message}`);
+    else setBicycleRows(((bicycleResult.data ?? []) as Array<BicycleLedgerRow & { unit_type?: string }>).filter((row) => row.unit_type === 'bicycle_parking' && Boolean(row.lease_contract_id)));
     if (loadError) setError(`駐車場台帳を読み込めませんでした: ${loadError.message}`);
     else {
       const baseRows = (data ?? []) as unknown as ParkingCurrentRow[];
@@ -426,7 +431,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             termination_date: futureTerminationDate ?? futureContractEndDate,
           };
         }));
-        setError('');
+        setError(bicycleResult.error ? `駐輪場契約を読み込めませんでした: ${bicycleResult.error.message}` : '');
       }
     }
     setLoading(false);
@@ -512,7 +517,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
 
   return <section className="parking-page">
     <div className="parking-heading">
-      <div><p className="section-kicker">PARKING LEDGER</p><h2>駐車場台帳</h2><p>物件内の複数駐車場を横断して、空き状況・契約・車両情報を確認します。</p></div>
+      <div><p className="section-kicker">PARKING & BICYCLE LEDGER</p><h2>駐車場・駐輪場台帳</h2><p>駐車場・バイク・自転車の契約を物件ごとに確認します。</p></div>
       {canManage ? <button className="primary-button" onClick={() => setImportOpen(true)}>Excelを取り込む</button> : null}
     </div>
 
@@ -522,7 +527,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       </select></label>
       <label>駐車場<select value={facilityFilter} onChange={(event) => { setFacilityFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
         <option value="all">すべての駐車場</option>
-        {propertyFacilities.map((facility) => <option key={facility.parking_facility_id} value={facility.parking_facility_id}>{facility.facility_name}</option>)}
+        {propertyFacilities.map((facility) => <option key={facility.parking_facility_id} value={facility.parking_facility_id}>{facility.facility_code}｜{facility.facility_name}</option>)}
       </select></label>
       <label>駐車場種別<select value={parkingTypeFilter} onChange={(event) => { setParkingTypeFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
         <option value="all">すべての種別</option>
@@ -543,13 +548,21 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       <div><span>使用不可</span><strong>{summary.unavailable}</strong></div>
     </div>
 
+    <section className="parking-panel" aria-label="駐輪場契約一覧">
+      <header><div><h3>バイク・自転車の契約</h3><p>{bicycleRows.length} 件</p></div></header>
+      <div className="parking-table-wrap"><table className="parking-table"><thead><tr><th>区画</th><th>設備名</th><th>テナント</th><th>契約開始日</th><th>契約終了日</th><th>月額</th></tr></thead><tbody>
+        {bicycleRows.map((row) => <tr key={row.unit_id}><td><strong>{row.unit_code}</strong></td><td>{row.unit_name || '駐輪場'}</td><td>{row.tenant_name || '—'}</td><td>{row.contract_start_date || '—'}</td><td>{row.contract_end_date || '継続中'}</td><td>{Number(row.monthly_total_amount ?? 0).toLocaleString('ja-JP')} 円</td></tr>)}
+        {!loading && bicycleRows.length === 0 && <tr><td colSpan={6} className="parking-empty">基準日時点のバイク・自転車契約はありません。</td></tr>}
+      </tbody></table></div>
+    </section>
+
     <div className="parking-layout">
       <div className="parking-panel">
         <header><div><h3>{selectedProperty?.asset_name ?? '物件を選択'}</h3><p>{loading ? '読み込み中…' : `${filteredRows.length} / ${rows.length} 枠を表示`}</p></div></header>
         <div className="parking-table-wrap"><table className="parking-table">
           <thead><tr><th>状態</th><th>枠番</th><th>内外</th><th>テナント</th><th>月額駐車料</th><th>暗証番号</th><th>車種</th><th>車両番号</th><th>車台番号</th><th>主契約</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={10} className="parking-empty">駐車場台帳を読み込んでいます。</td></tr> : null}
+            {loading ? <tr><td colSpan={10} className="parking-empty">駐車場・駐輪場台帳を読み込んでいます。</td></tr> : null}
             {!loading && !filteredRows.length ? <tr><td colSpan={10} className="parking-empty">条件に一致する駐車枠がありません。</td></tr> : null}
             {!loading ? filteredRows.map((row) => <tr key={row.unit_id} className={selected?.unit_id === row.unit_id ? 'selected' : ''} onClick={() => { setSelected(row); setDetailOpen(false); }}>
               <td><span className={`parking-state ${row.termination_scheduled ? 'scheduled' : row.space_status}`}>{parkingRowStatusLabel(row)}</span>{row.termination_scheduled && row.termination_date ? <small className="rent-roll-incoming-note">{formatJapaneseDate(row.termination_date)}{row.termination_in_progress ? '（手続き中）' : ''}</small> : null}</td>
@@ -809,7 +822,7 @@ function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes,
     </div>
 
     {showFacilityForm ? <div className="parking-facility-form">
-      <label>施設コード<input value={facilityCode} onChange={(event) => setFacilityCode(event.target.value)} /></label>
+      <label>施設コード<input value={facilityCode} onChange={(event) => setFacilityCode(event.target.value)} /><small>レントロールの種別判定に使用します（例：BIKE、MACHINE1、MACHINE2、FLAT）。</small></label>
       <label>施設名<input value={facilityName} onChange={(event) => setFacilityName(event.target.value)} /></label>
       <label>駐車場種別<select value={parkingTypeId} onChange={(event) => setParkingTypeId(event.target.value)}><option value="">未設定</option>{parkingTypes.map((type) => <option key={type.parking_type_id} value={type.parking_type_id}>{type.parking_type_name}</option>)}</select></label>
       <button className="primary-button" disabled={busy || !facilityCode.trim() || !facilityName.trim()} onClick={() => void createFacility()}>施設を登録</button>
