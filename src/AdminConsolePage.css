@@ -1,0 +1,61 @@
+.admin-console-shell{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh;background:#07152f;color:#eaf2fb}
+.admin-console-sidebar{position:sticky;top:0;display:flex;height:100vh;flex-direction:column;padding:23px 15px 16px;background:#f4f7fb;color:#243a52}
+.admin-console-brand{display:flex;align-items:center;gap:10px;padding:0 11px 28px;color:#20364e;font-size:14px;font-weight:700;letter-spacing:.085em}
+.admin-console-brand-mark{display:grid;width:31px;height:31px;place-items:center;border-radius:8px;background:linear-gradient(145deg,#50d0c1,#2872bb);color:#fff;font-size:17px;letter-spacing:0}
+.admin-console-nav-label{margin:0;padding:0 13px;color:#7b8ea3;font-size:9px;font-weight:800;letter-spacing:.17em}
+.admin-console-nav{display:grid;gap:4px;margin-top:10px}
+.admin-console-nav-item{display:flex;min-height:41px;align-items:center;gap:11px;padding:0 12px;border-radius:6px;color:#586d84;font-size:11px;transition:background .15s,color .15s}
+.admin-console-nav-item>span{display:grid;width:20px;place-items:center;color:#718da8;font-size:15px}
+.admin-console-nav-item:hover,.admin-console-nav-item.active{background:#dce9f5;color:#193c5d}
+.admin-console-nav-item.active{font-weight:700}
+.admin-console-sidebar-footer{display:grid;gap:13px;margin-top:auto;border-top:1px solid #d9e1e9;padding:15px 10px 0}
+.admin-console-portal-link{color:#5d748c;font-size:10px}
+.admin-console-portal-link:hover{color:#20364e;text-decoration:underline;text-underline-offset:3px}
+.admin-console-user{display:flex;align-items:center;gap:9px;min-width:0}
+.admin-console-avatar{display:grid;width:30px;height:30px;flex:0 0 30px;place-items:center;border-radius:50%;background:#dceaf5;color:#305879;font-size:11px;font-weight:800}
+.admin-console-user>span:last-child{display:grid;min-width:0;gap:2px}
+.admin-console-user strong{overflow:hidden;color:#263d55;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.admin-console-user small{color:#71849a;font-size:9px}
+.admin-console-logout{width:100%;padding:8px 10px;border:1px solid #cbd6e1;border-radius:5px;background:transparent;color:#526980;text-align:left;font-size:10px}
+.admin-console-logout:hover{background:#e7eef5;color:#20364e}
+.admin-console-workspace{min-width:0;background:linear-gradient(145deg,#07152f 0%,#102b61 52%,#075b68 100%)}
+.admin-console-topbar{display:flex;height:62px;align-items:center;justify-content:space-between;gap:16px;padding:0 32px;border-bottom:1px solid rgb(161 196 225 / 18%);background:rgb(7 21 47 / 72%)}
+.admin-console-topbar p{margin:0;color:#a5bad0;font-size:10px}
+.admin-console-topbar p span{padding:0 6px;color:#7891ad}
+.admin-console-topbar p strong{color:#f1f7fd;font-weight:700}
+.admin-console-role{padding:5px 9px;border:1px solid rgb(110 207 164 / 45%);border-radius:20px;background:rgb(34 132 91 / 22%);color:#9de1c1;font-size:9px;font-weight:700;white-space:nowrap}
+.admin-console-content{width:min(100%,1500px);margin:0 auto;padding:31px 36px 50px}
+.admin-console-page-heading{margin-bottom:24px}
+.admin-console-page-heading .section-kicker{color:#79d5cb}
+.admin-console-page-heading h1{margin:6px 0 0;color:#f1f7fd;font-size:25px;letter-spacing:.01em}
+.admin-console-page-heading>p:last-child{margin:7px 0 0;color:#b2c4d7;font-size:11px}
+.admin-console-content .page-heading .section-kicker,.admin-console-content .case-progress-heading .section-kicker,.admin-console-content .schema-explorer-header .eyebrow{color:#79d5cb}
+.admin-console-content .page-heading h2,.admin-console-content .case-progress-heading h2,.admin-console-content .schema-explorer-header h2{color:#f1f7fd}
+.admin-console-content .page-heading p:not(.section-kicker),.admin-console-content .case-progress-heading p:not(.section-kicker),.admin-console-content .schema-explorer-header p:not(.eyebrow){color:#b2c4d7}
+.admin-console-welcome{position:relative;display:flex;min-height:112px;align-items:center;justify-content:space-between;gap:20px;overflow:hidden;margin-bottom:25px;padding:20px 24px;border:1px solid #2b5274;border-radius:9px;background:linear-gradient(105deg,#0c2243 15%,#10485c 100%)}
+.admin-console-welcome:after{position:absolute;top:-82px;right:8%;width:220px;height:220px;border:1px solid rgb(189 221 238 / 18%);border-radius:50%;content:"";pointer-events:none}
+.admin-console-welcome>div:first-child{position:relative;z-index:1}
+.admin-console-kicker{margin:0 0 5px;color:#7fd5ce;font-size:9px;font-weight:800;letter-spacing:.15em}
+.admin-console-welcome h2{margin:0;color:#f1f7fd;font-size:16px}
+.admin-console-welcome>div:first-child>p:last-child{margin:5px 0 0;color:#b2c4d7;font-size:10px}
+.admin-console-summary{position:relative;z-index:1;display:grid;gap:3px;padding-right:10px;text-align:right}
+.admin-console-summary strong{color:#fff;font-size:13px}
+.admin-console-summary span{color:#b2c4d7;font-size:9px}
+.admin-console-section-heading{display:flex;align-items:end;justify-content:space-between;gap:15px;margin:26px 0 12px}
+.admin-console-section-heading h2{margin:0;color:#f1f7fd;font-size:14px}
+.admin-console-section-heading p{margin:4px 0 0;color:#b2c4d7;font-size:10px}
+.admin-console-section-heading>span{color:#9eb2c7;font-size:9px;letter-spacing:.12em}
+.admin-console-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.admin-console-card{display:flex;min-height:146px;flex-direction:column;padding:16px;border:1px solid #2b4b6c;border-radius:8px;background:rgb(10 34 66 / 88%);transition:transform .16s,border-color .16s,box-shadow .16s}
+.admin-console-card:hover{transform:translateY(-2px);border-color:#73b9d2;background:rgb(16 51 87 / 96%);box-shadow:0 9px 20px rgb(0 10 27 / 24%)}
+.admin-console-card-top{display:flex;align-items:center;justify-content:space-between}
+.admin-console-card-icon{display:grid;width:35px;height:35px;place-items:center;border:1px solid #315575;border-radius:8px;background:#12365a;color:#8dd8de;font-size:16px}
+.admin-console-card-arrow{color:#9ab0c5;font-size:16px}
+.admin-console-card>strong{margin:11px 0 4px;color:#f2f7fb;font-size:12px}
+.admin-console-card-description{color:#b2c4d7;font-size:10px;line-height:1.7}
+.admin-console-card-category{display:flex;align-items:center;gap:6px;margin-top:auto;padding-top:11px;color:#a1b6ca;font-size:9px}
+.admin-console-card-category i{width:6px;height:6px;border-radius:50%;background:#69c8ac}
+.admin-console-info{display:flex;align-items:flex-start;gap:9px;margin:22px 0 0;padding:12px 14px;border:1px solid #2b4b6c;border-radius:7px;background:rgb(10 34 66 / 80%);color:#b2c4d7;font-size:10px;line-height:1.75}
+.admin-console-info>span{color:#86d5d1;font-weight:700}
+@media(max-width:1050px){.admin-console-shell{grid-template-columns:218px minmax(0,1fr)}.admin-console-content{padding:26px 24px 42px}.admin-console-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.admin-console-shell{display:block}.admin-console-sidebar{position:relative;height:auto;padding:13px}.admin-console-brand{padding:0 7px 12px}.admin-console-nav-label{display:none}.admin-console-nav{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:0}.admin-console-nav-item{min-height:36px;padding:0 8px;font-size:10px}.admin-console-nav-item>span{width:16px}.admin-console-sidebar-footer{grid-template-columns:1fr auto;align-items:center;gap:9px;margin-top:12px;padding:10px 4px 0}.admin-console-portal-link{grid-column:1/-1}.admin-console-user{grid-column:1}.admin-console-logout{grid-column:2;grid-row:2;width:auto}.admin-console-topbar{height:50px;padding:0 14px}.admin-console-content{padding:22px 14px 35px}.admin-console-page-heading h1{font-size:21px}.admin-console-welcome{padding:17px}.admin-console-summary{padding:0}.admin-console-cards{grid-template-columns:1fr}.admin-console-card{min-height:126px}}
