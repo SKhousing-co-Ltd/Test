@@ -1229,7 +1229,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (terminationScope !== 'contract' && contractSelections.some((selection) => selection.lease_contract_unit_ids.length === 0)) {
       setError('契約ごとに解約対象区画を1件以上選択してください。'); return;
     }
-    if (!window.confirm(`選択した${contractSelections.length}件の契約に、契約終了日 ${terminationDate} と対象範囲を適用して契約業務フローへ移行します。契約データは契約業務側で反映するまで変更されません。よろしいですか？`)) return;
+    if (!window.confirm(`選択した${contractSelections.length}件の契約、契約終了日 ${terminationDate}、対象範囲を契約業務フローへ引き継ぎます。ここでは契約データ・レントロールは変更されません。よろしいですか？`)) return;
     setWorking(true); setError('');
     const { error: handoffError } = await supabase.rpc('complete_appsuite_termination_request_multi', {
       p_change_request_id: selected.change_request_id,
@@ -1540,7 +1540,10 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
                 {terminationTargetUnits.filter((entry) => terminationScope !== 'parking' || entry.unit?.unit_type === 'parking').length === 0 && <p className="muted">選択した契約に紐づく対象区画がありません。</p>}
               </div> : <p className="muted">先に紐づける契約を1件以上選択してください。</p>}
             </fieldset>}
-            {selected?.request_type === 'contract_terminate' && editable && <button className="primary-button" onClick={() => void handoffAppsuiteTermination()} disabled={working || !terminationDate || terminationTargetContractIds.length === 0 || (terminationScope !== 'contract' && terminationUnitIds.length === 0)}>選択した{terminationTargetContractIds.length}件を紐付けて契約業務フローへ移行</button>}
+            {selected?.request_type === 'contract_terminate' && editable && <>
+              <p className="muted">この操作で解約対象を契約業務フローへ引き継ぎます。契約データとレントロールは、契約業務フローで反映するまで変更されません。</p>
+              <button className="primary-button" onClick={() => void handoffAppsuiteTermination()} disabled={working || !terminationDate || terminationTargetContractIds.length === 0 || (terminationScope !== 'contract' && terminationUnitIds.length === 0)}>選択した{terminationTargetContractIds.length}件を契約業務フローへ引き継ぐ</button>
+            </>}
           </div>}
           {candidateLoading ? <p className="muted">候補を取得中です…</p> : workflowCandidates.length === 0 ? <p className="muted">候補なし。分類・建物・テナント・契約期間を確認してください。</p> : <details open={workflowCandidates.length <= 5}>
             <summary>契約候補を表示（{workflowCandidates.length}件）</summary>
