@@ -90,6 +90,37 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const latestSheetRef = useRef<InvoiceSheet>(currentSheet());
   const dirtyRef = useRef(dirty);
   latestSheetRef.current = currentSheet(); dirtyRef.current = dirty;
+  const rowMultiplicitySignature = (sheet: InvoiceSheet) => {
+    const counts = new Map<string, number>();
+    for (const row of sheet.rows) {
+      const key = `${row.invoiceKey}\u0000${row.chargeType}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return JSON.stringify([...counts.entries()].sort(([left], [right]) => left.localeCompare(right)));
+  };
+  const rowChargeOrderSignature = (sheet: InvoiceSheet) => JSON.stringify(sheet.rows.map((row) => [row.invoiceKey, row.chargeType]));
+  const inheritPreviousLineNotes = (sheet: InvoiceSheet, previous: InvoiceSheet | null): InvoiceSheet => {
+    if (!previous) return sheet;
+    const notes = new Map<string, string[]>();
+    for (const row of previous.rows) {
+      const note = row.values[20]?.trim();
+      if (!note) continue;
+      const key = `${row.tenantId}\u0000${row.chargeType}\u0000${row.values[11]}`;
+      notes.set(key, [...(notes.get(key) ?? []), note]);
+    }
+    const used = new Map<string, number>();
+    const rows = sheet.rows.map((row) => {
+      if (row.values[20]?.trim()) return row;
+      const key = `${row.tenantId}\u0000${row.chargeType}\u0000${row.values[11]}`;
+      const index = used.get(key) ?? 0;
+      const note = notes.get(key)?.[index];
+      if (!note) return row;
+      used.set(key, index + 1);
+      const values = [...row.values]; values[20] = note;
+      return { ...row, values };
+    });
+    return { ...sheet, rows };
+  };
 
   // 保存した内容があればそれを、無ければレントロール・検針データから作った内容を表示します。
   useEffect(() => {
@@ -99,10 +130,12 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
       setLoading(true); setError(''); setNotice('');
       try {
         // 最新データから作れなくても（レントロールの読み込み失敗など）、保存した内容は開けるようにします。
-        const [builtResult, savedResult, orderResult] = await Promise.allSettled([
+        const previousDate = new Date(calendarYear, period.month - 2, 1);
+        const [builtResult, savedResult, orderResult, previousResult] = await Promise.allSettled([
           buildInvoiceSheet(supabase, propertyId, propertyName, calendarYear, period.month),
           loadSavedInvoiceSheet(supabase, propertyId, calendarYear, period.month),
           loadSavedTenantOrder(supabase, propertyId),
+          loadSavedInvoiceSheet(supabase, propertyId, previousDate.getFullYear(), previousDate.getMonth() + 1),
         ]);
         if (cancelled) return;
         if (savedResult.status === 'rejected') throw savedResult.reason;
@@ -112,12 +145,22 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
         if (!built && builtResult.status === 'rejected') setError(`最新データから作れなかったため、保存した内容を表示しています: ${builtResult.reason instanceof Error ? builtResult.reason.message : ''}`);
         setDuePatterns(built?.duePatterns ?? []); setPeriodPatterns(built?.periodPatterns ?? []); setMeterNotice(built?.meterNotice ?? ''); setTermsNotice(built?.termsNotice ?? '');
 
-        const sourceSheet = saved && built ? mergeMissingZeroSurchargeRows(saved.sheet, built.sheet) : saved?.sheet ?? built!.sheet;
-        const addedZeroSurcharge = Boolean(saved && sourceSheet !== saved.sheet);
+        const sourceStructureChanged = Boolean(saved && built && (rowMultiplicitySignature(saved.sheet) !== rowMultiplicitySignature(built.sheet) || rowChargeOrderSignature(saved.sheet) !== rowChargeOrderSignature(built.sheet)));
+        const selectedSourceSheet = sourceStructureChanged && built
+          ? built.sheet
+          : saved && built ? mergeMissingZeroSurchargeRows(saved.sheet, built.sheet) : saved?.sheet ?? built!.sheet;
+        const previousSheet = previousResult.status === 'fulfilled' ? previousResult.value?.sheet ?? null : null;
+        // 最新構成へ並べ直す場合も、当月に入力済みの明細備考は対応する項目へ残します。
+        const currentNotesAppliedSheet = sourceStructureChanged && saved ? inheritPreviousLineNotes(selectedSourceSheet, saved.sheet) : selectedSourceSheet;
+        const sourceSheet = inheritPreviousLineNotes(currentNotesAppliedSheet, previousSheet);
+        const addedZeroSurcharge = Boolean(saved && selectedSourceSheet !== saved.sheet);
+        const inheritedPreviousNotes = sourceSheet.rows.some((row, index) => row.values[20] !== selectedSourceSheet.rows[index]?.values[20]);
         const tenantIds = orderResult.status === 'fulfilled' ? orderResult.value.sort((left, right) => left.sort_order - right.sort_order).map((item) => item.tenant_id) : [];
         applySheet({ ...sourceSheet, rows: orderInvoiceCardsByTenants(sourceSheet.rows, tenantIds) });
         setSavedAt(saved?.savedAt ?? '');
-        if (addedZeroSurcharge) { revision.current += 1; setDirty(true); setNotice('確定した0円の電気代増額分を請求明細へ追加しました。'); }
+        if (sourceStructureChanged) { revision.current += 1; setDirty(true); setNotice('確定明細の分割構成が変わったため、最新データで請求書を作り直しました。'); }
+        else if (addedZeroSurcharge) { revision.current += 1; setDirty(true); setNotice('確定した0円の電気代増額分を請求明細へ追加しました。'); }
+        else if (inheritedPreviousNotes) { revision.current += 1; setDirty(true); setNotice('前月の同じ明細から備考を引き継ぎました。'); }
         else setDirty(false);
         if (saved && built && sheetTotal(saved.sheet.rows) !== sheetTotal(built.sheet.rows)) {
           setNotice(`保存した後に、レントロール・検針データの金額が変わっています（保存した内容 ${yen.format(sheetTotal(saved.sheet.rows))}円／最新 ${yen.format(sheetTotal(built.sheet.rows))}円）。最新の内容にするには「最新データで作り直す」を押してください。`);
@@ -212,12 +255,6 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const changeDueDate = (patternId: string, value: string) => { setDueDateByPattern((current) => ({ ...current, [patternId]: value })); setInvoiceValue((invoiceKey) => (duePatternByInvoice[invoiceKey] ?? '') === patternId, 4, value); };
   // 明細行の請求期間パターンを切り替えると、上部で確認・編集している期間をそのまま取り込みます。
   const selectPeriodPattern = (rowId: string, patternId: string) => { const range = periodRangeByPattern[patternId]; setPeriodPatternByRow((current) => ({ ...current, [rowId]: patternId })); setLineItem1Filter('all'); updateCell(rowId, 10, patternId ? periodText(range?.start ?? '', range?.end ?? '') : '未設定'); };
-  // 上部の請求期間を書き換えると、そのパターンを選んでいる明細すべてに反映します。
-  const changePeriodRange = (patternId: string, edge: 'start' | 'end', value: string) => {
-    const range = { ...(periodRangeByPattern[patternId] ?? { start: '', end: '' }), [edge]: value };
-    setPeriodRangeByPattern((current) => ({ ...current, [patternId]: range })); setLineItem1Filter('all');
-    setRows((current) => current.map((row) => (periodPatternByRow[row.id] ?? '') === patternId ? { ...row, values: row.values.map((cell, index) => index === 10 ? periodText(range.start, range.end) : cell) } : row));
-  };
   const updateInvoiceNote = (value: string) => { setInvoiceNote(value); setRows((current) => { const written = new Set<string>(); return current.map((row) => { if (written.has(row.invoiceKey)) return row; written.add(row.invoiceKey); return { ...row, values: row.values.map((cell, index) => index === 9 ? value : cell) }; }); }); };
   const setInvoiceNoteEnabled = (enabled: boolean) => { setShowInvoiceNote(enabled); if (!enabled) updateInvoiceNote(''); else setDirty(true); };
   const startColumnResize = (column: number, event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -265,7 +302,6 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
 
   return <section className="invoice-creation-page"><header className="invoice-creation-heading"><div><p className="section-kicker">INVOICE CSV</p><h3>請求書作成</h3><p>{propertyName}・{calendarYear}年{period.month}月分</p><p className="invoice-save-state">{savedAt ? `保存済み：${savedAtText(savedAt)}` : '未保存（最新データから作成）'}{dirty ? '・未保存の変更あり' : ''}</p></div><div className="invoice-date-panel">
       <section><h4>入金期限</h4>{duePatterns.length ? <ul>{duePatterns.map((pattern) => <li key={pattern.billing_due_date_pattern_id}><span title={duePatternLabel(pattern)}>{duePatternMark(pattern)}</span><input value={dueDateByPattern[pattern.billing_due_date_pattern_id] ?? ''} placeholder="YYYY/M/D" aria-label={`入金期限 ${duePatternLabel(pattern)}`} onChange={(event) => changeDueDate(pattern.billing_due_date_pattern_id, event.target.value)} /></li>)}</ul> : <p>契約情報の請求条件で設定してください</p>}</section>
-      <section><h4>請求期間</h4>{periodPatterns.length ? <ul>{periodPatterns.map((pattern) => <li key={pattern.billing_period_pattern_id}><span>{pattern.pattern_name}</span><input value={periodRangeByPattern[pattern.billing_period_pattern_id]?.start ?? ''} placeholder="YYYY/M/D" aria-label={`請求期間 ${pattern.pattern_name} 開始日`} onChange={(event) => changePeriodRange(pattern.billing_period_pattern_id, 'start', event.target.value)} /><em>～</em><input value={periodRangeByPattern[pattern.billing_period_pattern_id]?.end ?? ''} placeholder="YYYY/M/D" aria-label={`請求期間 ${pattern.pattern_name} 終了日`} onChange={(event) => changePeriodRange(pattern.billing_period_pattern_id, 'end', event.target.value)} /><em>分</em></li>)}</ul> : <p>請求設定で登録してください</p>}</section>
     </div>
     <div className="invoice-creation-actions"><div className="invoice-note-field"><label><input type="checkbox" checked={showInvoiceNote} onChange={(event) => setInvoiceNoteEnabled(event.target.checked)} />請求書備考を表示</label><input value={invoiceNote} disabled={!showInvoiceNote} onChange={(event) => updateInvoiceNote(event.target.value)} placeholder="全請求書共通の備考" /></div><button type="button" className="secondary-button" disabled={loading || saving || !propertyId} onClick={() => void rebuild()}>最新データで作り直す</button><button type="button" className="primary-button" disabled={loading || saving || !dirty || !propertyId} onClick={() => void save(false)}>{saving ? '自動保存中…' : dirty ? '今すぐ保存' : '保存済み'}</button><button className="primary-button" disabled>CSVを出力</button></div></header>
     {error && <p className="invoice-creation-notice invoice-creation-error">{error}</p>}

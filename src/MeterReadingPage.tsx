@@ -446,7 +446,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
 
   return <section className="meter-page">
     <header className="meter-page-heading">
-      <div><p className="section-kicker">METER</p><h2>{settingsOnly ? '検針設定' : '検針データ'}</h2></div>
+      <div><p className="section-kicker">METER</p><h2>{settingsOnly ? 'テナント一覧' : '検針データ'}</h2></div>
       <div className="meter-date-fields">
         {!settingsOnly && <><label className="meter-date"><span>検針日</span><input type="date" value={meterDate} onChange={(event) => setMeterDate(event.target.value)} /></label>
         <span className="meter-date-previous">前回検針日<b>{previousMeterDate ? previousMeterDate.replace(/-/g, '/') : '前月の検針データなし'}</b></span>

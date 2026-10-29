@@ -266,7 +266,7 @@ export function PropertyBillingSettings({
           className={tab === "meterSettings" ? "active" : ""}
           onClick={() => setTab("meterSettings")}
         >
-          検針設定
+          テナント一覧
         </button>
         <button
           className={tab === "allocations" ? "active" : ""}

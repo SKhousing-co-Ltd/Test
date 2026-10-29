@@ -81,7 +81,7 @@ export type SubItem = {
 export type SurchargePurchase = { periodStart: string; periodEnd: string; amountInclusive: number | null; usage: number | null };
 export const emptySurchargePurchase = (): SurchargePurchase => ({ periodStart: '', periodEnd: '', amountInclusive: null, usage: null });
 // unitPrice は税抜の増額分単価です。仕入の請求金額を入れた月は、増額分タブで算出した単価に置き換えます。
-export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean; purchase: SurchargePurchase;
+export type Surcharge = { id: string; name: string; categoryId: CategoryId; unitPrice: number; lineItemId: string; billable: boolean; purchase: SurchargePurchase; calculationScope?: 'tenant' | 'unit';
   // 既定の請求期間です。請求設定の請求期間パターンから選びます。
   periodPatternId: string;
 };
@@ -135,6 +135,8 @@ export const splitName = (row: ContractRow, index: number) => row.splitLabel.tri
 export type PriceSetting = { unitPrice: number; taxMode: TaxMode };
 export type BuildingConfig = {
   categories: Category[]; subItems: SubItem[]; surcharges: Surcharge[]; taxRate: number;
+  // 対象請求月に分類を請求するか。未設定は従来どおり請求します。
+  categoryBillingActive?: Partial<Record<CategoryId, boolean>>;
   // 契約区画の単価（その検針月の単価に解決済み）です。キーは「区画ID:テナントID」→ 明細項目ID。
   contractPrices?: Record<string, Record<string, PriceSetting>>;
   // 明細項目の既定単価です。契約区画に単価が無いときに使います。キーは明細項目ID。
@@ -366,7 +368,7 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
 // 基本料の日割りは、基本料の小分類ごとに決めます（基本料の既定の請求期間の入居日数）。
 export function calculateRow(row: ContractRow, index: number, tenantId: string, building: BuildingConfig, meters: MeterShare[], ratioOf: (subItemId: string) => BasicRatio | undefined = () => undefined): RowResult {
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
-  const categories: CategoryResult[] = building.categories.filter((category) => category.billable).map((category) => {
+  const categories: CategoryResult[] = building.categories.filter((category) => category.billable && building.categoryBillingActive?.[category.id] !== false).map((category) => {
     // 小分類が1つだけの分類は、小分類ごとの請求フラグを持たず、分類の請求有無だけで決めます。
     const singleCustom = building.subItems.filter((item) => item.categoryId === category.id && item.kind === 'custom').length === 1;
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
@@ -380,7 +382,13 @@ export function calculateRow(row: ContractRow, index: number, tenantId: string, 
   const surcharges: SurchargeResult[] = building.surcharges.filter((surcharge) => surcharge.billable).map((surcharge) => {
     const category = categories.find((item) => item.category.id === surcharge.categoryId);
     const usage = category?.usage ?? 0;
-    return { surcharge, usage, amount: roundAmount(usage * surcharge.unitPrice) };
+    const amount = surcharge.calculationScope === 'unit' && category
+      ? [...new Set(category.subItems.flatMap((item) => item.meters.map((meter) => meter.unitId ?? meter.id)))].reduce((sum, unitId) => {
+          const unitUsage = category.subItems.reduce((itemSum, item) => itemSum + item.meters.filter((meter) => (meter.unitId ?? meter.id) === unitId).reduce((meterSum, meter) => meterSum + meter.usage, 0), 0);
+          return sum + roundAmount(unitUsage * surcharge.unitPrice);
+        }, 0)
+      : roundAmount(usage * surcharge.unitPrice);
+    return { surcharge, usage, amount };
   });
 
   const total = categories.reduce((sum, item) => sum + item.amount, 0) + surcharges.reduce((sum, item) => sum + item.amount, 0);
@@ -392,7 +400,7 @@ export type TenantResult = ReturnType<typeof calculateTenant>;
 // 請求書作成へ渡す明細です。小分類・増額分ごと、テナントの契約行ごとに1行にします。
 // invoiceNo は、請求書分割設定で区画ごとに分けているテナントの、何番目の請求書に載せるかです。
 export type MeterInvoiceLine = {
-  tenantId: string; tenantName: string; invoiceNo: number; lineItemId: string | null; sourceName: string;
+  tenantId: string; tenantName: string; invoiceNo: number; category: CategoryId; lineItemId: string | null; sourceName: string;
   usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string;
 };
 // 請求書に載せる順番です。分類（電気→水道→ガス）ごとに、小分類の並び順、その後に増額分を並べます。
@@ -405,32 +413,35 @@ export function meterSourceOrder(building: BuildingConfig): Map<string, number> 
   return new Map(ids.map((id, index) => [id, index]));
 }
 export function meterInvoiceLines(results: TenantResult[], building: BuildingConfig): MeterInvoiceLine[] {
-  const order = meterSourceOrder(building);
-  // テナントの中では、分割行をまたいでも小分類の順に並べます（同じ小分類は分割行の順）。
-  return results.flatMap((result) => {
-    const lines = tenantInvoiceLines(result, building).map((line, index) => ({ line, index }));
-    return lines.sort((left, right) => (order.get(left.line.sourceId) ?? 9999) - (order.get(right.line.sourceId) ?? 9999) || left.index - right.index)
-      .map(({ line: { sourceId: _sourceId, ...line } }) => line);
-  });
+  // 分割行（区画）を優先し、各区画の中を小分類順にします。
+  // 例: 区画1 電気代→増額分→区画2 電気代→増額分。
+  return results.flatMap((result) => tenantInvoiceLines(result, building).map(({ sourceId: _sourceId, ...line }) => line));
 }
 function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Array<MeterInvoiceLine & { sourceId: string }> {
   const unitOf = (id: CategoryId) => building.categories.find((row) => row.id === id)?.unit ?? '';
+  const order = meterSourceOrder(building);
   return result.rows.flatMap((row) => {
     const shared = { tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
-    const subItems = row.categories.flatMap((category) => category.subItems.map((item) => ({
-      ...shared, sourceId: item.subItem.id, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
+    const subItems = row.categories.flatMap((category) => {
+      if (row.row.categoryBillable[category.category.id] === false) return [];
+      const customItems = category.subItems.filter((item) => item.subItem.kind === 'custom');
+      return category.subItems.filter((item) => item.subItem.kind === 'custom' && customItems.length === 1 || row.row.billable[item.subItem.id]).map((item) => ({
+      ...shared, category: category.category.id, sourceId: item.subItem.id, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
       // 基本料は固定額なので、数量・単価は出しません。単価が違うメーターが混ざる行と、
       // 請求書に単価を出さない設定の小分類も、単価は空欄にします。
       usage: item.subItem.kind === 'basic' || item.subItem.isMonthlyFixed ? null : item.usage, unit: item.subItem.kind === 'basic' || item.subItem.isMonthlyFixed ? '' : unitOf(category.category.id),
       unitPrice: item.subItem.kind !== 'basic' && !item.subItem.isMonthlyFixed && item.subItem.showUnitPriceOnInvoice && item.groups.length === 1 ? item.groups[0].unitPrice : null,
       amount: item.amount, periodPatternId: item.subItem.periodPatternId,
-    })));
-    const surcharges = row.surcharges.map((item) => ({
-      ...shared, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
+      }));
+    });
+    const surcharges = row.surcharges.filter((item) => row.row.categoryBillable[item.surcharge.categoryId] !== false).map((item) => ({
+      ...shared, category: item.surcharge.categoryId, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
       // 増額分は請求しますが、単価は請求書に載せません（数量・金額だけ出します）。
       usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: null, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,
     }));
-    return [...subItems, ...surcharges];
+    return [...subItems, ...surcharges].map((line, index) => ({ line, index }))
+      .sort((left, right) => (order.get(left.line.sourceId) ?? 9999) - (order.get(right.line.sourceId) ?? 9999) || left.index - right.index)
+      .map(({ line }) => line);
   });
 }
 
