@@ -12,6 +12,9 @@ rent_roll_import_report.json
 outputs/
 output/
 tmp/
+mockups/admin-console/
+mockups/contract-workflow-checklist/
+mockups/property-profitability-history/
 data/rent-roll-history/source-copy/
 data/rent-roll-history/normalized/
 data/rent-roll-history/reports/
