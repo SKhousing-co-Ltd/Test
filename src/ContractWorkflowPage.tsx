@@ -27,6 +27,7 @@ type TerminationWorkflow = {
   lease_contract_unit_ids: string[];
   contract_selections: Array<{ lease_contract_id: string; lease_contract_unit_ids: string[] }> | null;
   started_at: string;
+  status: "in_progress" | "completed";
 };
 type Candidate = {
   lease_contract_id: string;
@@ -72,6 +73,13 @@ type Contract = {
 };
 const isNewContractWorkflow = (item: QueueItem) =>
   ["新規契約稟議", "入居稟議", "定期借家まき直し稟議"].includes(item.workflow_type ?? "");
+const stageStatusLabels = {
+  completed: ["承認済・データ作成済", "確認済", "作成済", "対応済", "反映済"],
+  current: ["", "確認中", "作成中", "対応中", "反映待ち"],
+  pending: ["", "未確認", "未作成", "未対応", "未反映"],
+};
+const stageStatusLabel = (stage: number, state: keyof typeof stageStatusLabels) =>
+  stageStatusLabels[state][stage - 1] ?? "未対応";
 const currentStage = (contract: Contract) => {
   const skipped = new Set((contract.workflow_skips ?? []).map((row) => row.stage_no));
   if (contract.workflow_progress?.rent_roll_status) return 6;
@@ -80,6 +88,7 @@ const currentStage = (contract: Contract) => {
   if (!contract.btob_registered_at && !skipped.has(4)) return 4;
   return 5;
 };
+const displayedStage = (stage: number) => stage === 3 ? 5 : stage === 4 ? 3 : stage === 5 ? 4 : stage;
 const renderStageCell = (contract: Contract, stage: number) => {
   const skipped = contract.workflow_skips?.some((row) => row.stage_no === stage) ?? false;
   const completed = stage === 1
@@ -92,7 +101,7 @@ const renderStageCell = (contract: Contract, stage: number) => {
           ? !!contract.btob_registered_at
           : contract.workflow_progress?.rent_roll_status === "reflected";
   const current = !completed && !skipped && currentStage(contract) === stage;
-  const label = skipped ? "スキップ済" : completed ? (stage === 1 ? "承認済・データ作成済" : "完了") : current ? ["", "", "内容確認中", "契約書作成中", "BtoB対応待ち", "自動反映待ち"][stage] : "未着手";
+  const label = skipped ? "スキップ済" : stageStatusLabel(stage, completed ? "completed" : current ? "current" : "pending");
   const detail = skipped
     ? "理由を記録済"
     : stage === 1
@@ -210,7 +219,7 @@ function WorkflowContractDetailDialog({
               const reflected = stage.no === 5 && contract.workflow_progress?.rent_roll_status === "reflected";
               const complete = stage.complete;
               const current = !complete && !skipped && currentStage(contract) === stage.no;
-              const status = skipped ? "スキップ済" : reflected ? "反映済" : complete ? "完了" : current ? "対応中" : "未着手";
+              const status = skipped ? "スキップ済" : stageStatusLabel(stage.no, complete || reflected ? "completed" : current ? "current" : "pending");
               return (
                 <li key={stage.no} className={current ? "current" : complete || skipped ? "complete" : ""}>
                   <div><strong>{stage.no}. {stage.label}</strong><span className="workflow-progress-stage-status">{status}</span></div>
@@ -300,15 +309,15 @@ export function ContractWorkflowPage({
         .select("lease_contract_id, appsuite_record_id, updated_at")
         .order("updated_at", { ascending: false }),
       client.from("appsuite_termination_workflow")
-        .select("appsuite_record_id, change_request_id, lease_contract_id, termination_date, target_scope, lease_contract_unit_ids, contract_selections, started_at")
-        .eq("status", "in_progress")
+        .select("appsuite_record_id, change_request_id, lease_contract_id, termination_date, target_scope, lease_contract_unit_ids, contract_selections, started_at, status")
         .order("started_at", { ascending: false }),
     ]);
     if (queue.error)
       setError(`AppSuiteキューを読み込めませんでした: ${queue.error.message}`);
     else setItems((queue.data ?? []) as QueueItem[]);
     if (terminationResult.error) setError(`解約手続き中の案件を読み込めませんでした: ${terminationResult.error.message}`);
-    const pendingTerminations = (terminationResult.data ?? []) as TerminationWorkflow[];
+    const terminationRecords = (terminationResult.data ?? []) as TerminationWorkflow[];
+    const pendingTerminations = terminationRecords.filter((row) => row.status === "in_progress");
     setTerminationWorkflows(pendingTerminations);
     if (workflowLinks.error)
       setError(`契約業務フローの対象を読み込めませんでした: ${workflowLinks.error.message}`);
@@ -326,10 +335,11 @@ export function ContractWorkflowPage({
       setTerminationRecordInfo(Object.fromEntries(appSuiteRecords.map((record) => [record.appsuite_record_id, { app_id: record.app_id, data_id: record.data_id, ringi_number: record.ringi_number, property_name: record.property_name, tenant_name: record.tenant_name }])));
       const completedAppSuiteIds = new Set(appSuiteRecords.filter((record) => !!record.workflow_completed_at).map((record) => record.appsuite_record_id));
       const completedLinks = (workflowLinks.data ?? []).filter((link) => completedAppSuiteIds.has(link.appsuite_record_id));
-      const pendingContractIds = pendingTerminations.flatMap((row) => row.contract_selections?.length
-        ? row.contract_selections.map((selection) => selection.lease_contract_id)
-        : [row.lease_contract_id]);
-      const ids = Array.from(new Set([...completedLinks.map((row) => row.lease_contract_id), ...pendingContractIds]));
+      const terminationContractIds = new Set(terminationRecords.flatMap((workflow) => workflow.contract_selections?.length
+        ? workflow.contract_selections.map((selection) => selection.lease_contract_id)
+        : [workflow.lease_contract_id]));
+      const terminationContractIdList = Array.from(terminationContractIds);
+      const ids = Array.from(new Set([...completedLinks.map((row) => row.lease_contract_id), ...terminationContractIdList]));
       const workflowTypes = new Map<string, string>();
       const workflowTypeByAppSuiteId = new Map(appSuiteResults.flatMap((result) => result.data ?? []).map((record) => [record.appsuite_record_id, record.workflow_type]));
       for (const link of completedLinks) {
@@ -357,7 +367,7 @@ export function ContractWorkflowPage({
       const progress = new Map(progressResults.flatMap((result) => result.data ?? []).map((row) => [row.lease_contract_id, row]));
       const skips = new Map<string, Array<{ stage_no: number; reason: string; skipped_at: string }>>();
       for (const row of skipResults.flatMap((result) => result.data ?? [])) skips.set(row.lease_contract_id, [...(skips.get(row.lease_contract_id) ?? []), row]);
-      setContracts(rows.map((row) => ({ ...row, workflow_type: workflowTypes.get(row.lease_contract_id) ?? null, workflow_progress: progress.get(row.lease_contract_id) ?? null, workflow_skips: skips.get(row.lease_contract_id) ?? [] })));
+      setContracts(rows.map((row) => ({ ...row, workflow_type: terminationContractIds.has(row.lease_contract_id) ? "解約" : workflowTypes.get(row.lease_contract_id) ?? null, workflow_progress: progress.get(row.lease_contract_id) ?? null, workflow_skips: skips.get(row.lease_contract_id) ?? [] })));
     }
     setLoading(false);
   };
@@ -1076,9 +1086,9 @@ export function ContractWorkflowPage({
                 <select value={progressStageFilter} onChange={(event) => setProgressStageFilter(event.target.value)}>
                   <option value="all">すべて</option>
                   <option value="2">契約内容確認</option>
-                  <option value="3">契約書作成</option>
                   <option value="4">BtoB対応</option>
                   <option value="5">レントロール反映</option>
+                  <option value="3">契約書作成</option>
                 </select>
               </label>
             </div>
@@ -1086,12 +1096,13 @@ export function ContractWorkflowPage({
               <table className="contract-workflow-table">
                 <thead>
                   <tr>
+                    <th>種別</th>
                     <th>案件</th>
-                    <th>① 承認・データ作成</th>
-                    <th>② 内容確認</th>
-                    <th>③ 契約書作成</th>
-                    <th>④ BtoB対応</th>
-                    <th>⑤ レントロール</th>
+                    <th><span>承認・データ作成</span><small className="workflow-stage-help">承認内容を確認し、契約データを作成</small></th>
+                    <th><span>内容確認</span><small className="workflow-stage-help">契約条件・区画・金額を確認</small></th>
+                    <th><span>BtoB対応</span><small className="workflow-stage-help">BtoBへ契約情報を登録</small></th>
+                    <th><span>レントロール反映</span><small className="workflow-stage-help">契約データから自動反映</small></th>
+                    <th><span>契約書作成</span><small className="workflow-stage-help">契約書を作成して内容を確認</small></th>
                     <th>詳細</th>
                   </tr>
                 </thead>
@@ -1099,7 +1110,9 @@ export function ContractWorkflowPage({
                   {filteredContracts.map((contract) => (
                     <tr key={contract.lease_contract_id}>
                       <td>
-                        <span className={`workflow-type-mark ${(contract.workflow_type ?? "").includes("解約") ? "cancel" : (contract.workflow_type ?? "").includes("変更") ? "change" : "new"}`}>{contract.workflow_type ?? contract.contract_type ?? "契約"}</span>
+                        <span className={`workflow-type-mark ${(contract.workflow_type ?? "").includes("解約") ? "cancel" : (contract.workflow_type ?? "").includes("変更") ? "change" : "new"}`}>{(contract.workflow_type ?? "").includes("解約") ? "解約" : (contract.workflow_type ?? "").includes("変更") ? "契約変更" : "新規契約"}</span>
+                      </td>
+                      <td>
                         <strong>{contract.contract_units?.[0]?.unit?.asset?.asset_name ?? "物件未設定"}</strong>
                         <small>
                           {(contract.contract_units ?? [])
@@ -1107,10 +1120,14 @@ export function ContractWorkflowPage({
                             .filter(Boolean)
                             .join(", ") || "区画未設定"}　・　{contract.tenant?.tenant_name ?? "テナント未設定"}
                         </small>
-                        <span className="workflow-row-progress">{currentStage(contract)}/5 工程目 ・ 更新 {formatDateTime(contract.updated_at)}</span>
+                        <span className="workflow-row-progress">{displayedStage(currentStage(contract))}/5 工程目 ・ 更新 {formatDateTime(contract.updated_at)}</span>
                       </td>
                       <td>{renderStageCell(contract, 1)}</td>
                       <td>{renderStageCell(contract, 2)}</td>
+                      <td>
+                        {renderStageCell(contract, 4)}
+                      </td>
+                      <td>{renderStageCell(contract, 5)}</td>
                       <td>
                         {renderStageCell(contract, 3)}
                         <button
@@ -1124,8 +1141,6 @@ export function ContractWorkflowPage({
                           契約書作成を開く
                         </button>
                       </td>
-                      <td>{renderStageCell(contract, 4)}</td>
-                      <td>{renderStageCell(contract, 5)}</td>
                       <td>
                         <div className="workflow-progress-row-actions">
                           <button

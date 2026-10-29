@@ -7269,6 +7269,21 @@ td small {
 .workflow-stage-cell.current i { background: #4287bc; box-shadow: 0 0 0 3px #e5f1fa; }
 .workflow-stage-cell.skipped strong { color: #8b6a31; }
 .workflow-stage-cell.skipped i { background: #d5a343; }
+.contract-workflow-table th:first-child,
+.contract-workflow-table td:first-child { width: 112px; min-width: 112px; }
+.contract-workflow-table th:nth-child(2),
+.contract-workflow-table td:nth-child(2) { width: 225px; min-width: 225px; }
+.contract-workflow-table th:nth-child(n + 3):nth-child(-n + 7) { min-width: 158px; white-space: normal; }
+.contract-workflow-table th:nth-child(n + 3):nth-child(-n + 7) > span { display: block; white-space: nowrap; }
+.workflow-stage-help {
+  display: block;
+  margin-top: 5px;
+  color: #8795a5;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+}
 .workflow-action-group { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px; }
 .workflow-action-group .text-button { font-size: 10px; }
 @media (max-width: 800px) {
