@@ -19,7 +19,9 @@ begin
       and a.asset_name = '三共四ツ橋ビル'
       and c.contract_status = 'active';
   if not found then
-    raise exception 'Expected bicycle contract unit for (有)タイムボム was not found';
+    -- Some preview/clean databases do not contain this manually registered
+    -- contract. This migration only reattaches it when the source row exists.
+    return;
   end if;
 
   select s.unit_id into v_parking_space_unit_id
