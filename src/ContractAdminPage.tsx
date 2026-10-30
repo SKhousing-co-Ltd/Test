@@ -5,6 +5,14 @@ import "./ContractAdminPage.css";
 
 type Draft = Record<string, string>;
 type Property = { asset_id: string; asset_name: string };
+type UnitOption = {
+  unit_id: string;
+  property_id: string;
+  unit_code: string;
+  unit_name: string | null;
+  floor_label: string | null;
+  unit_type: string;
+};
 type Contract = {
   lease_contract_id: string;
   contract_status: string;
@@ -15,6 +23,7 @@ type Contract = {
   btob_registered_at?: string | null;
   tenant: { tenant_name: string } | null;
   contract_units: Array<{
+    unit_id: string;
     monthly_rent_amount: number | null;
     monthly_common_charge_amount: number | null;
     deposit_amount: number | null;
@@ -39,6 +48,7 @@ type Workflow = {
 };
 const initial: Draft = {
   property_id: "",
+  unit_id: "",
   tenant_name: "",
   unit_code: "",
   unit_name: "",
@@ -105,6 +115,7 @@ const contractUnitLabels = (units: Contract["contract_units"]) => {
 export function ContractAdminPage() {
   const location = useLocation();
   const [properties, setProperties] = useState<Property[]>([]);
+  const [units, setUnits] = useState<UnitOption[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [draft, setDraft] = useState<Draft>(initial);
   const [selectedId, setSelectedId] = useState("");
@@ -160,7 +171,7 @@ export function ContractAdminPage() {
     const result = await supabase
       .from("lease_contract")
       .select(
-        "lease_contract_id, contract_status, contract_type, contract_start_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(monthly_rent_amount, monthly_common_charge_amount, deposit_amount, unit:unit_master!inner(property_id, unit_code, unit_name, floor_label, unit_type))",
+        "lease_contract_id, contract_status, contract_type, contract_start_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(unit_id, monthly_rent_amount, monthly_common_charge_amount, deposit_amount, unit:unit_master!inner(property_id, unit_code, unit_name, floor_label, unit_type))",
       )
       .eq("contract_units.unit.property_id", propertyId)
       .order("updated_at", { ascending: false });
@@ -185,6 +196,21 @@ export function ContractAdminPage() {
   useEffect(() => {
     void loadContracts(draft.property_id);
     setSelectedId("");
+  }, [draft.property_id]);
+  useEffect(() => {
+    if (!supabase || !draft.property_id) {
+      setUnits([]);
+      return;
+    }
+    void supabase
+      .from("unit_master")
+      .select("unit_id, property_id, unit_code, unit_name, floor_label, unit_type")
+      .eq("property_id", draft.property_id)
+      .order("unit_code")
+      .then(({ data, error: unitsError }) => {
+        if (unitsError) setError(unitsError.message);
+        else setUnits((data ?? []) as UnitOption[]);
+      });
   }, [draft.property_id]);
   useEffect(() => {
     const state = location.state as {
@@ -251,6 +277,7 @@ export function ContractAdminPage() {
     setDraft({
       ...initial,
       property_id: unit.property_id,
+      unit_id: allocation?.unit_id ?? "",
       tenant_name: row.tenant?.tenant_name ?? "",
       unit_code: unit.unit_code,
       unit_name: unit.unit_name ?? "",
@@ -274,6 +301,7 @@ export function ContractAdminPage() {
       p_payload: {
         ...draft,
         lease_contract_id: selectedId || null,
+        unit_id: draft.unit_id === "__new__" ? null : draft.unit_id,
         source_system: selectedId ? undefined : "manual",
       },
     });
@@ -413,33 +441,76 @@ export function ContractAdminPage() {
           </label>
           <label>
             対象区画・設備番号
-            <input
-              required
-              value={draft.unit_code}
-              onChange={(e) => update("unit_code", e.target.value)}
-            />
-          </label>
-          <label>
-            表示名称
-            <input
-              value={draft.unit_name}
-              onChange={(e) => update("unit_name", e.target.value)}
-            />
-          </label>
-          <label>
-            対象区画種別
             <select
-              value={draft.unit_type}
-              onChange={(e) => update("unit_type", e.target.value)}
+              required
+              disabled={Boolean(selectedId)}
+              value={draft.unit_id}
+              onChange={(e) => {
+                const id = e.target.value;
+                if (id === "__new__") {
+                  setDraft((current) => ({ ...current, unit_id: "__new__", unit_code: "", unit_name: "", unit_type: "other" }));
+                  return;
+                }
+                const unit = units.find((candidate) => candidate.unit_id === id);
+                setDraft((current) => ({
+                  ...current,
+                  unit_id: id,
+                  unit_code: unit?.unit_code ?? "",
+                  unit_name: unit?.unit_name ?? "",
+                  unit_type: unit?.unit_type ?? "other",
+                }));
+              }}
             >
-              <option value="equipment">設備</option>
-              <option value="other">その他</option>
-              <option value="storage">倉庫</option>
-              <option value="office">事務所</option>
-              <option value="parking">駐車場</option>
-              <option value="residential">住居</option>
+              <option value="">区画を選択してください</option>
+              {units.map((unit) => (
+                <option key={unit.unit_id} value={unit.unit_id}>
+                  {[unit.floor_label, unit.unit_name || unit.unit_code]
+                    .filter(Boolean)
+                    .join(" ")}（{unit.unit_code}）
+                </option>
+              ))}
+              {!selectedId && <option value="__new__">＋ 新しい区画・設備番号を登録</option>}
             </select>
           </label>
+          {draft.unit_id === "__new__" ? (
+            <>
+              <label>
+                新しい区画・設備番号
+                <input
+                  required
+                  value={draft.unit_code}
+                  onChange={(e) => update("unit_code", e.target.value)}
+                />
+              </label>
+              <label>
+                表示名称
+                <input
+                  value={draft.unit_name}
+                  onChange={(e) => update("unit_name", e.target.value)}
+                />
+              </label>
+              <label>
+                対象区画種別
+                <select
+                  value={draft.unit_type}
+                  onChange={(e) => update("unit_type", e.target.value)}
+                >
+                  <option value="equipment">設備</option>
+                  <option value="other">その他</option>
+                  <option value="storage">倉庫</option>
+                  <option value="office">事務所</option>
+                  <option value="parking">駐車場</option>
+                  <option value="residential">住居</option>
+                </select>
+              </label>
+            </>
+          ) : (
+            <p className="contract-admin-unit-hint">
+              {selectedId
+                ? "既存契約の対象区画は変更できません。"
+                : "登録済みの区画を選択しています。新しい区画を作る場合は、選択肢から「新しい区画・設備番号を登録」を選んでください。"}
+            </p>
+          )}
           <label>
             契約開始日
             <input

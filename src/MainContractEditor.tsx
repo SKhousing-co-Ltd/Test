@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ContractDetail } from './ContractDetailModal';
+import type { ContractDetail, LeaseContractUnitTerm } from './ContractDetailModal';
 import { productCategories, productCategoryLabel, type ProductCategory } from './lib/product-categories';
 import { supabase } from './lib/supabase';
 
 type EditorProps = {
   contract: ContractDetail;
   asOfDate: string;
+  rentTerms: LeaseContractUnitTerm[];
   onCancel: () => void;
   onApplied: () => Promise<void>;
+};
+
+type RentScheduleChange = {
+  action: 'upsert' | 'remove';
+  effective_from: string;
+  monthly_rent_amount?: number;
+  monthly_common_charge_amount?: number | null;
 };
 
 type FormState = Record<string, string>;
@@ -48,8 +56,6 @@ const fields: EditableField[] = [
   { key: 'lease_start_date', label: '区画利用開始日', scope: 'unit', type: 'date' },
   { key: 'lease_end_date', label: '区画利用終了日', scope: 'unit', type: 'date' },
   { key: 'leased_area_sqm', label: '面積（㎡）', scope: 'unit', type: 'number' },
-  { key: 'monthly_rent_amount', label: '賃料', scope: 'unit', type: 'number' },
-  { key: 'monthly_common_charge_amount', label: '共益費', scope: 'unit', type: 'number' },
   { key: 'deposit_amount', label: '敷金', scope: 'unit', type: 'number' },
   { key: 'security_deposit_amount', label: '保証金', scope: 'unit', type: 'number' },
   { key: 'key_money_amount', label: '礼金', scope: 'unit', type: 'number' },
@@ -73,7 +79,18 @@ function display(value: unknown): string {
   return String(value);
 }
 
-export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: EditorProps) {
+function localDateString(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function dateLabel(value: string | null): string {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString('ja-JP') : '無期限';
+}
+
+export function MainContractEditor({ contract, asOfDate, rentTerms, onCancel, onApplied }: EditorProps) {
   const [form, setForm] = useState<FormState>(() => initialForm(contract));
   const [reason, setReason] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -88,6 +105,12 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
   const [approvalsLoading, setApprovalsLoading] = useState(true);
   const [approvalsSaving, setApprovalsSaving] = useState(false);
   const [approvalMessage, setApprovalMessage] = useState('');
+  const [scheduleEffectiveDate, setScheduleEffectiveDate] = useState(asOfDate);
+  const [scheduleRent, setScheduleRent] = useState(() => String(rentTerms.find((term) => term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate))?.monthly_rent_amount ?? contract.monthly_rent_amount ?? ''));
+  const [scheduleCommonCharge, setScheduleCommonCharge] = useState(() => String(rentTerms.find((term) => term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate))?.monthly_common_charge_amount ?? contract.monthly_common_charge_amount ?? ''));
+  const [scheduleChanges, setScheduleChanges] = useState<RentScheduleChange[]>([]);
+  const [scheduleReason, setScheduleReason] = useState('');
+  const [scheduleSaving, setScheduleSaving] = useState(false);
   const selectedLeaseTerm = form.lease_term_type as 'ordinary' | 'fixed_term' | '';
   const visibleFields = useMemo(() => fields.filter((field) => !field.leaseTerm || field.leaseTerm === selectedLeaseTerm), [selectedLeaseTerm]);
   const diffs = useMemo(() => fields.flatMap((field) => {
@@ -106,6 +129,61 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
     return approvalCandidates.filter((candidate) => [candidate.ringi_number, candidate.workflow_type, candidate.approval_kind, candidate.tenant_name, candidate.approval_floor_label, candidate.approval_unit_label, candidate.approval_space_type]
       .filter(Boolean).join(' ').toLocaleLowerCase('ja-JP').includes(query));
   }, [approvalCandidates, approvalQuery]);
+  const selectedScheduleTerm = rentTerms.find((term) =>
+    term.effective_from <= scheduleEffectiveDate && (!term.effective_to || term.effective_to >= scheduleEffectiveDate),
+  );
+  const today = localDateString();
+
+  useEffect(() => {
+    if (!selectedScheduleTerm) return;
+    setScheduleRent(selectedScheduleTerm.monthly_rent_amount == null ? '' : String(selectedScheduleTerm.monthly_rent_amount));
+    setScheduleCommonCharge(selectedScheduleTerm.monthly_common_charge_amount == null ? '' : String(selectedScheduleTerm.monthly_common_charge_amount));
+  }, [selectedScheduleTerm?.lease_contract_unit_term_id, scheduleEffectiveDate]);
+
+  const editRentTerm = (term: LeaseContractUnitTerm) => {
+    setScheduleEffectiveDate(term.effective_from);
+    setScheduleRent(term.monthly_rent_amount == null ? '' : String(term.monthly_rent_amount));
+    setScheduleCommonCharge(term.monthly_common_charge_amount == null ? '' : String(term.monthly_common_charge_amount));
+    setError('');
+  };
+
+  const stageRentChange = () => {
+    const rent = Number(scheduleRent.replace(/,/g, ''));
+    const commonCharge = scheduleCommonCharge.trim() === '' ? null : Number(scheduleCommonCharge.replace(/,/g, ''));
+    if (!scheduleEffectiveDate || !Number.isFinite(rent) || rent < 0 || (commonCharge != null && (!Number.isFinite(commonCharge) || commonCharge < 0))) {
+      setError('適用開始日、0以上の月額賃料、共益費を入力してください。');
+      return;
+    }
+    const next: RentScheduleChange = {
+      action: 'upsert',
+      effective_from: scheduleEffectiveDate,
+      monthly_rent_amount: rent,
+      monthly_common_charge_amount: commonCharge,
+    };
+    setScheduleChanges((current) => [...current.filter((item) => item.effective_from !== next.effective_from), next].sort((a, b) => a.effective_from.localeCompare(b.effective_from)));
+    setError('');
+  };
+
+  const stageRentCancellation = (term: LeaseContractUnitTerm) => {
+    const cancellation: RentScheduleChange = { action: 'remove', effective_from: term.effective_from };
+    setScheduleChanges((current) => [...current.filter((item) => item.effective_from !== term.effective_from), cancellation].sort((a, b) => a.effective_from.localeCompare(b.effective_from)));
+    setError('');
+  };
+
+  const saveRentSchedule = async () => {
+    if (!supabase || !scheduleChanges.length || !scheduleReason.trim()) return;
+    setScheduleSaving(true);
+    setError('');
+    const { error: scheduleError } = await supabase.rpc('apply_contract_unit_rent_schedule', {
+      p_lease_contract_unit_id: contract.lease_contract_unit_id,
+      p_expected_row_version: contract.contract_unit_row_version,
+      p_changes: scheduleChanges,
+      p_reason: scheduleReason.trim(),
+    });
+    setScheduleSaving(false);
+    if (scheduleError) { setError(`賃料履歴を保存できませんでした: ${scheduleError.message}`); return; }
+    await onApplied();
+  };
 
   const loadApprovalCandidates = async () => {
     if (!supabase) return;
@@ -179,13 +257,38 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
   };
 
   const startConfirmation = () => {
+    if (scheduleChanges.length > 0) { setError('賃料の保存予定を先に保存するか、一覧から削除してください。'); return; }
     if (!selectedLeaseTerm) { setError('契約形態を選択してください。'); return; }
     if (selectedLeaseTerm === 'fixed_term' && !form.contract_end_date) { setError('定期賃貸借の契約終了日は必須です。'); return; }
     setError('');
     setConfirming(true);
   };
 
+  const rentScheduleEditor = <section className="contract-rent-schedule-editor">
+    <div className="contract-detail-section-heading"><div><h3>賃料履歴・段階賃料</h3><p>適用開始日ごとに賃料と共益費を登録します。複数の適用日をまとめて保存できます。終了日は次の適用開始日の前日に自動設定されます。</p></div></div>
+    {rentTerms.length === 0 ? <p className="contract-detail-empty">賃料履歴がありません。最初の適用開始日と金額を登録してください。</p> : <div className="contract-detail-table-wrap"><table className="contract-detail-table">
+      <thead><tr><th>適用期間</th><th>月額賃料</th><th>月額共益費</th><th>操作</th></tr></thead>
+      <tbody>{rentTerms.map((term) => <tr key={term.lease_contract_unit_term_id}>
+        <td>{dateLabel(term.effective_from)} ～ {dateLabel(term.effective_to)}</td>
+        <td className="numeric">{term.monthly_rent_amount == null ? '—' : `¥${Number(term.monthly_rent_amount).toLocaleString('ja-JP')}`}</td>
+        <td className="numeric">{term.monthly_common_charge_amount == null ? '—' : `¥${Number(term.monthly_common_charge_amount).toLocaleString('ja-JP')}`}</td>
+        <td className="contract-rent-term-actions"><button type="button" className="secondary-button compact" onClick={() => editRentTerm(term)}>この条件を編集</button>{term.effective_from > today && !term.lease_contract_amendment_id && <button type="button" className="text-button" onClick={() => stageRentCancellation(term)}>予定を取消</button>}</td>
+      </tr>)}</tbody>
+    </table></div>}
+    <div className="contract-rent-schedule-form">
+      <label>適用開始日<input type="date" value={scheduleEffectiveDate} onChange={(event) => setScheduleEffectiveDate(event.target.value)} /></label>
+      <label>月額賃料<input type="number" min="0" step="1" value={scheduleRent} onChange={(event) => setScheduleRent(event.target.value)} /></label>
+      <label>月額共益費<input type="number" min="0" step="1" value={scheduleCommonCharge} onChange={(event) => setScheduleCommonCharge(event.target.value)} /></label>
+      <button type="button" className="secondary-button" onClick={stageRentChange}>変更予定に追加</button>
+    </div>
+    {scheduleChanges.length > 0 && <div className="contract-rent-schedule-pending"><h4>保存予定</h4><ul>{scheduleChanges.map((change) => <li key={`${change.action}:${change.effective_from}`}>
+      <span><strong>{dateLabel(change.effective_from)}適用</strong>{change.action === 'remove' ? '・予定取消' : `・賃料 ¥${Number(change.monthly_rent_amount ?? 0).toLocaleString('ja-JP')} / 共益費 ${change.monthly_common_charge_amount == null ? '—' : `¥${Number(change.monthly_common_charge_amount).toLocaleString('ja-JP')}`}`}</span>
+      <button type="button" className="text-button" onClick={() => setScheduleChanges((current) => current.filter((item) => item.effective_from !== change.effective_from))}>削除</button>
+    </li>)}</ul><label>変更理由<textarea value={scheduleReason} onChange={(event) => setScheduleReason(event.target.value)} placeholder="契約原本や承認内容、変更理由を入力" /></label>{diffs.length > 0 && <p className="contract-rent-schedule-notice">編集中の契約項目を保存してから、賃料履歴を保存してください。</p>}<button type="button" className="primary-button" onClick={() => void saveRentSchedule()} disabled={scheduleSaving || !scheduleReason.trim() || diffs.length > 0}>{scheduleSaving ? '保存中…' : '賃料履歴を保存'}</button></div>}
+  </section>;
+
   if (confirming) return <section className="contract-editor">
+    {rentScheduleEditor}
     <div className="contract-detail-section-heading"><div><h3>変更内容を確認</h3><p>保存すると対応依頼と監査ログを作成し、契約へ反映します。</p></div></div>
     <div className="contract-editor-diff"><div className="heading"><span>項目</span><span>変更前</span><span>変更後</span></div>
       {diffs.map(({ field, before, after }) => <div key={field.key}><strong>{field.label}</strong><span>{display(before)}</span><span>{display(after)}</span></div>)}
@@ -197,6 +300,7 @@ export function MainContractEditor({ contract, asOfDate, onCancel, onApplied }: 
 
   return <section className="contract-editor">
     <div className="contract-detail-section-heading"><div><h3>主契約を編集</h3><p>「契約開始日・終了日」は同一契約の全区画に共通する期間です。「区画利用開始日・終了日」は、この画面で選択した区画だけの利用期間です。</p><p>駐車場代はここでは編集せず、駐車場台帳から独立して管理します。</p></div></div>
+    {rentScheduleEditor}
     <div className="contract-editor-grid">{visibleFields.map((field) => <label key={field.key}>{field.label}{field.key === 'tenant_id'
       ? <><input value={tenantQuery} onChange={(event) => void searchTenants(event.target.value)} placeholder="テナント名・コードで検索" /><select value={form.tenant_id} onChange={(event) => setForm({ ...form, tenant_id: event.target.value })}><option value="">選択してください</option>{form.tenant_id && !tenantOptions.some((tenant) => tenant.tenant_id === form.tenant_id) && <option value={form.tenant_id}>{contract.tenant_name}（{contract.external_tenant_code || 'コード未設定'}）</option>}{tenantOptions.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}（{tenant.external_tenant_code || 'コード未設定'}）</option>)}</select></>
       : field.key === 'unit_type' ? <select value={form.unit_type} onChange={(event) => setForm({ ...form, unit_type: event.target.value })}>{productCategories.map(({ code, label }) => <option key={code} value={code}>{label}</option>)}</select>

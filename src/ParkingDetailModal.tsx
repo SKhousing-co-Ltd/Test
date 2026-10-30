@@ -119,6 +119,8 @@ type FormState = {
   contract_start_date: string;
   contract_end_date: string;
   monthly_parking_fee: string;
+  deposit_amount: string;
+  security_deposit_amount: string;
   parking_fee_effective_from: string;
   access_code: string;
   notes: string;
@@ -215,6 +217,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     contract_start_date: row.contract_start_date ?? '',
     contract_end_date: row.contract_end_date ?? '',
     monthly_parking_fee: row.monthly_parking_fee.toString(),
+    deposit_amount: '',
+    security_deposit_amount: '',
     parking_fee_effective_from: row.parking_fee_effective_from ?? row.contract_start_date ?? today,
     access_code: row.access_code ?? '',
     notes: row.notes ?? '',
@@ -374,6 +378,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
         height_mm: space.height_mm?.toString() ?? '',
         weight_limit_kg: space.weight_limit_kg?.toString() ?? '',
         monthly_parking_fee: row.monthly_parking_fee.toString(),
+        deposit_amount: loadedContractUnits.find((item) => item.lease_contract_unit_id === row.lease_contract_unit_id)?.deposit_amount?.toString() ?? '',
+        security_deposit_amount: loadedContractUnits.find((item) => item.lease_contract_unit_id === row.lease_contract_unit_id)?.security_deposit_amount?.toString() ?? '',
         parking_fee_effective_from: row.parking_fee_effective_from ?? row.contract_start_date ?? today,
         vehicle_model: vehicle?.vehicle_model ?? current.vehicle_model,
         registration_number: vehicle?.registration_number ?? current.registration_number,
@@ -522,6 +528,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       p_vehicle_effective_to: occupied ? form.vehicle_effective_to || null : null,
       p_monthly_parking_fee: occupied ? monthlyParkingFee : null,
       p_parking_fee_effective_from: occupied ? form.parking_fee_effective_from : null,
+      p_deposit_amount: occupied ? asNumber(form.deposit_amount) : null,
+      p_security_deposit_amount: occupied ? asNumber(form.security_deposit_amount) : null,
     });
     if (error) {
       setMessage(`保存できませんでした: ${error.message}`);
@@ -646,6 +654,12 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
               </FormField> : null}
               <FormField label="月額駐車料" value={currency(Number(form.monthly_parking_fee || 0))} editing={editing}>
                 <input type="number" min="0" step="1" value={form.monthly_parking_fee} onChange={(event) => set('monthly_parking_fee', event.target.value)} />
+              </FormField>
+              <FormField label="敷金" value={currency(Number(form.deposit_amount || 0))} editing={editing}>
+                <input type="number" min="0" step="1" value={form.deposit_amount} onChange={(event) => set('deposit_amount', event.target.value)} />
+              </FormField>
+              <FormField label="保証金" value={currency(Number(form.security_deposit_amount || 0))} editing={editing}>
+                <input type="number" min="0" step="1" value={form.security_deposit_amount} onChange={(event) => set('security_deposit_amount', event.target.value)} />
               </FormField>
               <FormField label="駐車料適用開始日" value={displayDate(form.parking_fee_effective_from || null)} editing={editing}>
                 <input type="date" value={form.parking_fee_effective_from} onChange={(event) => set('parking_fee_effective_from', event.target.value)} />
