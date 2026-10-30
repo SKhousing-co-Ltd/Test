@@ -9,12 +9,18 @@ declare
   v_contract_id uuid;
   v_contract_unit_id uuid;
   v_count integer;
+  v_asset_count integer;
   v_fk record;
   v_has_reference boolean;
 begin
-  select asset_id into strict v_asset_id
+  select min(asset_id::text)::uuid, count(*) into v_asset_id, v_asset_count
   from public.asset_master
   where asset_name = '三共京橋ビル';
+  if v_asset_count = 0 then
+    return;
+  elsif v_asset_count <> 1 then
+    raise exception '三共京橋ビルのアセットが一意ではありません';
+  end if;
 
   select array_agg(unit_id order by unit_code), count(*)
   into v_unit_ids, v_count

@@ -8,20 +8,32 @@ declare
   v_lease_contract_id uuid;
   v_updated integer;
   v_deleted integer;
+  v_property_count integer;
+  v_duplicate_count integer;
 begin
-  select asset_id
-    into strict v_property_id
+  select min(asset_id::text)::uuid, count(*)
+    into v_property_id, v_property_count
     from public.asset_master
    where asset_name = '三共福岡ビル';
+  if v_property_count = 0 then
+    return;
+  elsif v_property_count <> 1 then
+    raise exception '三共福岡ビルのアセットが一意ではありません';
+  end if;
 
-  select unit_id
-    into strict v_duplicate_unit_id
+  select count(*), min(unit_id::text)::uuid
+    into v_duplicate_count, v_duplicate_unit_id
     from public.unit_master
    where property_id = v_property_id
      and unit_code = '1F B'
      and floor_label is null
      and unit_type = 'office'
      and is_active;
+  if v_duplicate_count = 0 then
+    return; -- The imported correction record is absent in the preview database or already consolidated.
+  elsif v_duplicate_count <> 1 then
+    raise exception '誤作成された福岡1F B区画が一意ではありません';
+  end if;
 
   select unit_id
     into strict v_canonical_unit_id
@@ -33,7 +45,7 @@ begin
      and is_active;
 
   select lcu.lease_contract_unit_id, c.lease_contract_id
-    into strict v_lease_contract_unit_id, v_lease_contract_id
+    into v_lease_contract_unit_id, v_lease_contract_id
     from public.lease_contract_unit lcu
     join public.lease_contract c on c.lease_contract_id = lcu.lease_contract_id
     join public.tenant_master t on t.tenant_id = c.tenant_id
@@ -44,6 +56,10 @@ begin
      and lcu.monthly_rent_amount = 1118005
      and lcu.deposit_amount = 11180050
      and t.tenant_name = '(株)アースコーポレーション';
+
+  if not found then
+    return; -- This manually registered contract is absent from clean preview data.
+  end if;
 
   if exists (
     select 1 from public.lease_contract_unit
