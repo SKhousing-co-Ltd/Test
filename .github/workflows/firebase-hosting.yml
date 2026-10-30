@@ -1,27 +1,23 @@
-name: Deploy to GitHub Pages
+name: Deploy to Firebase Hosting
 
 on:
   push:
-    branches: ['main']
+    branches:
+      - main
+      
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
   id-token: write
 
 concurrency:
-  group: 'pages'
+  group: firebase-hosting
   cancel-in-progress: true
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,15 +36,12 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          
-      - name: Setup Pages
-        uses: actions/configure-pages@v6
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v4
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
         with:
-          path: './dist'
+          workload_identity_provider: projects/234372549624/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: github-deployer@sk-kaname.iam.gserviceaccount.com
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Deploy to Firebase Hosting
+        run: npx --yes firebase-tools@latest deploy --only hosting --project sk-kaname --non-interactive
