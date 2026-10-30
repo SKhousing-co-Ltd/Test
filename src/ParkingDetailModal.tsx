@@ -15,6 +15,12 @@ type MainContractCandidate = {
   contract_end_date: string | null;
   unit_labels: string;
 };
+type MainContractUnitChoice = {
+  lease_contract_unit_id: string;
+  floor_label: string | null;
+  unit_code: string;
+  unit_name: string | null;
+};
 type ParkingSpaceDetail = {
   space_number: string;
   length_mm: number | null;
@@ -109,6 +115,7 @@ type FormState = {
   tenant_id: string;
   parking_scope: '' | ParkingScope;
   main_lease_contract_id: string;
+  main_lease_contract_unit_id: string;
   contract_start_date: string;
   contract_end_date: string;
   monthly_parking_fee: string;
@@ -176,6 +183,8 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   const [assignmentDetail, setAssignmentDetail] = useState<AssignmentDetail | null>(null);
   const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [mainContracts, setMainContracts] = useState<MainContractCandidate[]>([]);
+  const [mainContractUnitChoices, setMainContractUnitChoices] = useState<MainContractUnitChoice[]>([]);
+  const [mainContractUnitChoicesLoading, setMainContractUnitChoicesLoading] = useState(false);
   const [contractMeta, setContractMeta] = useState<ParkingContractMeta | null>(null);
   const [contractUnits, setContractUnits] = useState<ContractUnitDetail[]>([]);
   const [contractSnapshotUnits, setContractSnapshotUnits] = useState<ContractSnapshot[]>([]);
@@ -202,6 +211,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     tenant_id: row.tenant_id ?? '',
     parking_scope: row.parking_scope ?? '',
     main_lease_contract_id: row.main_lease_contract_id ?? '',
+    main_lease_contract_unit_id: row.main_lease_contract_unit_id ?? '',
     contract_start_date: row.contract_start_date ?? '',
     contract_end_date: row.contract_end_date ?? '',
     monthly_parking_fee: row.monthly_parking_fee.toString(),
@@ -390,6 +400,52 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     () => mainContracts.filter((contract) => contract.tenant_id === form.tenant_id),
     [form.tenant_id, mainContracts],
   );
+  useEffect(() => {
+    if (!supabase || !form.main_lease_contract_id || form.parking_scope !== 'internal') {
+      setMainContractUnitChoices([]);
+      setMainContractUnitChoicesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setMainContractUnitChoicesLoading(true);
+    void (async () => {
+      const { data: contractUnits, error: contractUnitsError } = await supabase
+        .from('lease_contract_unit')
+        .select('lease_contract_unit_id, unit_id')
+        .eq('lease_contract_id', form.main_lease_contract_id);
+      if (contractUnitsError) {
+        if (!cancelled) {
+          setMainContractUnitChoices([]);
+          setMessage(`主契約の区画を取得できませんでした: ${contractUnitsError.message}`);
+          setMainContractUnitChoicesLoading(false);
+        }
+        return;
+      }
+      const unitIds = [...new Set((contractUnits ?? []).map((item) => item.unit_id))];
+      const { data: units, error: unitsError } = unitIds.length
+        ? await supabase.from('unit_master').select('unit_id, floor_label, unit_code, unit_name, unit_type').in('unit_id', unitIds)
+        : { data: [], error: null };
+      if (cancelled) return;
+      if (unitsError) {
+        setMainContractUnitChoices([]);
+        setMessage(`主契約区画の情報を取得できませんでした: ${unitsError.message}`);
+        setMainContractUnitChoicesLoading(false);
+        return;
+      }
+      const unitById = new Map((units ?? []).filter((unit) => unit.unit_type !== 'parking' && unit.unit_type !== 'bicycle_parking').map((unit) => [unit.unit_id, unit]));
+      const choices = (contractUnits ?? []).flatMap((item) => {
+        const unit = unitById.get(item.unit_id);
+        return unit ? [{ lease_contract_unit_id: item.lease_contract_unit_id, floor_label: unit.floor_label, unit_code: unit.unit_code, unit_name: unit.unit_name }] : [];
+      }).sort((left, right) => collator.compare(`${left.floor_label ?? ''} ${left.unit_code}`, `${right.floor_label ?? ''} ${right.unit_code}`));
+      setMainContractUnitChoices(choices);
+      setForm((current) => {
+        if (choices.some((choice) => choice.lease_contract_unit_id === current.main_lease_contract_unit_id)) return current;
+        return { ...current, main_lease_contract_unit_id: choices.length === 1 ? choices[0].lease_contract_unit_id : '' };
+      });
+      setMainContractUnitChoicesLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [form.main_lease_contract_id, form.parking_scope]);
   const filteredApprovalCandidates = useMemo(() => {
     const normalized = approvalQuery.normalize('NFKC').toLocaleLowerCase('ja-JP').trim();
     if (!normalized) return approvalCandidates;
@@ -427,6 +483,10 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       setMessage('内部契約では主契約を選択してください。');
       return;
     }
+    if (occupied && form.parking_scope === 'internal' && (mainContractUnitChoicesLoading || !form.main_lease_contract_unit_id)) {
+      setMessage(mainContractUnitChoicesLoading ? '主契約区画を読み込み中です。' : '駐車料を紐づける主契約区画を選択してください。');
+      return;
+    }
     const monthlyParkingFee = Number(form.monthly_parking_fee);
     if (occupied && (!form.monthly_parking_fee.trim() || !Number.isSafeInteger(monthlyParkingFee) || monthlyParkingFee < 0)) {
       setMessage('月額駐車料は0以上の整数で入力してください。');
@@ -438,7 +498,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     }
     setSaving(true);
     setMessage('');
-    const { error } = await supabase.rpc('update_parking_registration', {
+    const { error } = await supabase.rpc('update_parking_registration_with_target_unit', {
       p_unit_id: row.unit_id,
       p_lease_contract_unit_id: row.lease_contract_unit_id,
       p_lease_contract_id: row.lease_contract_id,
@@ -450,6 +510,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       p_tenant_id: occupied ? form.tenant_id || null : null,
       p_parking_scope: occupied ? form.parking_scope || null : null,
       p_main_lease_contract_id: occupied && form.parking_scope === 'internal' ? form.main_lease_contract_id || null : null,
+      p_main_lease_contract_unit_id: occupied && form.parking_scope === 'internal' ? form.main_lease_contract_unit_id || null : null,
       p_contract_start_date: occupied ? form.contract_start_date || null : null,
       p_contract_end_date: occupied ? form.contract_end_date || null : null,
       p_access_code: occupied ? form.access_code : null,
@@ -490,6 +551,10 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
 
   const tenantName = tenants.find((tenant) => tenant.tenant_id === form.tenant_id)?.tenant_name ?? row.tenant_name ?? '—';
   const mainContractLabel = contractChoices.find((contract) => contract.lease_contract_id === form.main_lease_contract_id)?.unit_labels ?? '—';
+  const mainContractUnitLabel = mainContractUnitChoices.find((choice) => choice.lease_contract_unit_id === form.main_lease_contract_unit_id);
+  const mainContractUnitDisplay = mainContractUnitLabel
+    ? [mainContractUnitLabel.floor_label, mainContractUnitLabel.unit_name || mainContractUnitLabel.unit_code].filter(Boolean).join(' ')
+    : mainContractUnitChoicesLoading ? '読み込み中…' : '未選択';
   const contractKey = contractMeta?.source_record_key || row.lease_contract_id?.slice(0, 8) || '—';
   const currentContractStatus = contractStatusLabels[contractMeta?.contract_status ?? ''] ?? contractMeta?.contract_status ?? '—';
   const canOpenParkingDocument = Boolean(row.lease_contract_id && (parkingTemplateReady || contractDocument));
@@ -544,7 +609,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
               <FormField label="契約先" value={tenantName} editing={editing}>
                 <div className="parking-tenant-editor">
                   <input placeholder="契約先を検索" value={tenantQuery} onChange={(event) => setTenantQuery(event.target.value)} />
-                  <select value={form.tenant_id} onChange={(event) => { set('tenant_id', event.target.value); set('main_lease_contract_id', ''); }}>
+                  <select value={form.tenant_id} onChange={(event) => { set('tenant_id', event.target.value); set('main_lease_contract_id', ''); set('main_lease_contract_unit_id', ''); setMainContractUnitChoices([]); }}>
                     <option value="">選択してください</option>
                     {tenantChoices.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{tenant.tenant_name}</option>)}
                   </select>
@@ -554,7 +619,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
                 <select value={form.parking_scope} onChange={(event) => {
                   const scope = event.target.value as '' | ParkingScope;
                   set('parking_scope', scope);
-                  if (scope === 'external') set('main_lease_contract_id', '');
+                  if (scope === 'external') { set('main_lease_contract_id', ''); set('main_lease_contract_unit_id', ''); setMainContractUnitChoices([]); }
                 }}>
                   <option value="">選択してください</option>
                   <option value="internal">内部</option>
@@ -568,11 +633,17 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
                 <input type="date" value={form.contract_end_date} onChange={(event) => set('contract_end_date', event.target.value)} />
               </FormField>
               <FormField label="主契約" value={form.parking_scope === 'internal' ? mainContractLabel : '対象外'} editing={editing && form.parking_scope === 'internal'}>
-                {form.parking_scope === 'internal' ? <select value={form.main_lease_contract_id} onChange={(event) => set('main_lease_contract_id', event.target.value)}>
+                {form.parking_scope === 'internal' ? <select value={form.main_lease_contract_id} onChange={(event) => { set('main_lease_contract_id', event.target.value); set('main_lease_contract_unit_id', ''); setMainContractUnitChoices([]); }}>
                   <option value="">主契約を選択</option>
                   {contractChoices.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.unit_labels} / {displayDate(contract.contract_start_date)}</option>)}
                 </select> : null}
               </FormField>
+              {form.parking_scope === 'internal' ? <FormField label="駐車料を紐づける主契約区画" value={mainContractUnitDisplay} editing={editing}>
+                <select value={form.main_lease_contract_unit_id} disabled={mainContractUnitChoicesLoading || !form.main_lease_contract_id} onChange={(event) => set('main_lease_contract_unit_id', event.target.value)}>
+                  <option value="">主契約区画を選択</option>
+                  {mainContractUnitChoices.map((choice) => <option key={choice.lease_contract_unit_id} value={choice.lease_contract_unit_id}>{[choice.floor_label, choice.unit_name || choice.unit_code].filter(Boolean).join(' ')}（{choice.unit_code}）</option>)}
+                </select>
+              </FormField> : null}
               <FormField label="月額駐車料" value={currency(Number(form.monthly_parking_fee || 0))} editing={editing}>
                 <input type="number" min="0" step="1" value={form.monthly_parking_fee} onChange={(event) => set('monthly_parking_fee', event.target.value)} />
               </FormField>

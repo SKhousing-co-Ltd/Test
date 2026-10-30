@@ -22,6 +22,7 @@ type Contract = {
       property_id: string;
       unit_code: string;
       unit_name: string | null;
+      floor_label: string | null;
       unit_type: string;
     } | null;
   }> | null;
@@ -67,6 +68,39 @@ const openAppsuiteRecord = (
 };
 const one = (value: unknown) =>
   Array.isArray(value) ? (value[0] ?? null) : value;
+const contractTypeLabels: Record<string, string> = {
+  antenna: "アンテナ",
+  bicycle_parking: "駐輪場",
+  fixed_term_building_lease: "定期借家",
+  fixed_term_lease: "定期借家",
+  lease: "通常契約",
+  ordinary_lease: "普通賃貸借",
+  other: "その他",
+  parking: "駐車場",
+  signage: "看板",
+  warehouse: "倉庫",
+};
+const contractUnitLabels = (units: Contract["contract_units"]) => {
+  const labels = (units ?? [])
+    .map(({ unit }) => {
+      if (!unit) return "";
+      const name = unit.unit_name?.trim();
+      if (unit.unit_type === "parking" || unit.unit_type === "bicycle_parking") {
+        const slot = name?.match(/(?:駐車枠|枠)\s*(.+)/)?.[1]?.trim();
+        return slot ? `枠${slot}` : name || unit.unit_code;
+      }
+      const place = [unit.floor_label?.trim(), name || unit.unit_code]
+        .filter(Boolean)
+        .join(" ");
+      return name && name !== unit.unit_code ? `${place} (${unit.unit_code})` : place;
+    })
+    .filter(Boolean);
+  const uniqueLabels = [...new Set(labels)];
+  if (!uniqueLabels.length) return "区画未設定";
+  const shown = uniqueLabels.slice(0, 3).join("、");
+  const remaining = uniqueLabels.length - 3;
+  return remaining > 0 ? `${shown}、他${remaining}区画` : shown;
+};
 
 export function ContractAdminPage() {
   const location = useLocation();
@@ -126,7 +160,7 @@ export function ContractAdminPage() {
     const result = await supabase
       .from("lease_contract")
       .select(
-        "lease_contract_id, contract_status, contract_type, contract_start_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(monthly_rent_amount, monthly_common_charge_amount, deposit_amount, unit:unit_master!inner(property_id, unit_code, unit_name, unit_type))",
+        "lease_contract_id, contract_status, contract_type, contract_start_date, contract_content_reviewed_at, contract_document_completed_at, btob_registered_at, tenant:tenant_master(tenant_name), contract_units:lease_contract_unit!inner(monthly_rent_amount, monthly_common_charge_amount, deposit_amount, unit:unit_master!inner(property_id, unit_code, unit_name, floor_label, unit_type))",
       )
       .eq("contract_units.unit.property_id", propertyId)
       .order("updated_at", { ascending: false });
@@ -290,8 +324,10 @@ export function ContractAdminPage() {
             {contracts.map((c) => (
               <option key={c.lease_contract_id} value={c.lease_contract_id}>
                 {c.tenant?.tenant_name ?? "契約先未設定"} /{" "}
-                {c.contract_type ?? "種別未設定"} /{" "}
-                {c.contract_start_date ?? "開始日未設定"}
+                {c.contract_type
+                  ? (contractTypeLabels[c.contract_type] ?? c.contract_type)
+                  : "種別未設定"} /{" "}
+                {contractUnitLabels(c.contract_units)}
               </option>
             ))}
           </select>
