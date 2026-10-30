@@ -67,6 +67,25 @@ export type ContractUnit = {
   lease_end_date: string | null;
 };
 
+export type LeaseContractUnitTerm = {
+  lease_contract_unit_term_id: string;
+  lease_contract_amendment_id: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  monthly_rent_amount: number | null;
+  monthly_common_charge_amount: number | null;
+};
+
+type RentChangeLog = {
+  lease_contract_unit_rent_change_log_id: string;
+  effective_from: string;
+  change_action: 'scheduled' | 'revised' | 'cancelled';
+  before_values: { monthly_rent_amount?: number | null; monthly_common_charge_amount?: number | null } | null;
+  after_values: { monthly_rent_amount?: number | null; monthly_common_charge_amount?: number | null } | null;
+  reason: string;
+  changed_at: string;
+};
+
 type RelatedContract = {
   lease_contract_unit_id: string;
   lease_contract_id: string;
@@ -141,6 +160,10 @@ export function date(value: string | null): string {
   return value || '—';
 }
 
+function displayDate(value: string | null): string {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString('ja-JP') : '無期限';
+}
+
 export function money(value: number | null | undefined): string {
   return value == null ? '—' : currency.format(Number(value));
 }
@@ -208,6 +231,8 @@ function RelatedContractRows({ rows, candidate = false, canEditParking }: { rows
 
 export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilities, onClose, onChanged }: ContractDetailModalProps) {
   const [detail, setDetail] = useState<ContractDetailResponse | null>(null);
+  const [rentTerms, setRentTerms] = useState<LeaseContractUnitTerm[]>([]);
+  const [rentChangeLogs, setRentChangeLogs] = useState<RentChangeLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [approvalError, setApprovalError] = useState('');
@@ -237,6 +262,22 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
         setError(`契約情報を取得できませんでした: ${loadError.message}`);
       } else {
         setDetail(data as ContractDetailResponse);
+        const [termResult, changeLogResult] = await Promise.all([
+          supabase.from('lease_contract_unit_term')
+            .select('lease_contract_unit_term_id, lease_contract_amendment_id, effective_from, effective_to, monthly_rent_amount, monthly_common_charge_amount')
+            .eq('lease_contract_unit_id', leaseContractUnitId)
+            .order('effective_from'),
+          supabase.from('lease_contract_unit_rent_change_log')
+            .select('lease_contract_unit_rent_change_log_id, effective_from, change_action, before_values, after_values, reason, changed_at')
+            .eq('lease_contract_unit_id', leaseContractUnitId)
+            .order('changed_at', { ascending: false })
+            .limit(30),
+        ]);
+        if (cancelled()) return;
+        if (termResult.error) setError(`賃料履歴を取得できませんでした: ${termResult.error.message}`);
+        else setRentTerms((termResult.data ?? []) as LeaseContractUnitTerm[]);
+        if (changeLogResult.error) setError(`賃料変更履歴を取得できませんでした: ${changeLogResult.error.message}`);
+        else setRentChangeLogs((changeLogResult.data ?? []) as RentChangeLog[]);
         const loadedDetail = data as ContractDetailResponse;
         const contractId = loadedDetail.contract.lease_contract_id;
         if ((loadedDetail.contract.unit_type === 'parking' && capabilities.canEditParkingContract) || (loadedDetail.contract.unit_type !== 'parking' && capabilities.canEditContract)) {
@@ -305,11 +346,18 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
   };
 
   const contract = detail?.contract;
+  const selectedRentTerm = rentTerms.find((term) =>
+    term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate),
+  );
+  const displayedRent = selectedRentTerm ? selectedRentTerm.monthly_rent_amount : contract?.monthly_rent_amount;
+  const displayedCommonCharge = selectedRentTerm
+    ? selectedRentTerm.monthly_common_charge_amount
+    : contract?.monthly_common_charge_amount;
   return <Dialog title="契約詳細" onClose={onClose} className="contract-detail-dialog">
     {loading && <p className="contract-detail-loading">契約情報を読み込んでいます。</p>}
     {error && <div className="contract-detail-error"><p>{error}</p><button type="button" className="secondary-button" onClick={onClose}>閉じる</button></div>}
     {!loading && contract && <div className="contract-detail-body">
-      {editing ? <MainContractEditor contract={contract} asOfDate={asOfDate} onCancel={() => setEditing(false)} onApplied={async () => { setEditing(false); await load(); onChanged?.(); }} /> : <>
+      {editing ? <MainContractEditor contract={contract} asOfDate={asOfDate} rentTerms={rentTerms} onCancel={() => setEditing(false)} onApplied={async () => { setEditing(false); await load(); onChanged?.(); }} /> : <>
       <section className="contract-detail-summary">
         <header>
           <div><p className="section-kicker">{contract.unit_type === 'parking' ? 'PARKING CONTRACT' : 'MAIN CONTRACT'}</p><h3>{contract.tenant_name}</h3><p>{contract.property_name}｜{contract.floor_label || '階未設定'}｜{contract.unit_name || contract.unit_code}</p></div>
@@ -325,9 +373,9 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           <Field label="再契約元" value={contract.renewed_from_contract_id || '—'} />
           <Field label="面積" value={contract.leased_area_sqm == null ? '—' : `${number.format(Number(contract.leased_area_sqm))} ㎡`} />
           <Field label="商品" value={productCategoryLabel[normalizeProductCategory(contract.unit_type)]} />
-          <Field label="賃料（DB登録値）" value={money(contract.monthly_rent_amount)} />
-          <Field label="共益費" value={money(contract.monthly_common_charge_amount)} />
-          <Field label="月額合計" value={money(contract.monthly_total_amount)} />
+          <Field label={`賃料（${displayDate(asOfDate)}現在）`} value={money(displayedRent)} />
+          <Field label="共益費" value={money(displayedCommonCharge)} />
+          <Field label="月額合計" value={money(Number(displayedRent ?? 0) + Number(displayedCommonCharge ?? 0))} />
           <Field label="敷金" value={money(contract.deposit_amount)} />
           <Field label="保証金" value={money(contract.security_deposit_amount)} />
           <Field label="礼金" value={money(contract.key_money_amount)} />
@@ -338,6 +386,24 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           <Field label="備考" value={contract.notes || '—'} />
           <Field label="最終更新" value={new Date(contract.updated_at).toLocaleString('ja-JP')} />
         </div>
+      </section>
+
+      <section className="contract-rent-history">
+        <div className="contract-detail-section-heading"><div><h3>賃料履歴・段階賃料</h3><p>適用開始日ごとの賃料と共益費です。次の適用開始日の前日まで有効です。</p></div></div>
+        {rentTerms.length === 0 ? <p className="contract-detail-empty">賃料履歴はありません。</p> : <div className="contract-detail-table-wrap"><table className="contract-detail-table">
+          <thead><tr><th>適用期間</th><th>月額賃料</th><th>月額共益費</th><th>合計</th></tr></thead>
+          <tbody>{rentTerms.map((term) => <tr key={term.lease_contract_unit_term_id} className={term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate) ? 'current' : ''}>
+            <td>{displayDate(term.effective_from)} ～ {displayDate(term.effective_to)}</td>
+            <td className="numeric">{money(term.monthly_rent_amount)}</td>
+            <td className="numeric">{money(term.monthly_common_charge_amount)}</td>
+            <td className="numeric">{money(Number(term.monthly_rent_amount ?? 0) + Number(term.monthly_common_charge_amount ?? 0))}</td>
+          </tr>)}</tbody>
+        </table></div>}
+        {rentChangeLogs.length > 0 && <div className="contract-rent-change-log"><h4>変更記録</h4><ul>{rentChangeLogs.map((entry) => <li key={entry.lease_contract_unit_rent_change_log_id}>
+          <strong>{displayDate(entry.effective_from)}適用・{entry.change_action === 'cancelled' ? '予定取消' : entry.change_action === 'revised' ? '条件修正' : '条件追加'}</strong>
+          <span>{entry.before_values ? `${money(entry.before_values.monthly_rent_amount)} / ${money(entry.before_values.monthly_common_charge_amount)}` : '—'} → {entry.after_values ? `${money(entry.after_values.monthly_rent_amount)} / ${money(entry.after_values.monthly_common_charge_amount)}` : '取消'}</span>
+          <small>{entry.reason}（{new Date(entry.changed_at).toLocaleString('ja-JP')}）</small>
+        </li>)}</ul></div>}
       </section>
 
       <section>
@@ -369,7 +435,7 @@ export function ContractDetailModal({ leaseContractUnitId, asOfDate, capabilitie
           <thead><tr><th>区画</th><th>種別</th><th>面積</th><th>賃料</th><th>共益費</th><th>契約期間</th></tr></thead>
           <tbody>{detail.contract_units.map((unit) => <tr key={unit.lease_contract_unit_id} className={unit.lease_contract_unit_id === leaseContractUnitId ? 'current' : ''}>
             <td><strong>{[unit.floor_label, unit.unit_name || unit.unit_code].filter(Boolean).join(' ')}</strong><small>{unit.unit_code}</small></td><td>{unit.unit_type}</td>
-            <td className="numeric">{unit.leased_area_sqm == null ? '—' : number.format(Number(unit.leased_area_sqm))}</td><td className="numeric">{money(unit.monthly_rent_amount)}</td><td className="numeric">{money(unit.monthly_common_charge_amount)}</td><td>{date(unit.lease_start_date)} ～ {date(unit.lease_end_date)}</td>
+            <td className="numeric">{unit.leased_area_sqm == null ? '—' : number.format(Number(unit.leased_area_sqm))}</td><td className="numeric">{money(unit.lease_contract_unit_id === leaseContractUnitId && selectedRentTerm ? selectedRentTerm.monthly_rent_amount : unit.monthly_rent_amount)}</td><td className="numeric">{money(unit.lease_contract_unit_id === leaseContractUnitId && selectedRentTerm ? selectedRentTerm.monthly_common_charge_amount : unit.monthly_common_charge_amount)}</td><td>{date(unit.lease_start_date)} ～ {date(unit.lease_end_date)}</td>
           </tr>)}</tbody>
         </table></div>
       </section>
