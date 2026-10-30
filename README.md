@@ -126,3 +126,39 @@ npm config get https-proxy
 3. トップページで「ダミーデータを期待値どおりに取得できました。」と表示されることを確認します。
 
 このテーブルは接続確認専用の公開ダミーデータです。業務データは同じ公開ポリシーを使わず、要件に応じた Row Level Security ポリシーを設定してください。
+
+## ホスティング環境
+
+画面（React アプリ）は **Firebase Hosting**（Google Cloud）で公開しています。2026年10月に GitHub Pages から移行しました。
+
+| 項目 | 内容 |
+| --- | --- |
+| 公開URL | https://sk-kaname.web.app |
+| Firebase / Google Cloud プロジェクト | `sk-kaname`（組織: sk-housing.jp） |
+| 管理画面 | [Firebase コンソール](https://console.firebase.google.com/project/sk-kaname/hosting) / [Google Cloud コンソール](https://console.cloud.google.com/home/dashboard?project=sk-kaname) |
+| ビルド出力 | `dist`（`npm run build`） |
+| 設定ファイル | `firebase.json`（SPA のため全URLを `/index.html` に rewrite）、`.firebaserc` |
+| データベース・認証 | Supabase（ホスティングとは別に管理） |
+
+### 自動デプロイ
+
+`main` に push（プルリクエストのマージを含む）すると、`.github/workflows/firebase-hosting.yml` が実行され、ビルドして Firebase Hosting に公開します。実行結果は GitHub の Actions タブで確認できます。
+
+- ビルド時の環境変数 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` は GitHub の Repository secrets から渡しています。Supabase のキーを変更した場合は Secrets も更新してください。
+- Google Cloud への認証は **Workload Identity 連携**（鍵ファイルなし）です。組織ポリシーでサービスアカウントキーの作成が禁止されているため、`firebase init hosting:github` やサービスアカウントキー（JSON）方式は使えません。
+  - サービスアカウント: `github-deployer@sk-kaname.iam.gserviceaccount.com`（権限: Firebase Hosting 管理者、Service Usage 閲覧者・ユーザー、API キー閲覧者）
+  - Workload Identity プール / プロバイダ: `github` / `github-provider`（このリポジトリの GitHub Actions からのみ利用可能）
+  - これらを削除・変更すると自動デプロイが失敗します。
+
+### 手動デプロイ
+
+通常は不要です。手元から直接公開する場合は、`.env.local` を用意したうえで次を実行します（Firebase CLI: `npm install -g firebase-tools`、`firebase login` が必要）。
+
+```sh
+npm run build
+firebase deploy --only hosting
+```
+
+### Supabase 側の設定
+
+Supabase Dashboard の Authentication > URL Configuration で、Site URL を `https://sk-kaname.web.app`、Redirect URLs に `https://sk-kaname.web.app/**` を設定しています。公開URLを変更した場合はここも更新してください。
