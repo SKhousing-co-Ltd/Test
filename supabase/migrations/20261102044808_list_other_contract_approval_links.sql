@@ -1,4 +1,4 @@
-﻿create or replace function public.list_other_contract_approval_links(p_lease_contract_id uuid)
+create or replace function public.list_other_contract_approval_links(p_lease_contract_id uuid)
 returns table (
   appsuite_record_id uuid,
   app_id varchar,
