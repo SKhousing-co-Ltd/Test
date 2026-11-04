@@ -847,7 +847,8 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
   const [page, setPage] = useState(1);
   const [archiveLoaded, setArchiveLoaded] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
-  const [archiveCount, setArchiveCount] = useState(0);
+  const [resolvedCount, setResolvedCount] = useState(0);
+  const [closedCount, setClosedCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [rechecking, setRechecking] = useState(false);
   const [working, setWorking] = useState(false);
@@ -895,8 +896,9 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       .in('status', [...ACTIVE_REQUEST_STATUSES])
       .order('change_request_id', { ascending: true })
       .range(from, to) as unknown as PromiseLike<PageResponse<ChangeRequest>>);
-    const [archiveCountResult, archiveResult] = await Promise.all([
-      client.from('change_request').select('change_request_id', { count: 'exact', head: true }).in('status', [...ARCHIVED_REQUEST_STATUSES]),
+    const [resolvedCountResult, closedCountResult, archiveResult] = await Promise.all([
+      client.from('change_request').select('change_request_id', { count: 'exact', head: true }).eq('status', 'resolved'),
+      client.from('change_request').select('change_request_id', { count: 'exact', head: true }).in('status', ['applied', 'excluded']),
       includeArchive
         ? fetchAllPages<ChangeRequest>((from, to) => client.from('change_request')
           .select(selectFields)
@@ -907,8 +909,10 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     ]);
     setLoading(false);
     if (activeResult.error) { setError(`作業中の案件を読み込めませんでした: ${activeResult.error.message}`); return; }
-    if (archiveCountResult.error) setError(`完了分の件数を取得できませんでした: ${archiveCountResult.error.message}`);
-    else setArchiveCount(archiveCountResult.count ?? 0);
+    if (resolvedCountResult.error) setError(`確定待ちの件数を取得できませんでした: ${resolvedCountResult.error.message}`);
+    else setResolvedCount(resolvedCountResult.count ?? 0);
+    if (closedCountResult.error) setError(`確定済・対象外の件数を取得できませんでした: ${closedCountResult.error.message}`);
+    else setClosedCount(closedCountResult.count ?? 0);
     if (archiveResult.error) { setError(`完了分を読み込めませんでした: ${archiveResult.error.message}`); return; }
     let result = [...(activeResult.data ?? []), ...(archiveResult.data ?? [])];
     const missingRecordRequests = result.filter((request) => request.source_type === 'desknets' && !request.source_record);
@@ -1022,6 +1026,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     const matchesStatus = filter === 'all'
       || (filter === 'active' && ACTIVE_REQUEST_STATUSES.includes(request.status as typeof ACTIVE_REQUEST_STATUSES[number]))
       || (filter === 'archived' && ARCHIVED_REQUEST_STATUSES.includes(request.status as typeof ARCHIVED_REQUEST_STATUSES[number]))
+      || (filter === 'closed' && ['applied', 'excluded'].includes(request.status))
       || request.status === filter;
     const matchesType = typeFilter === 'all' || requestTypeGroup(request) === typeFilter;
     const matchesSource = sourceFilter === 'all' || request.source_type === sourceFilter;
@@ -1403,13 +1408,13 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     setSearch('');
     setPage(1);
   };
-  const toggleArchivedFromMetric = async () => {
-    if (archiveLoaded && filter === 'archived') {
+  const toggleArchivedFromMetric = async (nextFilter: 'resolved' | 'closed') => {
+    if (archiveLoaded && filter === nextFilter) {
       await toggleArchivedRequests();
       return;
     }
     if (!archiveLoaded) await toggleArchivedRequests();
-    applyMetricFilter('archived');
+    applyMetricFilter(nextFilter);
   };
   const sourceTypes = Array.from(new Set(requests.map((request) => request.source_type))).sort();
   const visiblePageNumbers = [...new Set([1, page - 1, page, page + 1, pageCount].filter((number) => number >= 1 && number <= pageCount))].sort((a, b) => a - b);
@@ -1422,13 +1427,14 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
       <button type="button" className="thread-work-stat" aria-pressed={filter === 'open'} onClick={() => applyMetricFilter('open')}><span><i className="open-dot" />要確認</span><strong>{loading ? '—' : openCount}</strong></button>
       <button type="button" className="thread-work-stat" aria-pressed={filter === 'in_review'} onClick={() => applyMetricFilter('in_review')}><span><i className="review-dot" />確認中</span><strong>{loading ? '—' : inReviewCount}</strong></button>
       <button type="button" className="thread-work-stat" aria-pressed={filter === 'on_hold'} onClick={() => applyMetricFilter('on_hold')}><span><i className="hold-dot" />保留</span><strong>{loading ? '—' : holdCount}</strong></button>
-      <button type="button" className="thread-work-stat archived" aria-pressed={filter === 'archived'} onClick={() => void toggleArchivedFromMetric()} disabled={loading || archiveLoading}><span><i className="archive-dot" />{archiveLoaded && filter === 'archived' ? '完了分（クリックで隠す）' : archiveLoaded ? '完了分（クリックで表示）' : '完了分（クリックで読み込み）'}</span><strong>{archiveCount}</strong><small>確認済み・確定済み・対象外</small></button>
+      <button type="button" className="thread-work-stat archived" aria-pressed={filter === 'closed'} onClick={() => void toggleArchivedFromMetric('closed')} disabled={loading || archiveLoading}><span><i className="archive-dot" />確定済・対象外</span><strong>{closedCount}</strong><small>{archiveLoaded && filter === 'closed' ? 'クリックで隠す' : archiveLoaded ? 'クリックで一覧表示' : 'クリックで読み込み'}</small></button>
+      <button type="button" className="thread-work-stat archived pending" aria-pressed={filter === 'resolved'} onClick={() => void toggleArchivedFromMetric('resolved')} disabled={loading || archiveLoading}><span><i className="archive-dot" />確定待ち</span><strong>{resolvedCount}</strong><small>{archiveLoaded && filter === 'resolved' ? 'クリックで隠す' : archiveLoaded ? 'クリックで一覧表示' : 'クリックで読み込み'}</small></button>
     </div>
     <div className="thread-toolbar">
       <label className="thread-search-field"><span>⌕</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="案件名・物件名・テナント名・稟議番号で検索" /></label>
       <select value={typeFilter} onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }} aria-label="案件種別"><option value="all">すべての種別</option>{Object.entries(requestTypeGroupLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       <select value={sourceFilter} onChange={(event) => { setSourceFilter(event.target.value); setPage(1); }} aria-label="発生元"><option value="all">すべての発生元</option>{sourceTypes.map((source) => <option key={source} value={source}>{source === 'initial_import' ? 'Excel取込' : source === 'desknets' ? 'AppSuite' : source}</option>)}</select>
-      <select value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }} aria-label="状態"><option value="all">作業状態: すべて</option><option value="active">作業中（要確認・確認中・保留）</option><option value="open">要確認</option><option value="in_review">確認中</option><option value="on_hold">保留</option>{archiveLoaded && <><option value="archived">完了分</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option></>}</select>
+      <select value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }} aria-label="状態"><option value="all">作業状態: すべて</option><option value="active">作業中（要確認・確認中・保留）</option><option value="open">要確認</option><option value="in_review">確認中</option><option value="on_hold">保留</option>{archiveLoaded && <><option value="archived">完了分</option><option value="closed">確定済・対象外</option><option value="resolved">確認済み（確定待ち）</option><option value="applied">確定済み</option><option value="excluded">対象外</option></>}</select>
       <label className="thread-sort-field"><span>並び順</span><select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as 'newest' | 'oldest'); setPage(1); }}><option value="newest">更新日時が新しい順</option><option value="oldest">更新日時が古い順</option></select></label>
     </div>
      <div className="change-workbench-layout thread-workbench-layout">
@@ -1465,14 +1471,6 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
           </article>)}
         </details>}
         <AppsuiteSourceContext request={selected} />
-        {isAppsuiteContractRequest && editable && !isLinkedContractCreate && !isContractCreateLinkLoading && <details className="change-card historical-roll-check" open={historicalCandidates.length === 0}><summary>過去レントロール確認（手動確認・証跡）</summary><p>候補が見つからない場合や、Excelの確認結果を証跡として残す場合に使用します。</p><div className="change-item-editor">
-          <label>基準日<input type="date" value={snapshotDate} onChange={(event) => setSnapshotDate(event.target.value)} /></label>
-          <label>ファイル名<input value={snapshotFile} onChange={(event) => setSnapshotFile(event.target.value)} /></label>
-          <label>シート名<input value={snapshotSheet} onChange={(event) => setSnapshotSheet(event.target.value)} /></label>
-          <label>行番号<input inputMode="numeric" value={snapshotRow} onChange={(event) => setSnapshotRow(event.target.value)} /></label>
-          <label>確認結果<select value={snapshotResult} onChange={(event) => setSnapshotResult(event.target.value as typeof snapshotResult)}><option value="rent_roll_only">レントロールに存在・contractなし</option><option value="not_found">レントロールにも存在しない</option><option value="uncertain">要追加確認</option></select></label>
-          <button className="secondary-button" onClick={() => void saveSnapshotEvidence()} disabled={working}>確認証跡を保存</button>
-        </div></details>}
         {isAppsuiteContractRequest && !isLinkedContractCreate && !isContractCreateLinkLoading && <section className="change-card workflow-contract-candidates">
           <h4>契約候補</h4>
           <p>候補は自動確定されません。候補理由を確認して、対象契約を手動で確定してください。</p>
@@ -1485,7 +1483,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
               <div className="termination-unit-options termination-contract-options">
                 {manualContractOptions.map((contract) => {
                   const unitsForContract = contractUnits.filter((unit) => (unit.lease_contract_id ?? unit.contract?.lease_contract_id) === contract.lease_contract_id);
-                  const unitLabel = [...new Set(unitsForContract.map((unit) => [unit.unit?.asset?.asset_name, unit.unit?.floor_label, unit.unit?.unit_code].filter(Boolean).join(' ')))].filter(Boolean).join('、');
+                  const unitLabel = [...new Set(unitsForContract.map((unit) => { const location = [unit.unit?.asset?.asset_name, unit.unit?.building_wing?.wing_name ?? unit.unit?.building_wing?.wing_code, unit.unit?.floor_label].filter(Boolean).join(' '); const detail = [unit.unit?.unit_code, unit.unit?.unit_name, unit.unit?.parking_space?.space_number ? '\u99d0\u8eca\u533a\u753b ' + unit.unit.parking_space.space_number : null].filter(Boolean).join(' '); return [location, detail].filter(Boolean).join(' / '); }))].filter(Boolean).join(', ');
                   const checked = terminationContractIds.includes(contract.lease_contract_id);
                   return <label key={contract.lease_contract_id} className={checked ? 'termination-unit-option selected' : 'termination-unit-option'}>
                     <input type="checkbox" checked={checked} onChange={(event) => {
@@ -1501,7 +1499,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
               </div>
             </fieldset> : <label>紐付ける契約<select value={manualContractId} onChange={(event) => setManualContractId(event.target.value)}><option value="">契約を選択してください</option>{manualContractOptions.map((contract) => {
               const unitsForContract = contractUnits.filter((unit) => (unit.lease_contract_id ?? unit.contract?.lease_contract_id) === contract.lease_contract_id);
-              const unitLabel = [...new Set(unitsForContract.map((unit) => [unit.unit?.asset?.asset_name, unit.unit?.floor_label, unit.unit?.unit_code].filter(Boolean).join(' ')))].filter(Boolean).join('、');
+              const unitLabel = [...new Set(unitsForContract.map((unit) => { const location = [unit.unit?.asset?.asset_name, unit.unit?.building_wing?.wing_name ?? unit.unit?.building_wing?.wing_code, unit.unit?.floor_label].filter(Boolean).join(' '); const detail = [unit.unit?.unit_code, unit.unit?.unit_name, unit.unit?.parking_space?.space_number ? '\u99d0\u8eca\u533a\u753b ' + unit.unit.parking_space.space_number : null].filter(Boolean).join(' '); return [location, detail].filter(Boolean).join(' / '); }))].filter(Boolean).join(', ');
               return <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.tenant?.tenant_name ?? 'テナント未設定'} / {unitLabel || '区画未登録'} / {contract.contract_start_date ?? '開始日未設定'} ～ {contract.contract_end_date ?? '終了日未設定'}</option>;
             })}</select></label>}
             {selected.request_type !== 'contract_terminate' && <>
