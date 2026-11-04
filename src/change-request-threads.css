@@ -42,7 +42,7 @@
 
 .thread-work-stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
   gap: 10px;
 }
 
@@ -110,6 +110,10 @@
 
 .thread-work-stat.archived {
   background: #f8fafc;
+}
+
+.thread-work-stat.archived.pending {
+  background: #f5f9ff;
 }
 
 .thread-work-stat i {

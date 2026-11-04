@@ -37,6 +37,22 @@ type ApprovalCandidate = {
   is_linked: boolean;
   link_locked: boolean;
 };
+type OtherContractApproval = {
+  appsuite_record_id: string;
+  app_id: string;
+  data_id: string;
+  ringi_number: string | null;
+  workflow_type: string | null;
+  approval_status: string | null;
+  tenant_name: string | null;
+  property_name: string | null;
+  source_updated_at: string | null;
+  linked_lease_contract_id: string;
+  linked_tenant_name: string | null;
+  linked_property_name: string | null;
+  linked_unit_label: string | null;
+  link_roles: string | null;
+};
 type EditableField = {
   key: string;
   label: string;
@@ -105,6 +121,10 @@ export function MainContractEditor({ contract, asOfDate, rentTerms, onCancel, on
   const [approvalsLoading, setApprovalsLoading] = useState(true);
   const [approvalsSaving, setApprovalsSaving] = useState(false);
   const [approvalMessage, setApprovalMessage] = useState('');
+  const [otherApprovalsOpen, setOtherApprovalsOpen] = useState(false);
+  const [otherApprovalsLoaded, setOtherApprovalsLoaded] = useState(false);
+  const [otherApprovalsLoading, setOtherApprovalsLoading] = useState(false);
+  const [otherContractApprovals, setOtherContractApprovals] = useState<OtherContractApproval[]>([]);
   const [scheduleEffectiveDate, setScheduleEffectiveDate] = useState(asOfDate);
   const [scheduleRent, setScheduleRent] = useState(() => String(rentTerms.find((term) => term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate))?.monthly_rent_amount ?? contract.monthly_rent_amount ?? ''));
   const [scheduleCommonCharge, setScheduleCommonCharge] = useState(() => String(rentTerms.find((term) => term.effective_from <= asOfDate && (!term.effective_to || term.effective_to >= asOfDate))?.monthly_common_charge_amount ?? contract.monthly_common_charge_amount ?? ''));
@@ -198,6 +218,27 @@ export function MainContractEditor({ contract, asOfDate, rentTerms, onCancel, on
     setApprovalCandidates(candidates);
     setSelectedApprovalIds(linkedIds);
     setSavedApprovalIds(linkedIds);
+  };
+
+  const loadOtherContractApprovals = async () => {
+    if (!supabase || otherApprovalsLoading) return;
+    setOtherApprovalsLoading(true);
+    const { data, error: otherApprovalsError } = await supabase.rpc('list_other_contract_approval_links', {
+      p_lease_contract_id: contract.lease_contract_id,
+    });
+    setOtherApprovalsLoading(false);
+    if (otherApprovalsError) {
+      setError(`他契約に紐づく稟議を取得できませんでした: ${otherApprovalsError.message}`);
+      return;
+    }
+    setOtherContractApprovals((data ?? []) as OtherContractApproval[]);
+    setOtherApprovalsLoaded(true);
+  };
+
+  const toggleOtherContractApprovals = () => {
+    const shouldOpen = !otherApprovalsOpen;
+    setOtherApprovalsOpen(shouldOpen);
+    if (shouldOpen && !otherApprovalsLoaded) void loadOtherContractApprovals();
   };
 
   useEffect(() => { void loadApprovalCandidates(); }, [contract.lease_contract_id]);
@@ -314,6 +355,14 @@ export function MainContractEditor({ contract, asOfDate, rentTerms, onCancel, on
     <section className="contract-approval-links">
       <div className="contract-detail-section-heading"><div><h3>運用開始前の決裁済み稟議との紐づけ</h3><p>{contract.property_name}の未処理稟議を表示しています。階情報を照合できた稟議を先頭に表示し、複数選択できます。</p></div></div>
       <div className="contract-approval-toolbar"><input value={approvalQuery} onChange={(event) => setApprovalQuery(event.target.value)} placeholder="稟議番号・テナント・階・区画・稟議種別で検索" /><span>{filteredApprovalCandidates.length}件</span></div>
+      <div className="contract-approval-actions"><button type="button" className="secondary-button" onClick={toggleOtherContractApprovals} disabled={otherApprovalsLoading}>{otherApprovalsLoading ? '読み込み中…' : otherApprovalsOpen ? '他契約の稟議を閉じる' : '他契約に紐づく稟議を参照'}</button></div>
+      {otherApprovalsOpen && <div className="contract-approval-list other-contract-approval-list">
+        {otherApprovalsLoading ? <p className="contract-approval-empty">他契約に紐づく稟議を読み込んでいます。</p> : otherContractApprovals.length === 0 ? <p className="contract-approval-empty">同じ物件の他契約に紐づく稟議はありません。</p> : otherContractApprovals.map((candidate) => <article key={`${candidate.appsuite_record_id}:${candidate.linked_lease_contract_id}`}>
+          <span className="contract-approval-main"><strong>{candidate.ringi_number || candidate.data_id}</strong><small>{candidate.tenant_name || '稟議テナント未設定'} / {candidate.approval_status || '状態未設定'}</small><small>{candidate.workflow_type || '稟議種別未設定'} / {candidate.property_name || '物件未設定'}</small></span>
+          <span className="contract-approval-location"><small>紐付け先: {candidate.linked_tenant_name || 'テナント未設定'}</small><small>{candidate.linked_property_name || '物件未設定'} / {candidate.linked_unit_label || '区画未設定'}</small><small>紐付け種別: {candidate.link_roles || '未設定'}</small></span>
+          <span className="contract-approval-locked">参照のみ</span>
+        </article>)}
+      </div>}
       {approvalsLoading ? <p className="contract-approval-empty">稟議候補を読み込んでいます。</p> : filteredApprovalCandidates.length === 0 ? <p className="contract-approval-empty">同じビルの決裁済み稟議はありません。</p> : <div className="contract-approval-list">
         {filteredApprovalCandidates.map((candidate) => <label key={candidate.appsuite_record_id} className={candidate.floor_match ? 'floor-match' : ''}>
           <input type="checkbox" checked={selectedApprovalIds.includes(candidate.appsuite_record_id)} disabled={candidate.link_locked} onChange={(event) => setSelectedApprovalIds((current) => event.target.checked ? [...current, candidate.appsuite_record_id] : current.filter((id) => id !== candidate.appsuite_record_id))} />
