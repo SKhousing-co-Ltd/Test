@@ -17,7 +17,7 @@ type PricePeriod = { startMonth: string; endMonth: string; price: string };
 type PriceDraft = { unitPrice: string; taxMode: TaxMode; periods: PricePeriod[] };
 type BasicDraft = { amount: string; taxMode: TaxMode };
 type MeterTerm = { asset_meter_sub_item_id: string; price_mode: 'fixed' | 'amount' | 'master_meter'; tax_mode: TaxMode; show_unit_price_on_invoice: boolean; show_usage_on_invoice: boolean };
-type MeterTermDraft = MeterTerm & { label: string };
+type MeterTermDraft = MeterTerm & { label: string; category: CategoryId; lineItemId: string | null; calculationMode: 'meter' | 'fixed' | 'allocated_amount' };
 
 const categoryNames: Record<CategoryId, string> = { electric: '電気', water: '水道', gas: 'ガス' };
 const emptyPrice = (taxMode: TaxMode): PriceDraft => ({ unitPrice: '', taxMode, periods: [] });
@@ -33,11 +33,14 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
   const [prices, setPrices] = useState<Record<string, PriceDraft>>({});
   const [basics, setBasics] = useState<Partial<Record<CategoryId, BasicDraft>>>({});
   const [meterTerms, setMeterTerms] = useState<MeterTermDraft[]>([]);
+  const [sharedCategories, setSharedCategories] = useState<Set<CategoryId>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [priceDirty, setPriceDirty] = useState(false);
+  const [meterTermDirty, setMeterTermDirty] = useState(false);
 
   useEffect(() => {
     const targetId = billingUnitId || leaseContractUnitId;
@@ -45,9 +48,9 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
     let cancelled = false;
     const load = async () => {
       if (!supabase) { setError('Supabaseの接続設定が見つかりません。'); return; }
-      setLoading(true); setError(''); setMessage(''); setDirty(false);
+      setLoading(true); setError(''); setMessage(''); setDirty(false); setPriceDirty(false); setMeterTermDirty(false);
       const [subItemResult, lineItemResult, settingResult, priceResult, basicResult, priceSettingResult, categoryPriceResult, fallbackPriceResult, fallbackBasicResult, fallbackCategoryPriceResult, meterTermResult] = await Promise.all([
-        supabase.from('asset_meter_sub_item').select('asset_meter_sub_item_id, sub_item_name, category, asset_billing_line_item_id, price_mode, sub_item_kind, is_monthly_fixed, default_unit_price, tax_mode, show_unit_price_on_invoice, show_usage_on_invoice').eq('asset_id', propertyId),
+        supabase.from('asset_meter_sub_item').select('asset_meter_sub_item_id, sub_item_name, category, asset_billing_line_item_id, price_mode, sub_item_kind, is_monthly_fixed, calculation_mode, default_unit_price, tax_mode, show_unit_price_on_invoice, show_usage_on_invoice').eq('asset_id', propertyId),
         supabase.from('asset_billing_line_item').select('asset_billing_line_item_id, line_item_name, display_name, billing_content, default_unit_price, default_tax_mode, sort_order').eq('asset_id', propertyId).eq('is_active', true).order('sort_order'),
         supabase.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
         supabase.from(billingUnitId ? 'lease_contract_billing_unit_utility_price' : 'lease_contract_unit_utility_price').select('asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices').eq(billingUnitId ? 'lease_contract_billing_unit_id' : 'lease_contract_unit_id', targetId),
@@ -66,17 +69,18 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
       const priceSettings = (priceSettingResult.data ?? []) as Array<{ category: CategoryId; price_scope: string; default_unit_price: number | null; default_tax_mode: TaxMode }>;
       // 設定が無い分類は「分類で共通」です。
       const sharedCategories = new Set((['electric', 'water', 'gas'] as CategoryId[]).filter((category) => priceSettings.find((row) => row.category === category)?.price_scope !== 'line_item'));
-      const customSubItems = ((subItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; sub_item_name: string; category: CategoryId; asset_billing_line_item_id: string | null; price_mode: MeterTerm['price_mode']; sub_item_kind: string; is_monthly_fixed: boolean; default_unit_price: number | null; tax_mode: TaxMode; show_unit_price_on_invoice: boolean; show_usage_on_invoice: boolean }>)
-        .filter((row) => row.sub_item_kind !== 'basic' && !row.is_monthly_fixed);
+      setSharedCategories(sharedCategories);
+      const customSubItems = ((subItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; sub_item_name: string; category: CategoryId; asset_billing_line_item_id: string | null; price_mode: MeterTerm['price_mode']; sub_item_kind: string; is_monthly_fixed: boolean; calculation_mode: MeterTermDraft['calculationMode']; default_unit_price: number | null; tax_mode: TaxMode; show_unit_price_on_invoice: boolean; show_usage_on_invoice: boolean }>)
+        .filter((row) => row.sub_item_kind !== 'basic');
       const savedMeterTerms = (meterTermResult.data ?? []) as MeterTerm[];
       setMeterTerms(customSubItems.map((item) => ({
-        asset_meter_sub_item_id: item.asset_meter_sub_item_id, label: item.sub_item_name,
+        asset_meter_sub_item_id: item.asset_meter_sub_item_id, label: item.sub_item_name, category: item.category, lineItemId: item.asset_billing_line_item_id, calculationMode: item.calculation_mode,
         price_mode: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.price_mode ?? item.price_mode,
-        tax_mode: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.tax_mode ?? item.tax_mode,
+        tax_mode: item.calculation_mode === 'meter' ? savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.tax_mode ?? item.tax_mode : item.tax_mode,
         show_unit_price_on_invoice: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.show_unit_price_on_invoice ?? item.show_unit_price_on_invoice,
         show_usage_on_invoice: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.show_usage_on_invoice ?? item.show_usage_on_invoice,
       })));
-      const fixedSubItems = customSubItems;
+      const fixedSubItems = customSubItems.filter((item) => item.calculation_mode === 'meter' && !item.is_monthly_fixed);
       const fixedLineItemIds = new Set(fixedSubItems.filter((row) => row.asset_billing_line_item_id && !sharedCategories.has(row.category)).map((row) => row.asset_billing_line_item_id as string));
       const lineItemRows = (lineItemResult.data ?? []) as LineItemRow[];
       const items = lineItemRows.filter((item) => fixedLineItemIds.has(item.asset_billing_line_item_id));
@@ -121,9 +125,9 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
     return () => { cancelled = true; };
   }, [leaseContractUnitId, billingUnitId, fallbackLeaseContractUnitId, propertyId]);
 
-  const updatePrice = (lineItemId: string, patch: Partial<PriceDraft>) => { setPrices((current) => ({ ...current, [lineItemId]: { ...current[lineItemId], ...patch } })); setDirty(true); setMessage(''); };
-  const updateBasic = (category: CategoryId, patch: Partial<BasicDraft>) => { setBasics((current) => ({ ...current, [category]: { ...(current[category] ?? { amount: '', taxMode: 'exclusive' }), ...patch } })); setDirty(true); setMessage(''); };
-  const updateMeterTerm = (id: string, patch: Partial<MeterTerm>) => { setMeterTerms((current) => current.map((row) => row.asset_meter_sub_item_id === id ? { ...row, ...patch } : row)); setDirty(true); setMessage(''); };
+  const updatePrice = (lineItemId: string, patch: Partial<PriceDraft>) => { setPrices((current) => ({ ...current, [lineItemId]: { ...current[lineItemId], ...patch } })); setDirty(true); setPriceDirty(true); setMessage(''); };
+  const updateBasic = (category: CategoryId, patch: Partial<BasicDraft>) => { setBasics((current) => ({ ...current, [category]: { ...(current[category] ?? { amount: '', taxMode: 'exclusive' }), ...patch } })); setDirty(true); setPriceDirty(true); setMessage(''); };
+  const updateMeterTerm = (id: string, patch: Partial<MeterTerm>) => { setMeterTerms((current) => current.map((row) => row.asset_meter_sub_item_id === id ? { ...row, ...patch } : row)); setDirty(true); setMeterTermDirty(true); setMessage(''); };
 
   const save = async () => {
     if (!supabase || !canEdit) return;
@@ -157,10 +161,10 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
       if (!isNumber(draft.amount)) { problems.push(`${categoryNames[category]}の基本料は0以上の数値で入力してください`); return []; }
       return [{ category, amount: Number(draft.amount), tax_mode: draft.taxMode }];
     });
-    if (problems.length) { setError(problems.join('／')); return; }
+    if (priceDirty && problems.length) { setError(problems.join('／')); return; }
     setSaving(true); setError('');
     let saveError: { message: string } | null = null;
-    if (billingUnitId) {
+    if (priceDirty && billingUnitId) {
       const key = 'lease_contract_billing_unit_id';
       for (const table of ['lease_contract_billing_unit_utility_price', 'lease_contract_billing_unit_category_price', 'lease_contract_billing_unit_basic_charge']) {
         const result = await supabase.from(table).delete().eq(key, billingUnitId);
@@ -169,64 +173,88 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
       if (!saveError && priceRows.length) saveError = (await supabase.from('lease_contract_billing_unit_utility_price').insert(priceRows.map((row) => ({ ...row, [key]: billingUnitId })))).error;
       if (!saveError && categoryPriceRows.length) saveError = (await supabase.from('lease_contract_billing_unit_category_price').insert(categoryPriceRows.map((row) => ({ ...row, [key]: billingUnitId })))).error;
       if (!saveError && basicRows.length) saveError = (await supabase.from('lease_contract_billing_unit_basic_charge').insert(basicRows.map((row) => ({ ...row, [key]: billingUnitId })))).error;
-    } else {
+    } else if (priceDirty) {
       saveError = (await supabase.rpc('save_lease_contract_unit_utility_terms', { p_lease_contract_unit_id: leaseContractUnitId, p_prices: priceRows, p_category_prices: categoryPriceRows, p_basic_charges: basicRows })).error;
     }
-    if (!saveError) {
+    if (!saveError && meterTermDirty) {
       const table = billingUnitId ? 'lease_contract_billing_unit_meter_term' : 'lease_contract_unit_meter_term';
       const key = billingUnitId ? 'lease_contract_billing_unit_id' : 'lease_contract_unit_id';
-      saveError = (await supabase.from(table).upsert(meterTerms.map(({ label: _label, ...term }) => ({ ...term, [key]: billingUnitId || leaseContractUnitId })), { onConflict: `${key},asset_meter_sub_item_id` })).error;
+      saveError = (await supabase.from(table).upsert(meterTerms.map(({ label: _label, category: _category, lineItemId: _lineItemId, calculationMode: _calculationMode, ...term }) => ({ ...term, [key]: billingUnitId || leaseContractUnitId })), { onConflict: `${key},asset_meter_sub_item_id` })).error;
     }
     setSaving(false);
     if (saveError) { setError(`公共料金の単価を保存できませんでした: ${saveError.message}`); return; }
-    setDirty(false); setMessage('保存しました。');
+    setDirty(false); setPriceDirty(false); setMeterTermDirty(false); setMessage('保存しました。');
   };
 
   const disabled = !canEdit || saving;
+  const categoryIds: CategoryId[] = ['electric', 'water', 'gas'];
+  const priceInput = (target: PriceTarget) => {
+    const draft = prices[target.key] ?? emptyPrice(target.fallback?.taxMode ?? 'exclusive');
+    return <><input type="number" step="0.0001" min="0" value={draft.unitPrice} disabled={disabled} placeholder="—" aria-label={`${target.label}の単価`} onChange={(event) => updatePrice(target.key, { unitPrice: event.target.value })} /> 円</>;
+  };
+  const periodInput = (target: PriceTarget) => {
+    const draft = prices[target.key] ?? emptyPrice(target.fallback?.taxMode ?? 'exclusive');
+    return <div className="utility-monthly-prices">
+      {draft.periods.map((row, index) => <span key={index} className="utility-monthly-price">
+        <input type="number" min="1" max="12" step="1" value={row.startMonth} disabled={disabled} placeholder="開始月" aria-label="請求月始" onChange={(event) => updatePrice(target.key, { periods: draft.periods.map((period, i) => i === index ? { ...period, startMonth: event.target.value } : period) })} />月
+        <span>～</span>
+        <input type="number" min="1" max="12" step="1" value={row.endMonth} disabled={disabled} placeholder="終了月" aria-label="請求月終" onChange={(event) => updatePrice(target.key, { periods: draft.periods.map((period, i) => i === index ? { ...period, endMonth: event.target.value } : period) })} />月
+        <input type="number" step="0.0001" min="0" value={row.price} disabled={disabled} aria-label={`${row.startMonth || '開始月'}から${row.endMonth || '終了月'}の単価`} onChange={(event) => updatePrice(target.key, { periods: draft.periods.map((period, i) => i === index ? { ...period, price: event.target.value } : period) })} />円
+        <button type="button" className="text-button" disabled={disabled} onClick={() => updatePrice(target.key, { periods: draft.periods.filter((_, i) => i !== index) })}>削除</button>
+      </span>)}
+      <button type="button" className="text-button" disabled={disabled} onClick={() => updatePrice(target.key, { periods: [...draft.periods, { startMonth: '', endMonth: '', price: draft.unitPrice }] })}>期間別単価を追加</button>
+    </div>;
+  };
+  const updateCategoryPriceMode = (category: CategoryId, priceMode: MeterTerm['price_mode']) => {
+    setMeterTerms((current) => current.map((term) => term.category === category && term.calculationMode === 'meter' ? { ...term, price_mode: priceMode } : term));
+    setDirty(true); setMeterTermDirty(true); setMessage('');
+  };
 
   return <>
     <div className="contract-information-section-heading"><div><h3>{billingUnitId ? '請求区画の公共料金' : '公共料金'}</h3></div></div>
     {error && <p className="contract-information-notice">{error}</p>}
     {loading && <p className="contract-information-empty">読み込み中…</p>}
     {!loading && !targets.length && !basicCategories.length && !meterTerms.length && <p className="contract-information-empty">公共料金の設定項目がありません。</p>}
-    {!loading && (targets.length > 0 || basicCategories.length > 0 || meterTerms.length > 0) && <div className="contract-information-table-wrap">
-      {!!meterTerms.length && <table className="contract-information-table utility-price-table"><thead><tr><th>小分類</th><th>単価計算方法</th><th>税区分</th><th>請求書に単価を表示</th><th>請求書に使用量・単位を表示</th></tr></thead><tbody>{meterTerms.map((term) => <tr key={term.asset_meter_sub_item_id}><td>{term.label}</td><td><select value={term.price_mode} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { price_mode: event.target.value as MeterTerm['price_mode'] })}><option value="fixed">固定</option><option value="amount">金額から計算</option><option value="master_meter">大元メーターから計算</option></select></td><td><select value={term.tax_mode} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { tax_mode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td><td><input type="checkbox" checked={term.show_unit_price_on_invoice} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { show_unit_price_on_invoice: event.target.checked })} /></td><td><input type="checkbox" checked={term.show_usage_on_invoice} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { show_usage_on_invoice: event.target.checked })} /></td></tr>)}</tbody></table>}
-      <table className="contract-information-table utility-price-table">
-        <thead><tr><th>項目</th><th>単価・金額</th><th>税区分</th><th>請求月による単価</th></tr></thead>
-        <tbody>
-          {basicCategories.map((category) => {
-            const draft = basics[category] ?? { amount: '', taxMode: 'exclusive' as TaxMode };
-            return <tr key={category}>
-              <td><strong>{categoryNames[category]}基本料</strong></td>
-              <td><input type="number" step="1" min="0" value={draft.amount} disabled={disabled} placeholder="—" aria-label={`${categoryNames[category]}基本料`} onChange={(event) => updateBasic(category, { amount: event.target.value })} /> 円／月</td>
-              <td><select value={draft.taxMode} disabled={disabled} aria-label={`${categoryNames[category]}基本料の税区分`} onChange={(event) => updateBasic(category, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td>
-              <td><span className="billing-terms-preview">途中入退去は検針期間の入居日数で日割り</span></td>
-            </tr>;
-          })}
-          {targets.map((target) => {
-            const draft = prices[target.key] ?? emptyPrice(target.fallback?.taxMode ?? 'exclusive');
-            return <tr key={target.key}>
-              <td><strong>{target.label}</strong></td>
-              <td><input type="number" step="0.0001" min="0" value={draft.unitPrice} disabled={disabled} placeholder="—" aria-label={`${target.label}の単価`} onChange={(event) => updatePrice(target.key, { unitPrice: event.target.value })} /> 円</td>
-              <td><select value={draft.taxMode} disabled={disabled} aria-label={`${target.label}の税区分`} onChange={(event) => updatePrice(target.key, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td>
-              <td>
-                <div className="utility-monthly-prices">
-                  {draft.periods.map((row, index) => <span key={index} className="utility-monthly-price">
-                    <input type="number" min="1" max="12" step="1" value={row.startMonth} disabled={disabled} placeholder="開始月" aria-label="請求月始" onChange={(event) => updatePrice(target.key, { periods: draft.periods.map((period, i) => i === index ? { ...period, startMonth: event.target.value } : period) })} />月
-                    <span>～</span>
-                    <input type="number" min="1" max="12" step="1" value={row.endMonth} disabled={disabled} placeholder="終了月" aria-label="請求月終" onChange={(event) => updatePrice(target.key, { periods: draft.periods.map((period, i) => i === index ? { ...period, endMonth: event.target.value } : period) })} />月
-                    <input type="number" step="0.0001" min="0" value={row.price} disabled={disabled} aria-label={`${row.startMonth || '開始月'}から${row.endMonth || '終了月'}の単価`} onChange={(event) => updatePrice(target.key, { periods: draft.periods.map((period, i) => i === index ? { ...period, price: event.target.value } : period) })} />円
-                    <button type="button" className="text-button" disabled={disabled} onClick={() => updatePrice(target.key, { periods: draft.periods.filter((_, i) => i !== index) })}>削除</button>
-                  </span>)}
-                  <button type="button" className="text-button" disabled={disabled} onClick={() => updatePrice(target.key, { periods: [...draft.periods, { startMonth: '', endMonth: '', price: draft.unitPrice }] })}>期間別単価を追加</button>
-                </div>
-              </td>
-            </tr>;
-          })}
-        </tbody>
-      </table>
-    </div>}
-    {!loading && (targets.length > 0 || basicCategories.length > 0) && canEdit && <div className="utility-price-actions">
+    {!loading && (targets.length > 0 || basicCategories.length > 0 || meterTerms.length > 0) && <div className="contract-information-table-wrap utility-category-list">
+      {categoryIds.map((category) => {
+        const terms = meterTerms.filter((term) => term.category === category);
+        const hasBasic = basicCategories.includes(category);
+        const shared = sharedCategories.has(category);
+        const commonTarget = targets.find((target) => target.category === category);
+        const modes = [...new Set(terms.filter((term) => term.calculationMode === 'meter').map((term) => term.price_mode))];
+        const commonMode = modes.length === 1 ? modes[0] : '';
+        if (!terms.length && !hasBasic && !commonTarget) return null;
+        return <section className="utility-contract-group" key={category}>
+          <h4>{categoryNames[category]}</h4>
+          {shared && commonTarget && <div className="utility-category-common"><strong>共通単価</strong>
+            <label>単価計算方法 <select value={commonMode} disabled={disabled} onChange={(event) => updateCategoryPriceMode(category, event.target.value as MeterTerm['price_mode'])}>
+              {!commonMode && <option value="">小分類ごとに異なる</option>}<option value="fixed">固定</option><option value="amount">金額から計算</option><option value="master_meter">大元メーターから計算</option>
+            </select></label>
+            {modes.includes('fixed') && <label>{priceInput(commonTarget)}</label>}
+            <label>税区分 <select value={prices[commonTarget.key]?.taxMode ?? 'exclusive'} disabled={disabled} onChange={(event) => updatePrice(commonTarget.key, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></label>
+            {modes.includes('fixed') && periodInput(commonTarget)}
+          </div>}
+          <table className="contract-information-table utility-price-table"><thead><tr><th>小分類</th><th>計算方法</th><th>単価・金額</th><th>税区分</th><th>請求書の単価</th><th>請求書の使用量・単位</th><th>請求月による単価</th></tr></thead><tbody>
+            {hasBasic && (() => { const draft = basics[category] ?? { amount: '', taxMode: 'exclusive' as TaxMode }; return <tr key="basic"><td><strong>基本料</strong></td><td>定額</td><td><input type="number" step="1" min="0" value={draft.amount} disabled={disabled} placeholder="—" aria-label={`${categoryNames[category]}基本料`} onChange={(event) => updateBasic(category, { amount: event.target.value })} /> 円／月</td><td><select value={draft.taxMode} disabled={disabled} aria-label={`${categoryNames[category]}基本料の税区分`} onChange={(event) => updateBasic(category, { taxMode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td><td>—</td><td>—</td><td>途中入退去は日割り</td></tr>; })()}
+            {terms.map((term) => {
+              const target = !shared && term.lineItemId ? targets.find((item) => item.lineItemId === term.lineItemId) : undefined;
+              const firstForTarget = target && terms.find((item) => item.lineItemId === term.lineItemId && item.calculationMode === 'meter' && item.price_mode === 'fixed')?.asset_meter_sub_item_id === term.asset_meter_sub_item_id;
+              const priceEditable = term.calculationMode === 'meter' && term.price_mode === 'fixed';
+              const calculationLabel = term.calculationMode === 'allocated_amount' ? '請求額から計算' : term.calculationMode === 'fixed' ? '毎月定額' : '検針データから計算';
+              return <tr key={term.asset_meter_sub_item_id}>
+                <td><strong>{term.label}</strong></td>
+                <td>{calculationLabel}{!shared && term.calculationMode === 'meter' && <select value={term.price_mode} disabled={disabled} aria-label={`${term.label}の単価計算方法`} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { price_mode: event.target.value as MeterTerm['price_mode'] })}><option value="fixed">固定</option><option value="amount">金額から計算</option><option value="master_meter">大元メーターから計算</option></select>}</td>
+                <td>{target && firstForTarget && priceEditable ? priceInput(target) : '—'}</td>
+                <td>{term.calculationMode === 'meter' ? <select value={term.tax_mode} disabled={disabled} aria-label={`${term.label}の税区分`} onChange={(event) => { updateMeterTerm(term.asset_meter_sub_item_id, { tax_mode: event.target.value as TaxMode }); if (target) updatePrice(target.key, { taxMode: event.target.value as TaxMode }); }}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select> : <span>{term.tax_mode === 'inclusive' ? '税込' : '税抜'}（検針設定）</span>}</td>
+                <td><input type="checkbox" checked={term.show_unit_price_on_invoice} disabled={disabled || term.calculationMode === 'allocated_amount'} aria-label={`${term.label}の請求書単価表示`} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { show_unit_price_on_invoice: event.target.checked })} /></td>
+                <td><input type="checkbox" checked={term.show_usage_on_invoice} disabled={disabled || term.calculationMode === 'allocated_amount'} aria-label={`${term.label}の請求書使用量表示`} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { show_usage_on_invoice: event.target.checked })} /></td>
+                <td>{target && firstForTarget && priceEditable ? periodInput(target) : '—'}</td>
+              </tr>;
+            })}
+          </tbody></table>
+        </section>;
+      })}
+    </div>}    {!loading && (targets.length > 0 || basicCategories.length > 0 || meterTerms.length > 0) && canEdit && <div className="utility-price-actions">
       {message && <span className="billing-terms-preview">{message}</span>}
       <button type="button" className="primary-button" disabled={saving || !dirty} onClick={() => void save()}>{saving ? '保存中…' : '公共料金を保存'}</button>
     </div>}
