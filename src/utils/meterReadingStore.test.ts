@@ -126,6 +126,16 @@ test('未登録の基本料を契約行の小分類設定へ書き込まない',
   assert.equal(rowsOf('meter_reading_contract_item', 'upsert')?.some((row) => row.asset_meter_sub_item_id === 'basic'), false);
 });
 
+test('請求設定の保存で区画別の毎月定額を書き換えない', async () => {
+  reset();
+  const base = snapshot();
+  base.building.subItems[1] = { ...base.building.subItems[1], isMonthlyFixed: true };
+  base.tenants[0].rows[0].fixedCharges.light = 5000;
+  const next = structuredClone(base);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
+  assert.equal(rowsOf('meter_reading_month_fixed_charge', 'upsert'), undefined);
+});
+
 test('メーター交換の月は、旧・新メーターの使用量を足して保存する', async () => {
   reset();
   const next = snapshot({ meters: [assetMeter('M1', 'A-1', { previousReading: 1000, currentReading: 30, exchange: { removedReading: 1100, installedReading: 0 } })] });

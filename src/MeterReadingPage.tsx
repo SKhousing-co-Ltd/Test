@@ -656,7 +656,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <td className="numeric">{row.billable[subItem.id] ? yen.format(row.fixedCharges[subItem.id] ?? 0) : <span className="meter-muted">契約に基本料なし</span>}</td>
                 <td className={partial ? 'numeric meter-warn' : 'numeric meter-muted'}>{ratio ? `${ratio.days}／${ratio.totalDays}日${partial ? '（日割り）' : ''}` : '—'}</td>
                 <td className="numeric">{row.billable[subItem.id] ? yen.format(billedOf(tenant.id, index)) : ''}</td>
-                {monthlyFixedItems.map((item) => <td key={item.id}><span className="meter-settings-pair"><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[item.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [item.id]: fixedAmount ?? 0 }, billable: { ...row.billable, [item.id]: fixedAmount !== null } })} /><span className="meter-unit">円</span></span></td>)}
+                {monthlyFixedItems.map((item) => <td key={item.id}><span className="meter-settings-pair"><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /><span>{yen.format(row.fixedCharges[item.id] ?? 0)} 円</span></span></td>)}
               </tr>;
             }))}</tbody>
             <tfoot><tr>
@@ -917,7 +917,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
             </tr>))}</tbody>
           </table>
         </div>
-        <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。分割したテナントは、各行で計算する区画を選びます（どの行にも選んでいない区画のメーターは1行目で計算します）。</p>
+        <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。分割したテナントは、各行で計算する区画を選びます（どの行にも選んでいない区画のメーターは1行目で計算します）。毎月定額の金額はKANAMETERで区画ごとに編集します。</p>
       </section>
     </div>}
     </fieldset>
