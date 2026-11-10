@@ -97,15 +97,33 @@ test('検針値は対象月の行として保存される', async () => {
 test('指針入力の小分類は、指針と、指針から求めた使用量を保存する', async () => {
   reset();
   const next = snapshot({ meters: [assetMeter('M1', 'A-1', { usage: 999, previousReading: 1200.5, currentReading: 1500, previousReadingManual: true })] });
+  const base = snapshot();
   next.building.subItems[1] = { ...next.building.subItems[1], inputMode: 'reading' };
-  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
   assert.deepEqual(rowsOf('meter_reading_entry', 'upsert')?.[0], {
     asset_id: 'A1', billing_month: '2026-09-01', asset_meter_id: 'M1', usage_amount: 299.5,
     previous_reading: 1200.5, current_reading: 1500, previous_reading_manual: true, exchange_removed_reading: null, exchange_installed_reading: null,
   });
   assert.equal(rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'light')?.input_mode, 'reading');
-  // 基本料は入力方式を持たないため、使用量のままにします。
-  assert.equal(rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'basic')?.input_mode, 'usage');
+  // 変更していない基本料は書き直しません。
+  assert.equal(rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'basic'), undefined);
+});
+
+test('テナント設定の保存では変更していない小分類を書き直さない', async () => {
+  reset();
+  const base = snapshot();
+  const next = snapshot();
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
+  assert.equal(rowsOf('asset_meter_sub_item', 'upsert'), undefined);
+});
+
+test('未登録の基本料を契約行の小分類設定へ書き込まない', async () => {
+  reset();
+  const base = snapshot();
+  base.persistedSubItemIds = ['light'];
+  const next = snapshot();
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
+  assert.equal(rowsOf('meter_reading_contract_item', 'upsert')?.some((row) => row.asset_meter_sub_item_id === 'basic'), false);
 });
 
 test('メーター交換の月は、旧・新メーターの使用量を足して保存する', async () => {
@@ -255,11 +273,12 @@ test('メーターは画面の並び順を保存する', async () => {
 test('変動単価の小分類だけ、決め方・単価の丸めと月次の入力を保存する', async () => {
   reset();
   const next = snapshot();
+  const base = snapshot();
   next.building.subItems[1] = {
     ...next.building.subItems[1], priceMode: 'variable', variablePriceMethod: 'billed', unitPriceRoundingDigits: 3, unitPriceRoundingMode: 'round',
     monthly: { unitPrice: 300, billedInclusive: 110000, billedTax: null, billedExclusive: null, billedUsage: 325 },
   };
-  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
   const saved = rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'light');
   assert.equal(saved?.variable_price_method, 'billed');
   assert.equal(saved?.unit_price_rounding_digits, 3);

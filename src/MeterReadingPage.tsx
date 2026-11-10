@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
   billedAmounts, calculateSubItem,
-  floorLabel, priceModeLabel, resolveUnitPrice, roundingModeLabel, splitName, sumModeLabel, taxModeLabel, toExclusive,
+  floorLabel, priceModeLabel, resolveUnitPrice, roundingModeLabel, splitName, taxModeLabel, toExclusive,
   basicRatioKey, subItemDefaults, variablePriceMethodLabel, variableUnitPrice,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type MeterShare,
-  type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
+  type PriceMode, type RoundingMode, type SubItem, type TaxMode, type TenantConfig,
   type SurchargePurchase, type VariablePriceInput, type VariablePriceMethod,
 } from './utils/meterReading';
 import { computeMonth, confirmMeterReading, loadConfirmedAmounts, loadMeterReading, newId, releaseMeterReading, saveMeterReading, type ConfirmedAmount, type MeterReadingSnapshot } from './utils/meterReadingStore';
@@ -76,7 +76,6 @@ function OptionalNumberInput({ value, digits, placeholder, disabled, onChange }:
   />;
 }
 const variablePriceMethods: VariablePriceMethod[] = ['manual', 'billed'];
-const sumModes: SumMode[] = ['aggregate', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 const taxModes: TaxMode[] = ['exclusive', 'inclusive'];
 const priceModes: PriceMode[] = ['fixed', 'variable'];
@@ -316,10 +315,10 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
           : resolveUnitPrice(target, meter, building).price;
       // 使用料は、メーターごとに計算する行はメーターの行ごとに、まとめて計算する行は分割した行の合計を1つの欄に出します。
       // どちらも請求に使う計算結果（使用量の丸め・金額の丸めを通したもの）をそのまま出します。
-      const perMeter = row?.sumMode[targetCategory.id] === 'perMeter';
+      const perMeter = target.amountCalculationScope === 'meter';
       // 区間に分かれたメーターは、メーターごとの使用料をグループ内の最初の区間の行にだけ出します。
       const amountOf = (meter: MeterShare) => group.meters.find((item) => (item.meterId ?? item.id) === (meter.meterId ?? meter.id)) !== meter ? null
-        : result?.groups.find((value) => value.key === (meter.meterId ?? meter.id))?.amount ?? null;
+        : result?.groups.find((value) => value.key.startsWith(`${meter.meterId ?? meter.id}:`))?.amount ?? null;
       return {
         ...group, result, priceOf, amountOf, perMeter,
         floor: [...new Set(group.meters.map((item) => item.label).filter(Boolean))].join('・'),
@@ -390,7 +389,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   };
   const addSubItem = (categoryId: CategoryId) => {
     const id = newId();
-    setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', ...subItemDefaults() }] }));
+    setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingMode: 'floor', amountCalculationScope: 'tenant', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', ...subItemDefaults() }] }));
     setTenants((current) => current.map((tenant) => ({ ...tenant, rows: tenant.rows.map((row) => ({ ...row, billable: { ...row.billable, [id]: true } })) })));
   };
   // 小分類を消すと、保存したときに配下のメーターと過去月の検針値もまとめて消えます。
@@ -600,7 +599,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <select value={subItem.unitPriceRoundingMode} onChange={(event) => updateSubItem(subItem.id, { unitPriceRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
               </span>
             </div>}
-          {inclusiveOnly && price !== null && <p className="meter-hint">税込単価のため、使用料の計算では税抜単価 {toExclusive(price, subItem, building.taxRate)} 円（税抜換算の丸め：{roundingModeLabel[subItem.taxRoundingMode]}）を使います。</p>}
+          {inclusiveOnly && price !== null && <p className="meter-hint">税込単価のため、使用料の計算では税抜単価 {toExclusive(price, subItem, building.taxRate)} 円（税抜換算の丸め：{subItem.taxRoundingMode === 'none' ? 'ー' : roundingModeLabel[subItem.taxRoundingMode]}）を使います。</p>}
         </div>;
       })()}
 
@@ -873,7 +872,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 {visibleCategories.map((item) => {
                   const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
                   const detailColumns = customs.length === 1 && !customs[0]?.isMonthlyFixed ? 0 : customs.length;
-                  return <th key={item.id} colSpan={2 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  return <th key={item.id} colSpan={1 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>備考</th>
                 <th rowSpan={2}>データ分割設定</th>
@@ -887,7 +886,6 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                   if (customs.length === 1 && !customs[0]?.isMonthlyFixed) return [];
                   return customs.map((value) => <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>);
                 })(),
-                <th key={`${item.id}-sum`} className={categoryClass(item.id)}>計算方法</th>,
               ])}</tr>
             </thead>
             <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={`${index === 0 ? 'meter-contract-first' : 'meter-contract-sub'}${tenant.splitEnabled ? ' meter-contract-split' : ''}`}>
@@ -903,9 +901,6 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                     <td key={`${value.id}-b`} className={categoryClass(item.id)}>{value.isMonthlyFixed
                       ? <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />
                       : <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />}</td>)),
-                  <td key={`${item.id}-sum`} className={categoryClass(item.id)}>
-                    <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
-                  </td>,
                 ];
               })}
               <td><input className="meter-note-input" value={row.note} placeholder="—" onChange={(event) => updateRow(tenant.id, index, { note: event.target.value })} /></td>

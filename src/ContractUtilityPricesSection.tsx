@@ -16,6 +16,8 @@ type LineItemRow = { asset_billing_line_item_id: string; line_item_name: string;
 type PricePeriod = { startMonth: string; endMonth: string; price: string };
 type PriceDraft = { unitPrice: string; taxMode: TaxMode; periods: PricePeriod[] };
 type BasicDraft = { amount: string; taxMode: TaxMode };
+type MeterTerm = { asset_meter_sub_item_id: string; price_mode: 'fixed' | 'amount' | 'master_meter'; tax_mode: TaxMode; show_unit_price_on_invoice: boolean; show_usage_on_invoice: boolean };
+type MeterTermDraft = MeterTerm & { label: string };
 
 const categoryNames: Record<CategoryId, string> = { electric: '電気', water: '水道', gas: 'ガス' };
 const emptyPrice = (taxMode: TaxMode): PriceDraft => ({ unitPrice: '', taxMode, periods: [] });
@@ -30,6 +32,7 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
   const [basicCategories, setBasicCategories] = useState<CategoryId[]>([]);
   const [prices, setPrices] = useState<Record<string, PriceDraft>>({});
   const [basics, setBasics] = useState<Partial<Record<CategoryId, BasicDraft>>>({});
+  const [meterTerms, setMeterTerms] = useState<MeterTermDraft[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -43,8 +46,8 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
     const load = async () => {
       if (!supabase) { setError('Supabaseの接続設定が見つかりません。'); return; }
       setLoading(true); setError(''); setMessage(''); setDirty(false);
-      const [subItemResult, lineItemResult, settingResult, priceResult, basicResult, priceSettingResult, categoryPriceResult, fallbackPriceResult, fallbackBasicResult, fallbackCategoryPriceResult] = await Promise.all([
-        supabase.from('asset_meter_sub_item').select('category, asset_billing_line_item_id, price_mode, sub_item_kind, is_monthly_fixed, default_unit_price, tax_mode').eq('asset_id', propertyId),
+      const [subItemResult, lineItemResult, settingResult, priceResult, basicResult, priceSettingResult, categoryPriceResult, fallbackPriceResult, fallbackBasicResult, fallbackCategoryPriceResult, meterTermResult] = await Promise.all([
+        supabase.from('asset_meter_sub_item').select('asset_meter_sub_item_id, sub_item_name, category, asset_billing_line_item_id, price_mode, sub_item_kind, is_monthly_fixed, default_unit_price, tax_mode, show_unit_price_on_invoice, show_usage_on_invoice').eq('asset_id', propertyId),
         supabase.from('asset_billing_line_item').select('asset_billing_line_item_id, line_item_name, display_name, billing_content, default_unit_price, default_tax_mode, sort_order').eq('asset_id', propertyId).eq('is_active', true).order('sort_order'),
         supabase.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
         supabase.from(billingUnitId ? 'lease_contract_billing_unit_utility_price' : 'lease_contract_unit_utility_price').select('asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices').eq(billingUnitId ? 'lease_contract_billing_unit_id' : 'lease_contract_unit_id', targetId),
@@ -54,16 +57,26 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
         fallbackLeaseContractUnitId ? supabase.from('lease_contract_unit_utility_price').select('asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices').eq('lease_contract_unit_id', fallbackLeaseContractUnitId) : Promise.resolve({ data: [], error: null }),
         fallbackLeaseContractUnitId ? supabase.from('lease_contract_unit_basic_charge').select('category, amount, tax_mode').eq('lease_contract_unit_id', fallbackLeaseContractUnitId) : Promise.resolve({ data: [], error: null }),
         fallbackLeaseContractUnitId ? supabase.from('lease_contract_unit_category_price').select('category, unit_price, tax_mode, billing_month_prices').eq('lease_contract_unit_id', fallbackLeaseContractUnitId) : Promise.resolve({ data: [], error: null }),
+        supabase.from(billingUnitId ? 'lease_contract_billing_unit_meter_term' : 'lease_contract_unit_meter_term').select('asset_meter_sub_item_id, price_mode, tax_mode, show_unit_price_on_invoice, show_usage_on_invoice').eq(billingUnitId ? 'lease_contract_billing_unit_id' : 'lease_contract_unit_id', targetId),
       ]);
       if (cancelled) return;
-      const failed = [subItemResult, lineItemResult, settingResult, priceResult, basicResult, priceSettingResult, categoryPriceResult, fallbackPriceResult, fallbackBasicResult, fallbackCategoryPriceResult].find((result) => result.error);
+      const failed = [subItemResult, lineItemResult, settingResult, priceResult, basicResult, priceSettingResult, categoryPriceResult, fallbackPriceResult, fallbackBasicResult, fallbackCategoryPriceResult, meterTermResult].find((result) => result.error);
       if (failed?.error) { setError(`公共料金の単価を読み込めませんでした: ${failed.error.message}`); setLoading(false); return; }
       // 単価を持たせるのは、固定単価の小分類に紐づく明細項目です。分類で共通にした分類は、分類で1行にします。
       const priceSettings = (priceSettingResult.data ?? []) as Array<{ category: CategoryId; price_scope: string; default_unit_price: number | null; default_tax_mode: TaxMode }>;
       // 設定が無い分類は「分類で共通」です。
       const sharedCategories = new Set((['electric', 'water', 'gas'] as CategoryId[]).filter((category) => priceSettings.find((row) => row.category === category)?.price_scope !== 'line_item'));
-      const fixedSubItems = ((subItemResult.data ?? []) as Array<{ category: CategoryId; asset_billing_line_item_id: string | null; price_mode: string; sub_item_kind: string; is_monthly_fixed: boolean; default_unit_price: number | null; tax_mode: TaxMode }>)
-        .filter((row) => row.sub_item_kind !== 'basic' && !row.is_monthly_fixed && row.price_mode === 'fixed');
+      const customSubItems = ((subItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; sub_item_name: string; category: CategoryId; asset_billing_line_item_id: string | null; price_mode: MeterTerm['price_mode']; sub_item_kind: string; is_monthly_fixed: boolean; default_unit_price: number | null; tax_mode: TaxMode; show_unit_price_on_invoice: boolean; show_usage_on_invoice: boolean }>)
+        .filter((row) => row.sub_item_kind !== 'basic' && !row.is_monthly_fixed);
+      const savedMeterTerms = (meterTermResult.data ?? []) as MeterTerm[];
+      setMeterTerms(customSubItems.map((item) => ({
+        asset_meter_sub_item_id: item.asset_meter_sub_item_id, label: item.sub_item_name,
+        price_mode: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.price_mode ?? item.price_mode,
+        tax_mode: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.tax_mode ?? item.tax_mode,
+        show_unit_price_on_invoice: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.show_unit_price_on_invoice ?? item.show_unit_price_on_invoice,
+        show_usage_on_invoice: savedMeterTerms.find((row) => row.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.show_usage_on_invoice ?? item.show_usage_on_invoice,
+      })));
+      const fixedSubItems = customSubItems;
       const fixedLineItemIds = new Set(fixedSubItems.filter((row) => row.asset_billing_line_item_id && !sharedCategories.has(row.category)).map((row) => row.asset_billing_line_item_id as string));
       const lineItemRows = (lineItemResult.data ?? []) as LineItemRow[];
       const items = lineItemRows.filter((item) => fixedLineItemIds.has(item.asset_billing_line_item_id));
@@ -110,6 +123,7 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
 
   const updatePrice = (lineItemId: string, patch: Partial<PriceDraft>) => { setPrices((current) => ({ ...current, [lineItemId]: { ...current[lineItemId], ...patch } })); setDirty(true); setMessage(''); };
   const updateBasic = (category: CategoryId, patch: Partial<BasicDraft>) => { setBasics((current) => ({ ...current, [category]: { ...(current[category] ?? { amount: '', taxMode: 'exclusive' }), ...patch } })); setDirty(true); setMessage(''); };
+  const updateMeterTerm = (id: string, patch: Partial<MeterTerm>) => { setMeterTerms((current) => current.map((row) => row.asset_meter_sub_item_id === id ? { ...row, ...patch } : row)); setDirty(true); setMessage(''); };
 
   const save = async () => {
     if (!supabase || !canEdit) return;
@@ -158,6 +172,11 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
     } else {
       saveError = (await supabase.rpc('save_lease_contract_unit_utility_terms', { p_lease_contract_unit_id: leaseContractUnitId, p_prices: priceRows, p_category_prices: categoryPriceRows, p_basic_charges: basicRows })).error;
     }
+    if (!saveError) {
+      const table = billingUnitId ? 'lease_contract_billing_unit_meter_term' : 'lease_contract_unit_meter_term';
+      const key = billingUnitId ? 'lease_contract_billing_unit_id' : 'lease_contract_unit_id';
+      saveError = (await supabase.from(table).upsert(meterTerms.map(({ label: _label, ...term }) => ({ ...term, [key]: billingUnitId || leaseContractUnitId })), { onConflict: `${key},asset_meter_sub_item_id` })).error;
+    }
     setSaving(false);
     if (saveError) { setError(`公共料金の単価を保存できませんでした: ${saveError.message}`); return; }
     setDirty(false); setMessage('保存しました。');
@@ -169,8 +188,9 @@ export function ContractUtilityPricesSection({ leaseContractUnitId, billingUnitI
     <div className="contract-information-section-heading"><div><h3>{billingUnitId ? '請求区画の公共料金' : '公共料金'}</h3></div></div>
     {error && <p className="contract-information-notice">{error}</p>}
     {loading && <p className="contract-information-empty">読み込み中…</p>}
-    {!loading && !targets.length && !basicCategories.length && <p className="contract-information-empty">この物件には、契約で単価を持つ明細項目（固定単価の小分類に紐づく明細項目）や請求する基本料がありません。</p>}
-    {!loading && (targets.length > 0 || basicCategories.length > 0) && <div className="contract-information-table-wrap">
+    {!loading && !targets.length && !basicCategories.length && !meterTerms.length && <p className="contract-information-empty">公共料金の設定項目がありません。</p>}
+    {!loading && (targets.length > 0 || basicCategories.length > 0 || meterTerms.length > 0) && <div className="contract-information-table-wrap">
+      {!!meterTerms.length && <table className="contract-information-table utility-price-table"><thead><tr><th>小分類</th><th>単価計算方法</th><th>税区分</th><th>請求書に単価を表示</th><th>請求書に使用量・単位を表示</th></tr></thead><tbody>{meterTerms.map((term) => <tr key={term.asset_meter_sub_item_id}><td>{term.label}</td><td><select value={term.price_mode} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { price_mode: event.target.value as MeterTerm['price_mode'] })}><option value="fixed">固定</option><option value="amount">金額から計算</option><option value="master_meter">大元メーターから計算</option></select></td><td><select value={term.tax_mode} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { tax_mode: event.target.value as TaxMode })}><option value="exclusive">税抜</option><option value="inclusive">税込</option></select></td><td><input type="checkbox" checked={term.show_unit_price_on_invoice} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { show_unit_price_on_invoice: event.target.checked })} /></td><td><input type="checkbox" checked={term.show_usage_on_invoice} disabled={disabled} onChange={(event) => updateMeterTerm(term.asset_meter_sub_item_id, { show_usage_on_invoice: event.target.checked })} /></td></tr>)}</tbody></table>}
       <table className="contract-information-table utility-price-table">
         <thead><tr><th>項目</th><th>単価・金額</th><th>税区分</th><th>請求月による単価</th></tr></thead>
         <tbody>
