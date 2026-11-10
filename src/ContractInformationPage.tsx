@@ -5,7 +5,6 @@ import { Dialog } from './components/Dialog';
 import './ContractInformationPage.css';
 import { type BillingTerms } from './utils/billingDates';
 
-type AmountRounding = 'floor' | 'round' | 'ceil';
 import { ContractUtilityPricesSection } from './ContractUtilityPricesSection';
 import { ContractBillingUnitsSection } from './ContractBillingUnitsSection';
 import { allProductCategories, normalizeProductCategory, productCategories, type ProductCategory } from './lib/product-categories';
@@ -228,29 +227,6 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
     setBillingTerms(next);
   };
 
-  // 公共料金（検針データ）の使用料・基本料の日割りの円未満の処理です。契約区画が持ちます。
-  const [amountRounding, setAmountRounding] = useState<AmountRounding>('floor');
-  useEffect(() => {
-    if (!selectedLeaseContractUnitId || !supabase) return;
-    let cancelled = false;
-    void supabase.from('lease_contract_unit').select('utility_amount_rounding_mode').eq('lease_contract_unit_id', selectedLeaseContractUnitId).maybeSingle()
-      .then(({ data, error: loadError }) => {
-        if (cancelled) return;
-        if (loadError) setBillingError(`小数点以下の処理を読み込めませんでした: ${loadError.message}`);
-        setAmountRounding((data as { utility_amount_rounding_mode: AmountRounding } | null)?.utility_amount_rounding_mode ?? 'floor');
-      });
-    return () => { cancelled = true; };
-  }, [selectedLeaseContractUnitId]);
-  const updateAmountRounding = async (mode: AmountRounding) => {
-    if (!supabase || !canEditBillingTerms || !selectedLeaseContractUnitId) return;
-    setSavingBillingTerms(true);
-    setBillingError('');
-    const { error: saveError } = await supabase.rpc('update_lease_contract_unit_amount_rounding', { p_lease_contract_unit_id: selectedLeaseContractUnitId, p_amount_rounding_mode: mode });
-    setSavingBillingTerms(false);
-    if (saveError) { setBillingError(`小数点以下の処理を更新できませんでした: ${saveError.message}`); return; }
-    setAmountRounding(mode);
-  };
-
   const selectedProperty = properties.find((property) => property.propertyId === propertyId);
   const contract = detail?.contract;
 
@@ -379,14 +355,6 @@ export function ContractInformationPage({ canEditBillingTerms }: { canEditBillin
                 </>}
               </div>
               {terms.is_annual_billing && <small className="billing-terms-preview">請求月に月額×12で請求し、それ以外の月は0円で請求します（明細項目1は空白）。</small>}
-            </div>
-            <div className="billing-terms-field">
-              <span className="billing-terms-label">小数点以下の処理</span>
-              <div className="billing-terms-controls">
-                <select aria-label="小数点以下の処理" value={amountRounding} disabled={disabled} onChange={(event) => void updateAmountRounding(event.target.value as AmountRounding)}>
-                  <option value="floor">切り捨て</option><option value="round">四捨五入</option><option value="ceil">切り上げ</option>
-                </select>
-              </div>
             </div>
           </div>;
         })()}

@@ -3,21 +3,20 @@ import { supabase } from './lib/supabase';
 import './ParkingFeeCleanupPage.css';
 import './ContractBillingBulkPage.css';
 
-// 請求条件（入金期日・請求期間・小数点以下の処理）と公共料金（電気基本料・各単価）を、
+// 請求条件（入金期日・請求期間）と公共料金（電気基本料・各単価）を、
 // テナント請求の対象ビルの全契約で一括設定するページです。
 //   請求条件の入金期日・請求期間は契約が持つため、同じ契約の区画を並べたときは同じ値を保存します。
 //   単価欄は、選択したビルの「分類で共通／小分類ごと」の設定に応じて動的に切り替えます。
 
 type CategoryId = 'electric' | 'water' | 'gas';
 type TaxMode = 'exclusive' | 'inclusive';
-type Rounding = 'floor' | 'round' | 'ceil';
 type Terms = { due_month_offset: number; due_day_of_month: number; due_holiday_adjustment: 'previous' | 'next'; period_month_offset: number; is_annual_billing: boolean; annual_billing_month: number | null; annual_start_offset: number | null };
 type BillingMonthPrice = { start_month: number; end_month: number; unit_price: number };
 type SavedPrice = { asset_billing_line_item_id: string; unit_price: number; tax_mode: TaxMode; billing_month_prices: BillingMonthPrice[] | null };
 type SavedCategoryPrice = { category: CategoryId; unit_price: number; tax_mode: TaxMode; billing_month_prices: BillingMonthPrice[] | null };
 type SavedBasic = { category: CategoryId; amount: number; tax_mode: TaxMode };
 type UnitRecord = {
-  lease_contract_unit_id: string; utility_amount_rounding_mode: Rounding;
+  lease_contract_unit_id: string;
   contract: (Terms & { lease_contract_id: string }) | Array<Terms & { lease_contract_id: string }> | null;
   prices: SavedPrice[] | null; categoryPrices: SavedCategoryPrice[] | null; basics: SavedBasic[] | null;
 };
@@ -29,7 +28,7 @@ type PriceDefinition = {
   lineItemId: string | null;
 };
 // 画面で編集する値です。単価・基本料は文字列で持ち、空欄は未設定です。
-type Draft = Terms & { rounding: Rounding; basic: string; prices: Record<string, string> };
+type Draft = Terms & { basic: string; prices: Record<string, string> };
 type Row = {
   id: string; contractId: string; propertyId: string; property: string; tenant: string; unit: string;
   sharedCategories: CategoryId[];
@@ -45,9 +44,9 @@ const today = new Date().toISOString().slice(0, 10);
 const termKeys: Array<keyof Terms> = ['due_month_offset', 'due_day_of_month', 'due_holiday_adjustment', 'period_month_offset', 'is_annual_billing', 'annual_billing_month', 'annual_start_offset'];
 const isAmount = (value: string) => value.trim() === '' || (Number.isFinite(Number(value)) && Number(value) >= 0);
 // 一括反映の欄です。空欄の項目は反映しません。
-type Bulk = { dueMonth: string; dueDay: string; holiday: string; period: string; rounding: string; basic: string; prices: Record<string, string> };
+type Bulk = { dueMonth: string; dueDay: string; holiday: string; period: string; basic: string; prices: Record<string, string> };
 type BulkScalarKey = Exclude<keyof Bulk, 'prices'>;
-const emptyBulk: Bulk = { dueMonth: '', dueDay: '', holiday: '', period: '', rounding: '', basic: '', prices: {} };
+const emptyBulk: Bulk = { dueMonth: '', dueDay: '', holiday: '', period: '', basic: '', prices: {} };
 
 // 契約区画の公共料金（単価・分類共通の単価・基本料）の保存済みの内容を読み直します。
 async function loadSavedTerms(client: NonNullable<typeof supabase>, leaseContractUnitId: string): Promise<Row['saved'] | { error: string }> {
@@ -121,7 +120,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
     // URLが長くなりすぎないよう、区画は分けて読み込みます。
     for (let start = 0; start < ids.length; start += 100) {
       const { data, error: unitError } = await client.from('lease_contract_unit')
-        .select('lease_contract_unit_id, utility_amount_rounding_mode, contract:lease_contract!inner(lease_contract_id, due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, billing_month_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)')
+        .select('lease_contract_unit_id, contract:lease_contract!inner(lease_contract_id, due_month_offset, due_day_of_month, due_holiday_adjustment, period_month_offset, is_annual_billing, annual_billing_month, annual_start_offset), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode, billing_month_prices), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode, billing_month_prices), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)')
         .in('lease_contract_unit_id', ids.slice(start, start + 100));
       if (unitError) { setError(`契約の請求条件を読み込めませんでした: ${unitError.message}`); setLoading(false); return; }
       for (const record of (data ?? []) as unknown as UnitRecord[]) records.set(record.lease_contract_unit_id, record);
@@ -148,7 +147,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
         sharedCategories: categories.filter((category) => !lineItemScoped.has(`${asset.asset_id}:${category}`)),
         priceDefinitions,
         saved: { prices: record.prices ?? [], categoryPrices, basics },
-        original: { ...terms, rounding: record.utility_amount_rounding_mode ?? 'floor', basic: basic ? String(basic.amount) : '', prices: priceValues },
+        original: { ...terms, basic: basic ? String(basic.amount) : '', prices: priceValues },
       });
     }
     setRows(next);
@@ -164,8 +163,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
   const selectedRows = visible.filter((row) => selected.has(row.id));
   const termsChanged = (row: Row) => termKeys.some((key) => drafts[row.id]?.[key] !== row.original[key]);
   const pricesChanged = (row: Row) => drafts[row.id]?.basic !== row.original.basic || row.priceDefinitions.some((definition) => drafts[row.id]?.prices[definition.key] !== row.original.prices[definition.key]);
-  const roundingChanged = (row: Row) => drafts[row.id]?.rounding !== row.original.rounding;
-  const changedRows = rows.filter((row) => termsChanged(row) || pricesChanged(row) || roundingChanged(row));
+  const changedRows = rows.filter((row) => termsChanged(row) || pricesChanged(row));
 
   // 入金期日・請求期間は契約が持つため、同じ契約の区画にも同じ値を入れます。
   const updateDraft = (row: Row, patch: Partial<Draft>) => setDrafts((current) => {
@@ -187,7 +185,6 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
     if (bulk.dueDay) patch.due_day_of_month = Number(bulk.dueDay);
     if (bulk.holiday) patch.due_holiday_adjustment = bulk.holiday as Terms['due_holiday_adjustment'];
     if (bulk.period) patch.period_month_offset = Number(bulk.period);
-    if (bulk.rounding) patch.rounding = bulk.rounding as Rounding;
     if (bulk.basic.trim()) patch.basic = bulk.basic.trim();
     const bulkPrices = Object.fromEntries(Object.entries(bulk.prices).filter(([, value]) => value.trim()));
     if (!Object.keys(patch).length && !Object.keys(bulkPrices).length) { setError('反映する項目を入力してください。'); return; }
@@ -212,7 +209,7 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
     setProcessing(true); setError(''); setResult(null);
     let success = 0; const failures: Failure[] = [];
     const savedContracts = new Set<string>();
-    // 区画ごとに、請求条件・小数点以下の処理・公共料金をそれぞれ保存します。一部だけ失敗したときは、保存できた項目も結果に出します。
+    // 区画ごとに、請求条件・公共料金をそれぞれ保存します。一部だけ失敗したときは、保存できた項目も結果に出します。
     for (const row of changedRows) {
       const draft = drafts[row.id];
       const saved: string[] = []; const errors: string[] = [];
@@ -223,10 +220,6 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
           p_is_annual_billing: draft.is_annual_billing, p_annual_billing_month: draft.annual_billing_month, p_annual_start_offset: draft.annual_start_offset,
         });
         if (termsError) errors.push(`請求条件：${termsError.message}`); else { saved.push('請求条件'); savedContracts.add(row.contractId); }
-      }
-      if (roundingChanged(row)) {
-        const { error: roundingError } = await supabase.rpc('update_lease_contract_unit_amount_rounding', { p_lease_contract_unit_id: row.id, p_amount_rounding_mode: draft.rounding });
-        if (roundingError) errors.push(`小数点以下の処理：${roundingError.message}`); else saved.push('小数点以下の処理');
       }
       if (pricesChanged(row)) {
         // 保存は置き換えのため、この画面で扱わない単価・基本料は保存直前の最新の内容をそのまま渡します（画面を開いた後に契約情報で入れた変更も消さないため）。
@@ -285,7 +278,6 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
         {bulkSelect('dueDay', '入金期日（日）', dayOptions)}
         {bulkSelect('holiday', '土日祝の場合', [['previous', '前日'], ['next', '翌日']])}
         {bulkSelect('period', '請求期間', [['-1', '前月分'], ['0', '当月分'], ['1', '翌月分']])}
-        {bulkSelect('rounding', '小数点以下の処理', [['floor', '切り捨て'], ['round', '四捨五入'], ['ceil', '切り上げ']])}
         {bulkInput('basic', '電気基本料')}
         {activePriceDefinitions.map(bulkPriceInput)}
         <div className="contract-billing-bulk-actions">
@@ -298,11 +290,11 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
       <div className="table-scroll"><table className="parking-fee-cleanup-table">
         <thead><tr>
           <th><input type="checkbox" aria-label="表示中の契約をすべて選択" checked={selectable.length > 0 && selectable.every((row) => selected.has(row.id))} onChange={(event) => setSelected((current) => { const next = new Set(current); selectable.forEach((row) => { if (event.target.checked) next.add(row.id); else next.delete(row.id); }); return next; })} /></th>
-          <th>ビル</th><th>テナント</th><th>区画</th><th>入金期日</th><th>請求期間</th><th>小数点以下の処理</th><th>電気基本料</th>{activePriceDefinitions.map((definition) => <th key={definition.key}>{definition.label}</th>)}
+          <th>ビル</th><th>テナント</th><th>区画</th><th>入金期日</th><th>請求期間</th><th>電気基本料</th>{activePriceDefinitions.map((definition) => <th key={definition.key}>{definition.label}</th>)}
         </tr></thead>
-        <tbody>{loading ? <tr><td colSpan={8 + activePriceDefinitions.length} className="parking-fee-cleanup-empty">読み込み中です…</td></tr> : visible.length ? visible.map((row) => {
+        <tbody>{loading ? <tr><td colSpan={7 + activePriceDefinitions.length} className="parking-fee-cleanup-empty">読み込み中です…</td></tr> : visible.length ? visible.map((row) => {
           const draft = drafts[row.id] ?? row.original;
-          const changed = termsChanged(row) || pricesChanged(row) || roundingChanged(row);
+          const changed = termsChanged(row) || pricesChanged(row);
           return <tr key={row.id} className={changed ? 'changed' : undefined}>
             <td><input type="checkbox" checked={selected.has(row.id)} disabled={processing} onChange={() => toggle(row.id)} /></td>
             <td>{row.property}</td><td>{row.tenant}</td><td>{row.unit}</td>
@@ -310,11 +302,10 @@ export function ContractBillingBulkPage({ canEdit }: { canEdit: boolean }) {
               <select aria-label="入金期日の日" value={draft.due_day_of_month} disabled={processing} onChange={(event) => updateDraft(row, { due_day_of_month: Number(event.target.value) })}>{dayOptions.map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select>
               <select aria-label="土日祝の場合" value={draft.due_holiday_adjustment} disabled={processing} onChange={(event) => updateDraft(row, { due_holiday_adjustment: event.target.value as Terms['due_holiday_adjustment'] })}><option value="previous">前日</option><option value="next">翌日</option></select></td>
             <td>{draft.is_annual_billing ? '年払い' : <select aria-label="請求期間" value={draft.period_month_offset} disabled={processing} onChange={(event) => updateDraft(row, { period_month_offset: Number(event.target.value) })}><option value={-1}>前月分</option><option value={0}>当月分</option><option value={1}>翌月分</option></select>}</td>
-            <td><select aria-label="小数点以下の処理" value={draft.rounding} disabled={processing} onChange={(event) => updateDraft(row, { rounding: event.target.value as Rounding })}><option value="floor">切り捨て</option><option value="round">四捨五入</option><option value="ceil">切り上げ</option></select></td>
             <td><input type="number" min="0" step="1" value={draft.basic} placeholder="—" disabled={processing} aria-label="電気基本料" onChange={(event) => updateDraft(row, { basic: event.target.value })} /></td>
             {activePriceDefinitions.map((definition) => <td key={definition.key}><input type="number" min="0" step="0.0001" value={draft.prices[definition.key] ?? ''} placeholder="—" disabled={processing} aria-label={definition.label} onChange={(event) => updatePrice(row, definition.key, event.target.value)} /></td>)}
           </tr>;
-        }) : <tr><td colSpan={8 + activePriceDefinitions.length} className="parking-fee-cleanup-empty">{propertyFilter ? '選択したビルに対象契約がありません。' : 'ビルを選択してください。'}</td></tr>}</tbody>
+        }) : <tr><td colSpan={7 + activePriceDefinitions.length} className="parking-fee-cleanup-empty">{propertyFilter ? '選択したビルに対象契約がありません。' : 'ビルを選択してください。'}</td></tr>}</tbody>
       </table></div>
     </section>
   </section>;
