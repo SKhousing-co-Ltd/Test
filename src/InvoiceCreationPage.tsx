@@ -47,6 +47,18 @@ const duePatternLabel = (pattern: DuePattern) => `${patternMark(pattern.pattern_
 const savedAtText = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`; };
 const sheetTotal = (rows: InvoiceRow[]) => { const seen = new Set<string>(); let total = 0; for (const row of recalcInvoices(rows)) if (!seen.has(row.invoiceKey)) { seen.add(row.invoiceKey); total += numberValue(row.values[7]); } return total; };
 
+function MultiSelectFilter({ label, options, selected, onChange }: { label: string; options: string[]; selected: Set<string> | null; onChange: (selected: Set<string> | null) => void }) {
+  const allSelected = selected === null || (options.length > 0 && options.every((option) => selected.has(option)));
+  const selectedCount = allSelected ? options.length : options.filter((option) => selected.has(option)).length;
+  const summary = allSelected ? 'すべて' : selectedCount === 0 ? '選択なし' : `${selectedCount}件選択`;
+  const toggleOption = (option: string, checked: boolean) => {
+    const next = new Set(selected ?? options);
+    if (checked) next.add(option); else next.delete(option);
+    onChange(next.size === options.length ? null : next);
+  };
+  return <div className="invoice-multi-filter"><span>{label}</span><details><summary>{summary}</summary><div className="invoice-multi-filter-menu"><label><input type="checkbox" checked={allSelected} onChange={(event) => onChange(event.target.checked ? null : new Set())} /><strong>すべての項目</strong></label>{options.map((option) => <label key={option}><input type="checkbox" checked={allSelected || selected?.has(option) === true} onChange={(event) => toggleOption(option, event.target.checked)} /><span>{option}</span></label>)}</div></details></div>;
+}
+
 export function InvoiceCreationPage({ propertyId, propertyName, period }: { propertyId: string; propertyName: string; period: BillingPeriod }) {
   const [rows, setRowsState] = useState<InvoiceRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,8 +74,8 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const [periodRangeByPattern, setPeriodRangeByPattern] = useState<Record<string, { start: string; end: string }>>({});
   const [meterNotice, setMeterNotice] = useState('');
   const [termsNotice, setTermsNotice] = useState('');
-  const [lineItem1Filter, setLineItem1Filter] = useState('all');
-  const [lineItem2Filter, setLineItem2Filter] = useState('all');
+  const [lineItem1Filter, setLineItem1Filter] = useState<Set<string> | null>(null);
+  const [lineItem2Filter, setLineItem2Filter] = useState<Set<string> | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<number, number>>(loadColumnWidths);
   // 保存状態です。保存済みなら保存日時、未保存（最新データから作成）なら空です。
   const [savedAt, setSavedAt] = useState('');
@@ -84,7 +96,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
     setRowsState(recalcInvoices(sheet.rows)); setDuePatternByInvoice(sheet.duePatternByInvoice); setDueDateByPattern(sheet.dueDateByPattern);
     setPeriodPatternByRow(sheet.periodPatternByRow); setPeriodRangeByPattern(sheet.periodRangeByPattern);
     setInvoiceNote(sheet.invoiceNote); setShowInvoiceNote(sheet.showInvoiceNote);
-    setLineItem1Filter('all'); setLineItem2Filter('all');
+    setLineItem1Filter(null); setLineItem2Filter(null);
   };
   const currentSheet = (): InvoiceSheet => ({ rows, duePatternByInvoice, dueDateByPattern, periodPatternByRow, periodRangeByPattern, invoiceNote, showInvoiceNote });
   const latestSheetRef = useRef<InvoiceSheet>(currentSheet());
@@ -110,13 +122,14 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
     }
     const used = new Map<string, number>();
     const rows = sheet.rows.map((row) => {
-      if (row.values[20]?.trim()) return row;
       const key = `${row.tenantId}\u0000${row.chargeType}\u0000${row.values[11]}`;
       const index = used.get(key) ?? 0;
       const note = notes.get(key)?.[index];
       if (!note) return row;
       used.set(key, index + 1);
-      const values = [...row.values]; values[20] = note;
+      const configured = row.values[20]?.trim() ?? '';
+      if (configured && (note === configured || note.startsWith(`${configured} `))) return row;
+      const values = [...row.values]; values[20] = configured ? `${configured} ${note}` : note;
       return { ...row, values };
     });
     return { ...sheet, rows };
@@ -236,7 +249,18 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
 
   const lineItem1Options = useMemo(() => [...new Set(rows.map((row) => row.values[10]).filter(Boolean))].sort(), [rows]);
   const lineItem2Options = useMemo(() => [...new Set(rows.map((row) => row.values[11]).filter(Boolean))].sort(), [rows]);
-  const filteredRows = useMemo(() => rows.filter((row) => (lineItem1Filter === 'all' || row.values[10] === lineItem1Filter) && (lineItem2Filter === 'all' || row.values[11] === lineItem2Filter)), [lineItem1Filter, lineItem2Filter, rows]);
+  const filteredRows = useMemo(() => rows.filter((row) => (lineItem1Filter === null || lineItem1Filter.has(row.values[10])) && (lineItem2Filter === null || lineItem2Filter.has(row.values[11]))), [lineItem1Filter, lineItem2Filter, rows]);
+  const rankedUnitPrices = useMemo(() => [...new Set(filteredRows.map((row) => {
+    const value = row.values[14]?.trim();
+    return value === '' || !Number.isFinite(Number(value.replace(/,/g, ''))) ? null : Number(value.replace(/,/g, ''));
+  }).filter((price): price is number => price !== null))].sort((left, right) => right - left), [filteredRows]);
+  const unitPriceClass = (value: string) => {
+    if (lineItem2Filter === null || lineItem2Filter.size !== 1) return '';
+    const normalized = value.trim().replace(/,/g, '');
+    if (normalized === '' || !Number.isFinite(Number(normalized))) return '';
+    const rank = rankedUnitPrices.indexOf(Number(normalized));
+    return rank >= 0 && rank < 3 ? `invoice-unit-price-rank-${rank + 1}` : '';
+  };
   const invoiceSummaryByKey = useMemo(() => { const result = new Map<string, InvoiceRow>(); for (const row of rows) if (!result.has(row.invoiceKey)) result.set(row.invoiceKey, row); return result; }, [rows]);
   const firstVisibleRowIds = useMemo(() => { const result = new Set<string>(); const seen = new Set<string>(); for (const row of filteredRows) if (!seen.has(row.invoiceKey)) { seen.add(row.invoiceKey); result.add(row.id); } return result; }, [filteredRows]);
   const visibleInvoiceKeys = useMemo(() => [...new Set(filteredRows.map((row) => row.invoiceKey))], [filteredRows]);
@@ -254,7 +278,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   // 上部の入金期限を書き換えると、そのパターンを使う請求書すべてに反映します。
   const changeDueDate = (patternId: string, value: string) => { setDueDateByPattern((current) => ({ ...current, [patternId]: value })); setInvoiceValue((invoiceKey) => (duePatternByInvoice[invoiceKey] ?? '') === patternId, 4, value); };
   // 明細行の請求期間パターンを切り替えると、上部で確認・編集している期間をそのまま取り込みます。
-  const selectPeriodPattern = (rowId: string, patternId: string) => { const range = periodRangeByPattern[patternId]; setPeriodPatternByRow((current) => ({ ...current, [rowId]: patternId })); setLineItem1Filter('all'); updateCell(rowId, 10, patternId ? periodText(range?.start ?? '', range?.end ?? '') : '未設定'); };
+  const selectPeriodPattern = (rowId: string, patternId: string) => { const range = periodRangeByPattern[patternId]; setPeriodPatternByRow((current) => ({ ...current, [rowId]: patternId })); setLineItem1Filter(null); updateCell(rowId, 10, patternId ? periodText(range?.start ?? '', range?.end ?? '') : '未設定'); };
   const updateInvoiceNote = (value: string) => { setInvoiceNote(value); setRows((current) => { const written = new Set<string>(); return current.map((row) => { if (written.has(row.invoiceKey)) return row; written.add(row.invoiceKey); return { ...row, values: row.values.map((cell, index) => index === 9 ? value : cell) }; }); }); };
   const setInvoiceNoteEnabled = (enabled: boolean) => { setShowInvoiceNote(enabled); if (!enabled) updateInvoiceNote(''); else setDirty(true); };
   const startColumnResize = (column: number, event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -308,6 +332,6 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
     {notice && <p className="invoice-creation-notice">{notice}</p>}
     {meterNotice && <p className="invoice-creation-notice invoice-creation-error">{meterNotice}</p>}
     {termsNotice && <p className="invoice-creation-notice invoice-creation-error">{termsNotice}</p>}
-    <div className="invoice-creation-table-wrap invoice-csv-table-wrap"><table className="invoice-csv-table" style={{ width: tableWidth }}><colgroup><col className="invoice-drag-column" />{visibleColumns.map((column) => <col key={column} style={{ width: columnWidths[column] }} />)}</colgroup><thead><tr className="invoice-total-row" ref={totalRowRef}><th />{visibleColumns.map((column) => <th key={`total-${column}`} className={cellClass(column)}>{column === visibleColumns[0] ? <span>表示中合計</span> : totalColumns.has(column) ? <strong>{yen.format(totals[column as keyof typeof totals])}</strong> : null}</th>)}</tr><tr><th style={{ top: totalRowHeight }} aria-label="並べ替え" />{visibleColumns.map((column) => <th key={column} style={{ top: totalRowHeight }}>{column === 10 || column === 11 ? <label>{screenHeaders[column]}<select value={column === 10 ? lineItem1Filter : lineItem2Filter} onChange={(event) => column === 10 ? setLineItem1Filter(event.target.value) : setLineItem2Filter(event.target.value)}><option value="all">すべて</option>{(column === 10 ? lineItem1Options : lineItem2Options).map((option) => <option key={option} value={option}>{option}</option>)}</select></label> : headerLabel(column)}<button type="button" className="invoice-column-resizer" aria-label={`${screenHeaders[column]}の列幅を変更`} onPointerDown={(event) => startColumnResize(column, event)} /></th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={visibleColumns.length + 1} className="invoice-creation-empty">レントロールを読み込み中…</td></tr> : !filteredRows.length ? <tr><td colSpan={visibleColumns.length + 1} className="invoice-creation-empty">条件に一致する固定費の契約データがありません。</td></tr> : filteredRows.map((row) => { const firstVisible = firstVisibleRowIds.has(row.id); const summary = invoiceSummaryByKey.get(row.invoiceKey) ?? row; const invoiceIndex = visibleInvoiceKeys.indexOf(row.invoiceKey); return <tr key={row.id} className={[firstVisible ? 'invoice-start-row' : 'invoice-continuation-row', dragInvoiceKey === row.invoiceKey ? 'invoice-card-dragging' : '', dropBeforeInvoice === invoiceIndex && firstVisible ? 'invoice-card-drop-before' : '', dropBeforeInvoice === invoiceIndex + 1 && invoiceIndex === visibleInvoiceKeys.length - 1 ? 'invoice-card-drop-after' : ''].filter(Boolean).join(' ')} onDragOver={(event) => dragInvoiceOver(event, row.invoiceKey)} onDrop={(event) => void dropInvoice(event)}>{firstVisible && <td className="invoice-drag-cell" rowSpan={visibleRowCountByInvoice.get(row.invoiceKey) ?? 1}><span className="invoice-drag-handle" draggable title="請求書ごとドラッグして並べ替え" aria-label={`請求書番号${summary.values[0]}を並べ替え`} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', row.invoiceKey); setDragInvoiceKey(row.invoiceKey); }} onDragEnd={endInvoiceDrag}>⋮⋮</span></td>}{visibleColumns.map((column) => <td key={`${row.id}-${column}`} className={cellClass(column)}>{invoiceLevelColumns.has(column) && !firstVisible ? null : cellEditor(row, column, summary)}</td>)}</tr>; })}</tbody></table></div>
+    <div className="invoice-creation-table-wrap invoice-csv-table-wrap"><table className="invoice-csv-table" style={{ width: tableWidth }}><colgroup><col className="invoice-drag-column" />{visibleColumns.map((column) => <col key={column} style={{ width: columnWidths[column] }} />)}</colgroup><thead><tr className="invoice-total-row" ref={totalRowRef}><th />{visibleColumns.map((column) => <th key={`total-${column}`} className={cellClass(column)}>{column === visibleColumns[0] ? <span>表示中合計</span> : totalColumns.has(column) ? <strong>{yen.format(totals[column as keyof typeof totals])}</strong> : null}</th>)}</tr><tr><th style={{ top: totalRowHeight }} aria-label="並べ替え" />{visibleColumns.map((column) => <th key={column} style={{ top: totalRowHeight }}>{column === 10 || column === 11 ? <MultiSelectFilter label={screenHeaders[column]} options={column === 10 ? lineItem1Options : lineItem2Options} selected={column === 10 ? lineItem1Filter : lineItem2Filter} onChange={column === 10 ? setLineItem1Filter : setLineItem2Filter} /> : headerLabel(column)}<button type="button" className="invoice-column-resizer" aria-label={`${screenHeaders[column]}の列幅を変更`} onPointerDown={(event) => startColumnResize(column, event)} /></th>)}</tr></thead><tbody>{loading ? <tr><td colSpan={visibleColumns.length + 1} className="invoice-creation-empty">レントロールを読み込み中…</td></tr> : !filteredRows.length ? <tr><td colSpan={visibleColumns.length + 1} className="invoice-creation-empty">条件に一致する固定費の契約データがありません。</td></tr> : filteredRows.map((row) => { const firstVisible = firstVisibleRowIds.has(row.id); const summary = invoiceSummaryByKey.get(row.invoiceKey) ?? row; const invoiceIndex = visibleInvoiceKeys.indexOf(row.invoiceKey); return <tr key={row.id} className={[firstVisible ? 'invoice-start-row' : 'invoice-continuation-row', dragInvoiceKey === row.invoiceKey ? 'invoice-card-dragging' : '', dropBeforeInvoice === invoiceIndex && firstVisible ? 'invoice-card-drop-before' : '', dropBeforeInvoice === invoiceIndex + 1 && invoiceIndex === visibleInvoiceKeys.length - 1 ? 'invoice-card-drop-after' : ''].filter(Boolean).join(' ')} onDragOver={(event) => dragInvoiceOver(event, row.invoiceKey)} onDrop={(event) => void dropInvoice(event)}>{firstVisible && <td className="invoice-drag-cell" rowSpan={visibleRowCountByInvoice.get(row.invoiceKey) ?? 1}><span className="invoice-drag-handle" draggable title="請求書ごとドラッグして並べ替え" aria-label={`請求書番号${summary.values[0]}を並べ替え`} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', row.invoiceKey); setDragInvoiceKey(row.invoiceKey); }} onDragEnd={endInvoiceDrag}>⋮⋮</span></td>}{visibleColumns.map((column) => <td key={`${row.id}-${column}`} className={`${cellClass(column)} ${column === 14 ? `invoice-unit-price-cell ${unitPriceClass(row.values[14])}` : ''}`.trim()}>{invoiceLevelColumns.has(column) && !firstVisible ? null : cellEditor(row, column, summary)}</td>)}</tr>; })}</tbody></table></div>
   </section>;
 }

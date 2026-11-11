@@ -122,6 +122,10 @@ export type ContractRow = {
   note: string;
   // 分割した行を見分けるための名前です（3F など）。空欄なら「分割 n」と表示します。
   splitLabel: string;
+  // データ分割の対象にする請求項目です。
+  splitItems?: Array<'rent' | 'common' | 'storage' | 'variable'>;
+  // 分割行から作る請求明細の備考先頭へ付ける文言です。
+  invoiceNote?: string;
   // 分割した行が受け持つ区画です。どの行にも無い区画は1行目で計算します。
   unitIds: string[];
 };
@@ -406,6 +410,7 @@ export type TenantResult = ReturnType<typeof calculateTenant>;
 // 請求書作成へ渡す明細です。小分類・増額分ごと、テナントの契約行ごとに1行にします。
 // invoiceNo は、請求書分割設定で区画ごとに分けているテナントの、何番目の請求書に載せるかです。
 export type MeterInvoiceLine = {
+  meterReadingContractId?: string | null;
   tenantId: string; tenantName: string; invoiceNo: number; category: CategoryId; lineItemId: string | null; sourceName: string;
   usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string;
 };
@@ -427,7 +432,7 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
   const unitOf = (id: CategoryId) => building.categories.find((row) => row.id === id)?.unit ?? '';
   const order = meterSourceOrder(building);
   return result.rows.flatMap((row) => {
-    const shared = { tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
+    const shared = { meterReadingContractId: row.row.id, tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
     const subItems = row.categories.flatMap((category) => {
       if (row.row.categoryBillable[category.category.id] === false) return [];
       const customItems = category.subItems.filter((item) => item.subItem.kind === 'custom');

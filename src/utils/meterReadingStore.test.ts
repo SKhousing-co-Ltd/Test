@@ -406,3 +406,13 @@ test('契約情報に基本料が無いテナントには、基本料を請求�
   const basic = computeMonth(next, 2026, 9).results[0].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'basic');
   assert.equal(basic?.amount, 0);
 });
+
+test('テナント一覧で基本料をオフにした場合は、契約情報に基本料があっても請求しない', () => {
+  const next = snapshot();
+  next.tenants[0].rows[0].billable.basic = false;
+  const month = computeMonth(next, 2026, 9);
+  const row = month.results[0].rows[0];
+  const basic = row.categories[0].subItems.find((item) => item.subItem.id === 'basic');
+  assert.equal(month.contractTenants[0].rows[0].billable.basic, false);
+  assert.equal(basic?.amount, 0);
+});

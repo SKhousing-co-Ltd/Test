@@ -69,6 +69,22 @@ test('看板契約のその他月額は請求書で看板料として表示す�
   assert.equal(sheet.rows[0].chargeType, '看板料');
 });
 
+test('分割した固定費は明細項目順を優先し、同じ項目内は分割行順にする', async () => {
+  const first = { ...source('c1', 'A', 90000), monthly_parking_amount: 1000 };
+  const second = source('c2', 'A', 120000);
+  const meterContracts = [
+    { meter_reading_contract_id: 'm1', tenant_id: 'A', row_no: 1, split_items: ['rent'], invoice_note: '12.97坪', units: [{ unit_id: 'u-c2' }] },
+    { meter_reading_contract_id: 'm2', tenant_id: 'A', row_no: 2, split_items: ['rent'], invoice_note: '9.08坪', units: [{ unit_id: 'u-c1' }] },
+  ];
+  const client = fakeClient({ billing_code: [code('A', '1001')], lease_contract: [terms('c1'), terms('c2')], meter_reading_contract: meterContracts }, [first, second]);
+  const rows = (await buildInvoiceSheet(client, 'p', '物件', 2026, 10)).sheet.rows;
+  assert.deepEqual(rows.map((row) => [row.values[11], row.values[15], row.values[20]]), [
+    ['賃料', '120,000', '12.97坪'],
+    ['賃料', '90,000', '9.08坪'],
+    ['駐車料', '1,000', ''],
+  ]);
+});
+
 test('年払い（10月請求・翌月～1年分）：10月は月額×12で1年分、他の月は0円・明細項目1は空白', async () => {
   const tables = { billing_code: [code('A', '1001')], lease_contract: [terms('c1', { is_annual_billing: true, annual_billing_month: 10, annual_start_offset: 1 })] };
   const october = (await buildInvoiceSheet(fakeClient(tables, [source('c1', 'A', 100000)]), 'p', '物件', 2026, 10)).sheet.rows[0];

@@ -538,6 +538,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   // 契約区画の単価が無い入居区画は、明細項目の既定単価を「既定」として出します。
   // 水道は契約ごとに請求有無・単価が異なるため、既定単価では補完しません。
   const utilityValueOf = (row: RentRollRow, column: UtilityColumn): UtilityValue | null => {
+    // 公共料金を表示する商品区分は貸室と倉庫だけです。
+    if (!['office', 'warehouse'].includes(row.productCategory)) return null;
     if (!row.leaseContractUnitId) return null;
     const own = utilityValues[row.leaseContractUnitId]?.[column.key];
     if (own) return { ...own, isDefault: false };
