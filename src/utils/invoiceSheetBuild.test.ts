@@ -71,6 +71,16 @@ const source = (contractId: string, tenantId: string, rent: number) => ({ unit_i
 const terms = (contractId: string, overrides: Record<string, unknown> = {}) => ({ lease_contract_id: contractId, due_month_offset: 0, due_day_of_month: 0, due_holiday_adjustment: 'previous', period_month_offset: 1, is_annual_billing: false, annual_billing_month: null, annual_start_offset: null, ...overrides });
 const code = (tenantId: string, issue: string) => ({ billing_code_id: `bc-${tenantId}`, tenant_id: tenantId, issue_code: issue, is_primary: true, invoice_display_name: null, invoice_subject: null });
 
+test('請求先コードが1件だけならメイン未設定でも請求書に割り当てる', async () => {
+  const onlyCode = { ...code('A', '4423'), is_primary: false };
+  const row = (await buildInvoiceSheet(
+    fakeClient({ billing_code: [onlyCode], lease_contract: [terms('c1')] }, [source('c1', 'A', 100000)]),
+    'p', '物件', 2026, 10,
+  )).sheet.rows[0];
+  assert.equal(row.values[1], '4423');
+  assert.match(row.invoiceKey, /:bc-A:single$/);
+});
+
 test('既定の条件：当月末日（土日祝は前日）・翌月分', async () => {
   const client = fakeClient({ billing_code: [code('A', '1001')], lease_contract: [terms('c1')] }, [source('c1', 'A', 100000)]);
   const { sheet, termsNotice } = await buildInvoiceSheet(client, 'p', '物件', 2026, 10);

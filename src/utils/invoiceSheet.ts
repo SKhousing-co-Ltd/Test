@@ -215,7 +215,11 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   ]);
   if (rentRollResult.error || codeResult.error) throw new Error(`請求データを読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`);
   if (splitResult.error || splitAssignmentResult.error || splitUnitAssignmentResult.error) throw new Error(`請求書分割設定を読み込めませんでした: ${splitResult.error?.message ?? splitAssignmentResult.error?.message ?? splitUnitAssignmentResult.error?.message}`);
-  const codes = (codeResult.data ?? []) as BillingCode[]; const codeById = new Map(codes.map((code) => [code.billing_code_id, code])); const primaryCodeByTenant = new Map<string, BillingCode>(); for (const code of codes) if (code.tenant_id && code.is_primary) primaryCodeByTenant.set(code.tenant_id, code);
+  const codes = (codeResult.data ?? []) as BillingCode[]; const codeById = new Map(codes.map((code) => [code.billing_code_id, code])); const primaryCodeByTenant = new Map<string, BillingCode>();
+  // 請求先コードが1件だけのテナントで is_primary が未設定でも、そのコードを使います。
+  // ここで取れないと請求書キーが unassigned:single になり、分割設定自体が参照されません。
+  for (const code of codes) if (code.tenant_id && !primaryCodeByTenant.has(code.tenant_id)) primaryCodeByTenant.set(code.tenant_id, code);
+  for (const code of codes) if (code.tenant_id && code.is_primary) primaryCodeByTenant.set(code.tenant_id, code);
   // 入金期日・請求期間は契約の請求条件から決めます。契約に紐づかない明細（検針データなど）は既定値です。
   const contractIds = [...new Set(((rentRollResult.data ?? []) as RentRollSource[]).map((source) => source.lease_contract_id).filter((id): id is string => Boolean(id)))];
   const termsResult = contractIds.length ? await client.from('lease_contract').select(termsColumns).in('lease_contract_id', contractIds) : { data: [], error: null };
