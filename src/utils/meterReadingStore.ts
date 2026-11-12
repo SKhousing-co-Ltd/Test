@@ -813,7 +813,7 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
     const [confirmed, subItemResult, surchargeResult, contractTermResult, billingTermResult, contractUnitResult, billingUnitResult, contractBillingResult] = await Promise.all([
       loadConfirmedAmounts(client, assetId, year, month),
       client.from('asset_meter_sub_item')
-        .select('asset_meter_sub_item_id, category, sort_order, billing_period_pattern_id, show_unit_price_on_invoice, show_usage_on_invoice')
+        .select('asset_meter_sub_item_id, category, sub_item_kind, sort_order, billing_period_pattern_id, show_unit_price_on_invoice, show_usage_on_invoice')
         .eq('asset_id', assetId),
       client.from('asset_meter_surcharge')
         .select('asset_meter_surcharge_id, category, billing_period_pattern_id')
@@ -867,6 +867,9 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
     for (const row of confirmed) if (!tenantOrder.has(row.tenantId)) tenantOrder.set(row.tenantId, tenantOrder.size);
     const orderedConfirmed = confirmed.filter((row) => row.sourceKind !== 'subItem'
       || !row.meterReadingContractId
+      // データ分割で「変動費のみ」を選んだ行でも、基本料は分割対象外。
+      // 小分類の請求可否が false でも、確定済みの基本料明細は請求書へ渡す。
+      || subItems.get(row.sourceId)?.sub_item_kind === 'basic'
       || currentBillable.get(`${row.meterReadingContractId}:${row.sourceId}`) !== false).sort((left, right) =>
       (tenantOrder.get(left.tenantId) ?? 9999) - (tenantOrder.get(right.tenantId) ?? 9999)
       || left.rowNo - right.rowNo
