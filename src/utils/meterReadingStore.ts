@@ -195,19 +195,25 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   let contractItemRows: ContractItemRow[] = [];
   let monthlyFixedRows: MonthlyFixedChargeRow[] = [];
   const unitIdsByContract = new Map<string, string[]>();
+  const billingUnitIdsByContract = new Map<string, string[]>();
   if (contractIds.length) {
-    const [itemResult, contractUnitResult, monthlyFixedResult] = await retryFailedFetch('データ分割設定', () => Promise.all([
+    const [itemResult, contractUnitResult, contractBillingUnitResult, monthlyFixedResult] = await retryFailedFetch('データ分割設定', () => Promise.all([
       client.from('meter_reading_contract_item').select('meter_reading_contract_id, asset_meter_sub_item_id, is_billable, unit_price, fixed_amount').in('meter_reading_contract_id', contractIds),
       client.from('meter_reading_contract_unit').select('meter_reading_contract_id, unit_id').in('meter_reading_contract_id', contractIds),
+      client.from('meter_reading_contract_billing_unit').select('meter_reading_contract_id, lease_contract_billing_unit_id').in('meter_reading_contract_id', contractIds),
       client.from('meter_reading_month_fixed_charge').select('billing_month, meter_reading_contract_id, lease_contract_unit_id, asset_meter_sub_item_id, amount').eq('asset_id', assetId).lte('billing_month', billingMonth).in('meter_reading_contract_id', contractIds).order('billing_month', { ascending: false }),
     ]));
     if (itemResult.error) throw new Error(`契約行の設定を読み込めませんでした: ${itemResult.error.message}`);
     if (contractUnitResult.error) throw new Error(`分割行の区画を読み込めませんでした: ${contractUnitResult.error.message}`);
+    if (contractBillingUnitResult.error) throw new Error(`分割行の請求区画を読み込めませんでした: ${contractBillingUnitResult.error.message}`);
     if (monthlyFixedResult.error) throw new Error(`毎月定額を読み込めませんでした: ${monthlyFixedResult.error.message}`);
     contractItemRows = (itemResult.data ?? []) as ContractItemRow[];
     monthlyFixedRows = (monthlyFixedResult.data ?? []) as MonthlyFixedChargeRow[];
     for (const row of (contractUnitResult.data ?? []) as Array<{ meter_reading_contract_id: string; unit_id: string }>) {
       unitIdsByContract.set(row.meter_reading_contract_id, [...(unitIdsByContract.get(row.meter_reading_contract_id) ?? []), row.unit_id]);
+    }
+    for (const row of (contractBillingUnitResult.data ?? []) as Array<{ meter_reading_contract_id: string; lease_contract_billing_unit_id: string }>) {
+      billingUnitIdsByContract.set(row.meter_reading_contract_id, [...(billingUnitIdsByContract.get(row.meter_reading_contract_id) ?? []), row.lease_contract_billing_unit_id]);
     }
   }
 
@@ -307,6 +313,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
       amountRoundingMode: record.amount_rounding_mode, note: record.note ?? '', splitLabel: record.split_label ?? '',
       splitItems: record.split_items ?? ['rent', 'common', 'storage', 'variable'], invoiceNote: record.invoice_note ?? '',
       unitIds: unitIdsByContract.get(record.meter_reading_contract_id) ?? [],
+      billingUnitIds: billingUnitIdsByContract.get(record.meter_reading_contract_id) ?? [],
     };
   };
 
@@ -648,6 +655,17 @@ export async function saveMeterReading(
   for (const row of base.tenants.flatMap((tenant) => tenant.rows).filter((item) => !goneSet.has(item.id))) {
     for (const unitId of row.unitIds.filter((id) => !keptUnits.has(`${row.id}|${id}`))) {
       check(await client.from('meter_reading_contract_unit').delete().eq('meter_reading_contract_id', row.id).eq('unit_id', unitId), '分割行の区画');
+    }
+  }
+
+  // 請求区画は物理区画の構成が同じ・重複していても、請求区画ID単位で独立して保存します。
+  const contractBillingUnits = next.tenants.filter((tenant) => tenant.rows.length > 1)
+    .flatMap((tenant) => tenant.rows.flatMap((row) => [...new Set(row.billingUnitIds ?? [])].map((billingUnitId) => ({ meter_reading_contract_id: row.id, lease_contract_billing_unit_id: billingUnitId }))));
+  if (contractBillingUnits.length) check(await client.from('meter_reading_contract_billing_unit').upsert(contractBillingUnits, { onConflict: 'meter_reading_contract_id,lease_contract_billing_unit_id', ignoreDuplicates: true }), '分割行の請求区画');
+  const keptBillingUnits = new Set(contractBillingUnits.map((row) => `${row.meter_reading_contract_id}|${row.lease_contract_billing_unit_id}`));
+  for (const row of base.tenants.flatMap((tenant) => tenant.rows).filter((item) => !goneSet.has(item.id))) {
+    for (const billingUnitId of (row.billingUnitIds ?? []).filter((id) => !keptBillingUnits.has(`${row.id}|${id}`))) {
+      check(await client.from('meter_reading_contract_billing_unit').delete().eq('meter_reading_contract_id', row.id).eq('lease_contract_billing_unit_id', billingUnitId), '分割行の請求区画');
     }
   }
 

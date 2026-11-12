@@ -128,6 +128,8 @@ export type ContractRow = {
   invoiceNote?: string;
   // 分割した行が受け持つ区画です。どの行にも無い区画は1行目で計算します。
   unitIds: string[];
+  // 請求区画は物理区画が重複する場合があるため、請求区画そのもののIDも保持します。
+  billingUnitIds?: string[];
 };
 
 // メーター識別には階数だけを入れます（2F、B1F など）。全角は半角に直し、英数字以外は取り除きます。
@@ -196,6 +198,7 @@ const contractRow = (id: string, electric: number | null, options: { invoiceNo?:
   note: '',
   splitLabel: '',
   unitIds: [],
+  billingUnitIds: [],
 });
 
 const tenant = (id: string, name: string, electric: number | null, expected: number, options: { rounding?: RoundingMode; basic?: number; rows?: number; invoiceSplit?: boolean } = {}): TenantConfig => ({

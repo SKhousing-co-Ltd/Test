@@ -358,7 +358,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   const setSplitCount = (tenant: TenantConfig, count: number) => {
     const next = Math.max(1, Math.min(9, count));
     // 行を減らしたときは、消えた行の区画は1行目で計算します（どの行にも無い区画は1行目の扱いのため）。
-    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {}, splitLabel: '', invoiceNote: '', unitIds: [] });
+    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {}, splitLabel: '', invoiceNote: '', unitIds: [], billingUnitIds: [] });
     updateTenant(tenant.id, { rows });
   };
   const toggleSplitItem = (tenant: TenantConfig, item: 'rent' | 'common' | 'storage' | 'variable', checked: boolean) => updateTenant(tenant.id, {
@@ -386,6 +386,19 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         : checked ? row.unitIds.filter((id) => !unitIds.includes(id)) : row.unitIds,
     })),
   });
+  const toggleRowBillingUnit = (tenant: TenantConfig, index: number, billingUnitId: string, checked: boolean) => {
+    const allGroupedUnitIds = new Set(billingUnits.filter((group) => group.tenantId === tenant.id).flatMap((group) => group.memberUnitIds));
+    updateTenant(tenant.id, {
+      rows: tenant.rows.map((row, position) => {
+        const selectedBillingUnitIds = position === index
+          ? checked ? [...new Set([...(row.billingUnitIds ?? []), billingUnitId])] : (row.billingUnitIds ?? []).filter((id) => id !== billingUnitId)
+          : checked ? (row.billingUnitIds ?? []).filter((id) => id !== billingUnitId) : (row.billingUnitIds ?? []);
+        const physicalUnitIds = row.unitIds.filter((id) => !allGroupedUnitIds.has(id));
+        const groupedUnitIds = billingUnits.filter((group) => selectedBillingUnitIds.includes(group.id)).flatMap((group) => group.memberUnitIds);
+        return { ...row, billingUnitIds: selectedBillingUnitIds, unitIds: [...new Set([...physicalUnitIds, ...groupedUnitIds])] };
+      }),
+    });
+  };
   // テナントが検針期間の前後に借りている貸室です（分割行の区画の選択肢）。
   const tenantUnits = (tenantId: string) => {
     const found = new Set<string>();
@@ -396,8 +409,8 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
     const groups = billingUnits.filter((row) => row.tenantId === tenantId);
     const ownUnits = tenantUnits(tenantId);
     const groupedIds = new Set(groups.flatMap((row) => row.memberUnitIds));
-    const physicalUnits = ownUnits.map((unit, index) => ({ unit, index })).filter(({ unit }) => !groupedIds.has(unit.id)).map(({ unit, index }) => ({ id: unit.id, label: unitLabel(unit), memberUnitIds: [unit.id], order: index }));
-    const splitUnits = groups.map((row, index) => { const firstMember = ownUnits.find((unit) => row.memberUnitIds.includes(unit.id)); return { id: row.id, label: [firstMember?.floor, row.name].filter(Boolean).join(' '), memberUnitIds: row.memberUnitIds, order: Math.min(...row.memberUnitIds.map((id) => ownUnits.findIndex((unit) => unit.id === id)).filter((position) => position >= 0), ownUnits.length) + index / 100 }; });
+    const physicalUnits = ownUnits.map((unit, index) => ({ unit, index })).filter(({ unit }) => !groupedIds.has(unit.id)).map(({ unit, index }) => ({ id: unit.id, label: unitLabel(unit), memberUnitIds: [unit.id], billingUnitId: null as string | null, order: index }));
+    const splitUnits = groups.map((row, index) => { const firstMember = ownUnits.find((unit) => row.memberUnitIds.includes(unit.id)); return { id: row.id, label: [firstMember?.floor, row.name].filter(Boolean).join(' '), memberUnitIds: row.memberUnitIds, billingUnitId: row.id as string | null, order: Math.min(...row.memberUnitIds.map((id) => ownUnits.findIndex((unit) => unit.id === id)).filter((position) => position >= 0), ownUnits.length) + index / 100 }; });
     return [...physicalUnits, ...splitUnits].sort((left, right) => left.order - right.order);
   };
   const addSubItem = (categoryId: CategoryId) => {
@@ -923,7 +936,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
               </span> : null}</td>
               <td className="meter-split-items-cell">{index === 0 && tenant.splitEnabled ? <details><summary>{(row.splitItems ?? ['rent', 'common', 'storage', 'variable']).filter((value) => value !== 'storage' || hasStorageLineItem).length}項目</summary>{([['rent', '賃料'], ['common', '共益費'], ...(hasStorageLineItem ? [['storage', '倉庫料'] as const] : []), ['variable', '変動費']] as const).map(([value, label]) => <label key={value} className="meter-check"><input type="checkbox" checked={(row.splitItems ?? ['rent', 'common', 'storage', 'variable']).includes(value)} onChange={(event) => toggleSplitItem(tenant, value, event.target.checked)} />{label}</label>)}</details> : <span className="meter-muted">—</span>}</td>
               {tenants.some((item) => item.splitEnabled) && <td className="meter-row-units">{tenant.splitEnabled
-                ? tenantBillingUnitOptions(tenant.id).map((unit) => <label key={unit.id} className="meter-check"><input type="checkbox" checked={unit.memberUnitIds.every((id) => row.unitIds.includes(id))} onChange={(event) => toggleRowUnits(tenant, index, unit.memberUnitIds, event.target.checked)} />{unit.label}</label>)
+                ? tenantBillingUnitOptions(tenant.id).map((unit) => <label key={unit.id} className="meter-check"><input type="checkbox" checked={unit.billingUnitId ? (row.billingUnitIds ?? []).includes(unit.billingUnitId) : unit.memberUnitIds.length > 0 && unit.memberUnitIds.every((id) => row.unitIds.includes(id))} onChange={(event) => unit.billingUnitId ? toggleRowBillingUnit(tenant, index, unit.billingUnitId, event.target.checked) : toggleRowUnits(tenant, index, unit.memberUnitIds, event.target.checked)} />{unit.label}</label>)
                 : <span className="meter-muted">—</span>}</td>}
               {tenants.some((item) => item.splitEnabled) && <td>{tenant.splitEnabled ? <input className="meter-note-input" value={row.invoiceNote ?? ''} placeholder="請求明細の備考先頭" onChange={(event) => updateRow(tenant.id, index, { invoiceNote: event.target.value })} /> : <span className="meter-muted">—</span>}</td>}
               {tenants.some((item) => item.invoiceSplitByUnit) && <td>{tenant.invoiceSplitByUnit

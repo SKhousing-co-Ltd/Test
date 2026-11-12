@@ -43,7 +43,7 @@ const contractRow = (id: string): ContractRow => ({
   billable: { basic: true, light: true },
   fixedCharges: { basic: 50379 },
   sumMode: { electric: 'aggregate' as SumMode, water: 'aggregate' as SumMode, gas: 'aggregate' as SumMode },
-  amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '', unitIds: [],
+  amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '', unitIds: [], billingUnitIds: [],
 });
 const assetMeter = (id: string, code: string, over: Partial<AssetMeter> = {}): AssetMeter => ({
   id, subItemId: 'light', code, label: '', assignments: [{ id: `A-${id}`, unitId: 'U1', from: '1900-01-01', to: null }], usage: 0,
@@ -224,6 +224,21 @@ test('分割したテナントだけ分割行の区画を書き込み、外れ�
     { meter_reading_contract_id: 'C2', unit_id: 'U2' },
   ]);
   assert.deepEqual(filtersOf('meter_reading_contract_unit', 'delete'), [['meter_reading_contract_id', 'C3'], ['unit_id', 'U9']]);
+});
+
+test('構成区画が重複する請求区画も、分割行ごとに請求区画IDで保存する', async () => {
+  reset();
+  const next = snapshot({ tenants: [
+    { id: 'T1', name: 'テナント1', splitEnabled: true, rows: [
+      { ...contractRow('C1'), unitIds: ['U1'], billingUnitIds: ['B-A'] },
+      { ...contractRow('C2'), unitIds: ['U1'], billingUnitIds: ['B-C'] },
+    ], invoiceSplitByUnit: false, expected: 0 },
+  ] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('meter_reading_contract_billing_unit', 'upsert'), [
+    { meter_reading_contract_id: 'C1', lease_contract_billing_unit_id: 'B-A' },
+    { meter_reading_contract_id: 'C2', lease_contract_billing_unit_id: 'B-C' },
+  ]);
 });
 
 test('一覧に居ないテナントが中間検針で出てきたら、保存済みの契約行の設定で加える', () => {
