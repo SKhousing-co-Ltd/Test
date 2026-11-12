@@ -25,6 +25,9 @@ type MeterLine = { name: string; chargeType: string; invoiceNo: number; usage: n
 type InvoiceSplitAssignment = { asset_billing_line_item_id: string; lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number | null; billingUnit?: { billing_unit_name: string } | Array<{ billing_unit_name: string }> | null };
 type InvoiceSplitUnitAssignment = { lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number };
 type InvoiceSplitSetting = { billing_code_id: string; split_mode: 'unit' | 'line_item' | 'line_item_unit'; split_count: number; assignments: InvoiceSplitAssignment[] | null; unitAssignments: InvoiceSplitUnitAssignment[] | null };
+type InvoiceSplitSettingRow = InvoiceSplitSetting & { billing_invoice_split_setting_id: string };
+type InvoiceSplitAssignmentRow = InvoiceSplitAssignment & { billing_invoice_split_setting_id: string };
+type InvoiceSplitUnitAssignmentRow = InvoiceSplitUnitAssignment & { billing_invoice_split_setting_id: string };
 export type PeriodPattern = { billing_period_pattern_id: string; pattern_name: string; start_month_offset: number; start_day_type: string; start_meter_day_offset: number; end_month_offset: number; end_day_type: string; end_meter_day_offset: number };
 
 // 請求書の1行（明細1行）です。values はCSVの列順の値です。
@@ -193,7 +196,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   const meterPromise = loadMeterInvoiceData(client, propertyId, calendarYear, month)
     .then((data) => ({ data, error: '' }))
     .catch((meterError: unknown) => ({ data: null, error: meterError instanceof Error ? meterError.message : '検針データを読み込めませんでした' }));
-  const [rentRollResult, codeResult, allocationResult, unitResult, billingUnitMemberResult, meterContractResult, lineAllocationResult, typeResult, assetItemResult, splitResult, periodResult, savedOrder, meterResult] = await Promise.all([
+  const [rentRollResult, codeResult, allocationResult, unitResult, billingUnitMemberResult, meterContractResult, lineAllocationResult, typeResult, assetItemResult, splitResult, splitAssignmentResult, splitUnitAssignmentResult, periodResult, savedOrder, meterResult] = await Promise.all([
     client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: referenceDate }),
     client.from('billing_code').select('billing_code_id, tenant_id, issue_code, is_primary, invoice_display_name, invoice_subject').eq('property_id', propertyId).eq('is_active', true),
     client.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
@@ -203,12 +206,15 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     client.from('billing_code_line_item_allocation').select('billing_code_id, line_item:asset_billing_line_item(asset_billing_line_item_id, billing_charge_type_id), group:billing_code_allocation_group(tenant_id)'),
     client.from('billing_charge_type').select('billing_charge_type_id, charge_type_name').eq('is_active', true),
     client.from('asset_billing_line_item').select('asset_billing_line_item_id, billing_charge_type_id, line_item_name, display_name').eq('asset_id', propertyId).eq('is_active', true),
-    client.from('billing_invoice_split_setting').select('billing_code_id, split_mode, split_count, assignments:billing_invoice_split_assignment(asset_billing_line_item_id, lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number, billingUnit:lease_contract_billing_unit(billing_unit_name)), unitAssignments:billing_invoice_split_unit_assignment(lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number)').eq('asset_id', propertyId),
+    client.from('billing_invoice_split_setting').select('billing_invoice_split_setting_id, billing_code_id, split_mode, split_count').eq('asset_id', propertyId),
+    client.from('billing_invoice_split_assignment').select('billing_invoice_split_setting_id, asset_billing_line_item_id, lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number'),
+    client.from('billing_invoice_split_unit_assignment').select('billing_invoice_split_setting_id, lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number'),
     client.from('asset_billing_period_pattern').select('billing_period_pattern_id, pattern_name, start_month_offset, start_day_type, start_meter_day_offset, end_month_offset, end_day_type, end_meter_day_offset').eq('asset_id', propertyId).order('sort_order'),
     loadSavedTenantOrder(client, propertyId),
     meterPromise,
   ]);
   if (rentRollResult.error || codeResult.error) throw new Error(`請求データを読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`);
+  if (splitResult.error || splitAssignmentResult.error || splitUnitAssignmentResult.error) throw new Error(`請求書分割設定を読み込めませんでした: ${splitResult.error?.message ?? splitAssignmentResult.error?.message ?? splitUnitAssignmentResult.error?.message}`);
   const codes = (codeResult.data ?? []) as BillingCode[]; const codeById = new Map(codes.map((code) => [code.billing_code_id, code])); const primaryCodeByTenant = new Map<string, BillingCode>(); for (const code of codes) if (code.tenant_id && code.is_primary) primaryCodeByTenant.set(code.tenant_id, code);
   // 入金期日・請求期間は契約の請求条件から決めます。契約に紐づかない明細（検針データなど）は既定値です。
   const contractIds = [...new Set(((rentRollResult.data ?? []) as RentRollSource[]).map((source) => source.lease_contract_id).filter((id): id is string => Boolean(id)))];
@@ -249,7 +255,17 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     for (const unit of units) meterSplitByTenantUnit.set(`${contract.tenant_id}:${unit.unit_id}`, metadata);
   }
   const typeNameById = new Map(((typeResult.data ?? []) as ChargeType[]).map((type) => [type.billing_charge_type_id, type.charge_type_name])); const assetItemById = new Map(((assetItemResult.data ?? []) as AssetLineItem[]).map((item) => [item.asset_billing_line_item_id, item])); const lineItemIdByChargeName = new Map<string, string>(); for (const item of (assetItemResult.data ?? []) as AssetLineItem[]) { const chargeName = typeNameById.get(item.billing_charge_type_id); if (chargeName && !lineItemIdByChargeName.has(chargeName)) lineItemIdByChargeName.set(chargeName, item.asset_billing_line_item_id); } const codeByTenantItem = new Map<string, BillingCode>(); for (const allocation of (lineAllocationResult.data ?? []) as unknown as LineItemAllocation[]) { const code = codeById.get(allocation.billing_code_id); const name = typeNameById.get(allocation.line_item?.billing_charge_type_id ?? ''); if (code && name && allocation.group?.tenant_id) codeByTenantItem.set(`${allocation.group.tenant_id}:${name}`, code); }
-  const splitByCode = new Map(((splitResult.data ?? []) as unknown as InvoiceSplitSetting[]).map((setting) => [setting.billing_code_id, setting]));
+  const splitAssignments = (splitAssignmentResult.data ?? []) as InvoiceSplitAssignmentRow[];
+  const splitUnitAssignments = (splitUnitAssignmentResult.data ?? []) as InvoiceSplitUnitAssignmentRow[];
+  const splitByCode = new Map(((splitResult.data ?? []) as unknown as InvoiceSplitSettingRow[]).map((setting) => {
+    const assignments = splitAssignments.filter((assignment) => assignment.billing_invoice_split_setting_id === setting.billing_invoice_split_setting_id);
+    const unitAssignments = splitUnitAssignments.filter((assignment) => assignment.billing_invoice_split_setting_id === setting.billing_invoice_split_setting_id);
+    return [setting.billing_code_id, {
+      ...setting,
+      assignments: assignments.length ? assignments : setting.assignments ?? [],
+      unitAssignments: unitAssignments.length ? unitAssignments : setting.unitAssignments ?? [],
+    }];
+  }));
   // 区画で分ける設定は、区画ごとの請求書番号だけを保存します。未登録の区画は請求書①です。
   const unitInvoiceNumber = (split: InvoiceSplitSetting | undefined, unitIds: Array<string | undefined>, billingUnitIds: Array<string | undefined> = []) => {
     const assignments = split?.unitAssignments ?? [];
