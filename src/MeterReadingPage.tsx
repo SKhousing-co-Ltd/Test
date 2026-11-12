@@ -200,7 +200,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         persistedContractIds: tenants.flatMap((tenant) => tenant.rows.map((row) => row.id)),
         savedContracts: { ...baseline.savedContracts, ...Object.fromEntries(tenants.map((tenant) => [tenant.id, tenant.rows])) },
       };
-      await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline);
+      await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline, { settingsOnly });
       setBaseline(snapshot);
       setDirty(false);
       setNotice('保存しました。');

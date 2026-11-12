@@ -136,6 +136,16 @@ test('請求設定の保存で区画別の毎月定額を書き換えない', as
   assert.equal(rowsOf('meter_reading_month_fixed_charge', 'upsert'), undefined);
 });
 
+test('請求設定だけの保存では月次読取値・検針日・メーター割当へ触れない', async () => {
+  reset();
+  await saveMeterReading(client, 'A1', 2026, 11, snapshot(), snapshot(), { settingsOnly: true });
+  const monthlyTables = new Set([
+    'asset_meter', 'asset_meter_unit_assignment', 'meter_reading_month', 'meter_reading_month_surcharge',
+    'meter_reading_month_sub_item', 'meter_reading_entry', 'meter_reading_break',
+  ]);
+  assert.deepEqual(calls.filter((entry) => monthlyTables.has(entry.table)), []);
+});
+
 test('メーター交換の月は、旧・新メーターの使用量を足して保存する', async () => {
   reset();
   const next = snapshot({ meters: [assetMeter('M1', 'A-1', { previousReading: 1000, currentReading: 30, exchange: { removedReading: 1100, installedReading: 0 } })] });
@@ -192,9 +202,21 @@ test('メーターは契約行ではなく区画の履歴で保存する（旧�
   reset();
   await saveMeterReading(client, 'A1', 2026, 9, snapshot(), snapshot());
   assert.equal('meter_reading_contract_id' in (rowsOf('asset_meter', 'upsert')?.[0] ?? {}), false);
-  assert.deepEqual(rowsOf('asset_meter_unit_assignment', 'upsert'), [{ asset_meter_unit_assignment_id: 'A-M1', asset_meter_id: 'M1', unit_id: 'U1', effective_from: '1900-01-01', effective_to: null }]);
+  assert.deepEqual(rowsOf('asset_meter_unit_assignment', 'upsert'), [{ asset_meter_unit_assignment_id: 'A-M1', asset_meter_id: 'M1', unit_id: 'U1', lease_contract_billing_unit_id: null, effective_from: '1900-01-01', effective_to: null }]);
   const order = calls.map((entry) => `${entry.table}:${entry.op}`);
   assert.ok(order.indexOf('asset_meter:upsert') < order.indexOf('asset_meter_unit_assignment:upsert'));
+});
+
+test('請求区画のメーター割当は物理区画をnullにして保存する', async () => {
+  reset();
+  const next = snapshot({ meters: [assetMeter('M1', 'A-1', { assignments: [
+    { id: 'A-M1', unitId: 'billing:B-1', from: '1900-01-01', to: null },
+  ] })] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('asset_meter_unit_assignment', 'upsert'), [{
+    asset_meter_unit_assignment_id: 'A-M1', asset_meter_id: 'M1', unit_id: null,
+    lease_contract_billing_unit_id: 'B-1', effective_from: '1900-01-01', effective_to: null,
+  }]);
 });
 
 test('区画を選び直して消えた紐づけは、入れ直す前に削除する', async () => {

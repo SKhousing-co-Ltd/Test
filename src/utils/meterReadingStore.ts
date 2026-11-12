@@ -75,7 +75,7 @@ type ContractRowRecord = {
 type ContractItemRow = { meter_reading_contract_id: string; asset_meter_sub_item_id: string; is_billable: boolean; unit_price: number | null; fixed_amount: number | null };
 type MonthlyFixedChargeRow = { billing_month: string; meter_reading_contract_id: string; lease_contract_unit_id: string | null; asset_meter_sub_item_id: string; amount: number };
 type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item_id: string; meter_code: string; meter_label: string | null; is_active: boolean };
-type AssignmentRow = { asset_meter_unit_assignment_id: string; asset_meter_id: string; unit_id: string; effective_from: string; effective_to: string | null };
+type AssignmentRow = { asset_meter_unit_assignment_id: string; asset_meter_id: string; unit_id: string | null; lease_contract_billing_unit_id: string | null; effective_from: string; effective_to: string | null };
 type BreakRow = { asset_meter_id: string; break_date: string; reading: number | null; usage_amount: number | null };
 type OccupancyRow = { occupancy_date: string; unit_id: string; unit_type: string; tenant_id: string; tenant_name: string };
 type UnitRow = { unit_id: string; unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string };
@@ -163,7 +163,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('meter_reading_entry').select('asset_id, billing_month, asset_meter_id, usage_amount, previous_reading, current_reading, previous_reading_manual, exchange_removed_reading, exchange_installed_reading').eq('asset_id', assetId).in('billing_month', [billingMonth, previousMonth]),
     client.from('billing_invoice_split_setting').select('split_mode, code:billing_code!inner(tenant_id)').eq('asset_id', assetId).eq('split_mode', 'unit'),
     client.from('meter_reading_month_sub_item').select('asset_meter_sub_item_id, unit_price, billed_inclusive, billed_tax, billed_exclusive, billed_usage').eq('asset_id', assetId).eq('billing_month', billingMonth),
-    client.from('asset_meter_unit_assignment').select('asset_meter_unit_assignment_id, asset_meter_id, unit_id, effective_from, effective_to, meter:asset_meter!asset_meter_unit_assignment_asset_meter_id_fkey!inner(asset_id)').eq('meter.asset_id', assetId).order('effective_from'),
+    client.from('asset_meter_unit_assignment').select('asset_meter_unit_assignment_id, asset_meter_id, unit_id, lease_contract_billing_unit_id, effective_from, effective_to, meter:asset_meter!asset_meter_unit_assignment_asset_meter_id_fkey!inner(asset_id)').eq('meter.asset_id', assetId).order('effective_from'),
     client.from('meter_reading_break').select('asset_meter_id, break_date, reading, usage_amount').eq('asset_id', assetId).eq('billing_month', billingMonth).order('break_date'),
   ]));
   const [occupancyResult, unitResult, billingUnitResult, lineItemResult, contractPriceResult, priceSettingResult] = await retryFailedFetch('契約・区画設定', () => Promise.all([
@@ -320,7 +320,8 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   // メーターです。設置区画の履歴と、対象月の検針値（指針・中間検針）をまとめます。
   const assignmentsByMeter = new Map<string, UnitAssignment[]>();
   for (const row of (assignmentResult.data ?? []) as unknown as AssignmentRow[]) {
-    assignmentsByMeter.set(row.asset_meter_id, [...(assignmentsByMeter.get(row.asset_meter_id) ?? []), { id: row.asset_meter_unit_assignment_id, unitId: row.unit_id, from: row.effective_from, to: row.effective_to }]);
+    const targetId = row.unit_id ?? (row.lease_contract_billing_unit_id ? `billing:${row.lease_contract_billing_unit_id}` : '');
+    assignmentsByMeter.set(row.asset_meter_id, [...(assignmentsByMeter.get(row.asset_meter_id) ?? []), { id: row.asset_meter_unit_assignment_id, unitId: targetId, from: row.effective_from, to: row.effective_to }]);
   }
   const breaksByMeter = new Map<string, MeterBreak[]>();
   for (const row of (breakResult.data ?? []) as BreakRow[]) {
@@ -568,6 +569,7 @@ export function breakProblems(meters: AssetMeter[]): string[] {
 export async function saveMeterReading(
   client: SupabaseClient, assetId: string, year: number, month: number,
   next: MeterReadingSnapshot, base: MeterReadingSnapshot,
+  options: { settingsOnly?: boolean } = {},
 ) {
   const problems = meterCodeProblems(next.meters, next.building.subItems);
   if (problems.length) throw new Error(`メーター番号を確認してください。${problems.join('／')}`);
@@ -680,6 +682,10 @@ export async function saveMeterReading(
     })),
   ))), '契約行の小分類設定');
 
+  // 請求設定画面では月次データを表示用に読み込んでいますが、保存対象ではありません。
+  // ここから先のメーター・割当・検針日・読取値・月次単価には一切触れません。
+  if (options.settingsOnly) return;
+
   // 6. メーター（小分類ごと削除はカスケードで消えるため、残っているものだけ整理します）
   const goneMeters = removedIds(base.meters.filter((row) => subItemIds.has(row.subItemId)).map((row) => row.id), next.meters.map((row) => row.id));
   if (goneMeters.length) check(await client.from('asset_meter').delete().in('asset_meter_id', goneMeters), 'メーター');
@@ -698,7 +704,12 @@ export async function saveMeterReading(
   );
   if (goneAssignments.length) check(await client.from('asset_meter_unit_assignment').delete().in('asset_meter_unit_assignment_id', goneAssignments), 'メーターの区画');
   const assignments = next.meters.flatMap((row) => row.assignments.map((item) => ({
-    asset_meter_unit_assignment_id: item.id, asset_meter_id: row.id, unit_id: item.unitId, effective_from: item.from, effective_to: item.to,
+    asset_meter_unit_assignment_id: item.id,
+    asset_meter_id: row.id,
+    unit_id: item.unitId.startsWith('billing:') ? null : item.unitId,
+    lease_contract_billing_unit_id: item.unitId.startsWith('billing:') ? item.unitId.slice('billing:'.length) : null,
+    effective_from: item.from,
+    effective_to: item.to,
   })));
   if (assignments.length) check(await client.from('asset_meter_unit_assignment').upsert(assignments), 'メーターの区画');
 
