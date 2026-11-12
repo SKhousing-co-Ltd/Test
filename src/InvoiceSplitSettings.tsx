@@ -54,6 +54,12 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
 
   const activeTenantIds = useMemo(() => new Set(contractUnits.map((unit) => firstOf(unit.contract)?.tenant_id).filter(Boolean)), [contractUnits]);
   const activeCodes = useMemo(() => codes.filter((code) => code.tenant_id && activeTenantIds.has(code.tenant_id)), [activeTenantIds, codes]);
+  // 設定済みのテナントを先に出し、どの設定が有効かを一覧だけで把握できるようにします。
+  const displayCodes = useMemo(() => [...activeCodes].sort((left, right) => {
+    const leftConfigured = settings.some((setting) => setting.billing_code_id === left.billing_code_id);
+    const rightConfigured = settings.some((setting) => setting.billing_code_id === right.billing_code_id);
+    return Number(rightConfigured) - Number(leftConfigured);
+  }), [activeCodes, settings]);
   const selectedCode = activeCodes.find((code) => code.billing_code_id === selectedCodeId);
   const selectedSetting = settings.find((setting) => setting.billing_code_id === selectedCodeId);
   const tenantUnits = contractUnits.filter((unit) => firstOf(unit.contract)?.tenant_id === selectedCode?.tenant_id);
@@ -119,7 +125,7 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
       <table>
         <thead><tr><th>テナント名</th><th>テナントコード</th><th>分割設定</th><th /></tr></thead>
         <tbody>
-          {loading ? <tr><td colSpan={4}>読み込み中…</td></tr> : activeCodes.map((code) => {
+          {loading ? <tr><td colSpan={4}>読み込み中…</td></tr> : displayCodes.map((code) => {
             const setting = settings.find((row) => row.billing_code_id === code.billing_code_id);
             return <tr key={code.billing_code_id} className="billing-settings-row" tabIndex={0} role="button" aria-label={`${tenantName(code)}の請求書分割設定を編集`} onClick={() => chooseCode(code.billing_code_id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseCode(code.billing_code_id); } }}>
               <td><strong>{tenantName(code)}</strong></td>
@@ -128,7 +134,7 @@ export function InvoiceSplitSettings({ propertyId, lineItems, canEdit }: { prope
               <td>{setting && <button type="button" className="tenant-billing-delete" disabled={!canEdit} onClick={(event) => { event.stopPropagation(); void remove(setting); }}>削除</button>}</td>
             </tr>;
           })}
-          {!loading && !activeCodes.length && <tr><td colSpan={4}>入居中のテナントはありません。</td></tr>}
+          {!loading && !displayCodes.length && <tr><td colSpan={4}>入居中のテナントはありません。</td></tr>}
         </tbody>
       </table>
     </div>
