@@ -345,10 +345,12 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   const roundUsage = (value: number) => roundDigits(value, subItem.usageRoundingDigits, subItem.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const empty = { subItem, meters: [], usage: 0, amount: 0, groups: [] as ChargeGroup[] };
-  if (!row.billable[subItem.id]) return empty;
+  // 毎月定額はKANAMETERで区画ごとの金額が入力されているかだけで請求を判定する。
+  // KANAMEの旧「小分類を請求する」フラグは参照しない。
+  if (!subItem.isMonthlyFixed && !row.billable[subItem.id]) return empty;
 
   if (subItem.kind === 'basic' || subItem.isMonthlyFixed) {
-    const monthly = (subItem.kind === 'basic' ? category.fixedBillable : row.billable[subItem.id]) ? row.fixedCharges[subItem.id] ?? 0 : 0;
+    const monthly = (subItem.kind === 'basic' ? category.fixedBillable : true) ? row.fixedCharges[subItem.id] ?? 0 : 0;
     const fixed = subItem.isMonthlyFixed ? monthly : proratedAmount(monthly, basicRatio, row.amountRoundingMode);
     const label = fixed !== monthly && basicRatio ? `日割り（${basicRatio.days}／${basicRatio.totalDays}日）` : '固定額';
     return { ...empty, amount: fixed, groups: fixed ? [{ key: 'fixed', label, usage: 0, unitPrice: 0, amount: fixed }] : [] };

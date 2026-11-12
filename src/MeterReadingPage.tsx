@@ -291,6 +291,14 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   const displayDigitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{digits ? `小数第${digits}位まで` : '整数'}</option>);
   const roundingOptions = roundingModes.map((row) => <option key={row} value={row}>{roundingModeLabel[row]}</option>);
   const lineItemsFor = (categoryId: CategoryId) => lineItems.filter((row) => row.utilityKind === utilityKindOf[categoryId]);
+  // 毎月定額の小分類はKANAMETERで区画ごとの金額を入力し、金額の有無で請求を判定する。
+  // この一覧では、基本料と従量小分類の請求有無だけを設定する。
+  const tenantBillableSubItemsFor = (category: Category) => building.subItems.filter(
+    (value) => value.categoryId === category.id && (
+      (value.kind === 'basic' && category.fixedBillable)
+      || (value.kind === 'custom' && !value.isMonthlyFixed)
+    ),
+  );
   // 分類ごとの色分けです。電気は黄、水道は青、ガスは赤にします。
   const categoryClass = (id: CategoryId) => `meter-cat-${id}`;
   const rowLabel = (tenant: TenantConfig, index: number) => tenant.rows.length > 1 ? `${tenant.name}（${splitName(tenant.rows[index], index)}）` : tenant.name;
@@ -896,8 +904,8 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
               <tr>
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
                 {visibleCategories.map((item) => {
-                  const billableItems = building.subItems.filter((value) => value.categoryId === item.id && (value.kind === 'custom' || item.fixedBillable));
-                  const detailColumns = billableItems.length === 1 && billableItems[0]?.kind === 'custom' && !billableItems[0]?.isMonthlyFixed ? 0 : billableItems.length;
+                  const billableItems = tenantBillableSubItemsFor(item);
+                  const detailColumns = billableItems.length === 1 && billableItems[0]?.kind === 'custom' ? 0 : billableItems.length;
                   return <th key={item.id} colSpan={1 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>備考</th>
@@ -910,8 +918,8 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
               <tr>{visibleCategories.flatMap((item) => [
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
 ...(() => {
-                  const billableItems = building.subItems.filter((value) => value.categoryId === item.id && (value.kind === 'custom' || item.fixedBillable));
-                  if (billableItems.length === 1 && billableItems[0]?.kind === 'custom' && !billableItems[0]?.isMonthlyFixed) return [];
+                  const billableItems = tenantBillableSubItemsFor(item);
+                  if (billableItems.length === 1 && billableItems[0]?.kind === 'custom') return [];
                   return billableItems.map((value) => <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>);
                 })(),
               ])}</tr>
@@ -919,13 +927,13 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
             <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={`${index === 0 ? 'meter-contract-first' : 'meter-contract-sub'}${tenant.splitEnabled ? ' meter-contract-split' : ''}`}>
               <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-contract-continued">{tenant.name}</span>}{tenant.splitEnabled ? <input className="meter-split-label" value={row.splitLabel} placeholder={`分割 ${index + 1} の識別名（3F など）`} onChange={(event) => updateRow(tenant.id, index, { splitLabel: event.target.value })} /> : null}</td>
               {visibleCategories.flatMap((item) => {
-                const billableItems = building.subItems.filter((value) => value.categoryId === item.id && (value.kind === 'custom' || item.fixedBillable));
+                const billableItems = tenantBillableSubItemsFor(item);
                 const enabled = row.categoryBillable[item.id] !== false;
                 return [
                   <td key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>
                     <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
                   </td>,
-                  ...(billableItems.length === 1 && billableItems[0]?.kind === 'custom' && !billableItems[0]?.isMonthlyFixed ? [] : billableItems.map((value) =>
+                  ...(billableItems.length === 1 && billableItems[0]?.kind === 'custom' ? [] : billableItems.map((value) =>
                     <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>)),
                 ];
               })}
