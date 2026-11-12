@@ -1,5 +1,14 @@
+[auth]
+enable_signup = false
+
 [functions.sync-appsuite-records]
 verify_jwt = false
+
+[functions.admin-create-user]
+verify_jwt = true
+
+[functions.complete-initial-password-change]
+verify_jwt = true
 
 [functions.receive-billone-invoices]
 verify_jwt = false
