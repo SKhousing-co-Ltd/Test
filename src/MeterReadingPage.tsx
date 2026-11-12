@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import {
   billedAmounts, calculateSubItem,
-  floorLabel, priceModeLabel, resolveUnitPrice, roundingModeLabel, splitName, sumModeLabel, taxModeLabel, toExclusive,
+  floorLabel, priceModeLabel, resolveUnitPrice, roundingModeLabel, splitName, taxModeLabel, toExclusive,
   basicRatioKey, subItemDefaults, variablePriceMethodLabel, variableUnitPrice,
   type BuildingConfig, type Category, type CategoryId, type ContractRow, type LineItem, type MeterShare,
-  type PriceMode, type RoundingMode, type SubItem, type SumMode, type TaxMode, type TenantConfig,
+  type PriceMode, type RoundingMode, type SubItem, type TaxMode, type TenantConfig,
   type SurchargePurchase, type VariablePriceInput, type VariablePriceMethod,
 } from './utils/meterReading';
 import { computeMonth, confirmMeterReading, loadConfirmedAmounts, loadMeterReading, newId, releaseMeterReading, saveMeterReading, type ConfirmedAmount, type MeterReadingSnapshot } from './utils/meterReadingStore';
@@ -76,7 +76,6 @@ function OptionalNumberInput({ value, digits, placeholder, disabled, onChange }:
   />;
 }
 const variablePriceMethods: VariablePriceMethod[] = ['manual', 'billed'];
-const sumModes: SumMode[] = ['aggregate', 'perMeter'];
 const roundingModes: RoundingMode[] = ['floor', 'ceil', 'round'];
 const taxModes: TaxMode[] = ['exclusive', 'inclusive'];
 const priceModes: PriceMode[] = ['fixed', 'variable'];
@@ -109,6 +108,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   const [subTab, setSubTab] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<'input' | 'assign' | 'price'>('input');
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [hasStorageLineItem, setHasStorageLineItem] = useState(false);
   const [periodPatterns, setPeriodPatterns] = useState<PeriodPattern[]>([]);
   const [notice, setNotice] = useState('');
   // 検針日は月ごとの検針データに持たせ、前回検針日は前月の行から読みます。
@@ -200,7 +200,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         persistedContractIds: tenants.flatMap((tenant) => tenant.rows.map((row) => row.id)),
         savedContracts: { ...baseline.savedContracts, ...Object.fromEntries(tenants.map((tenant) => [tenant.id, tenant.rows])) },
       };
-      await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline);
+      await saveMeterReading(supabase, propertyId, calendarYear, period.month, snapshot, baseline, { settingsOnly });
       setBaseline(snapshot);
       setDirty(false);
       setNotice('保存しました。');
@@ -224,15 +224,19 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
       const { data, error } = await supabase
         .from('asset_billing_line_item')
         .select('asset_billing_line_item_id, line_item_name, display_name, charge:billing_charge_type!inner(charge_type_name, utility_kind)')
-        .eq('asset_id', propertyId).eq('is_active', true).not('charge.utility_kind', 'is', null)
+        .eq('asset_id', propertyId).eq('is_active', true)
         .order('sort_order');
       if (cancelled) return;
       if (error) { setNotice(`請求明細の項目を読み込めませんでした: ${error.message}`); setLineItems([]); return; }
       const rows = (data ?? []) as unknown as Array<{ asset_billing_line_item_id: string; line_item_name: string; display_name: string | null; charge: { charge_type_name: string; utility_kind: string | null } | Array<{ charge_type_name: string; utility_kind: string | null }> | null }>;
       setNotice('');
-      setLineItems(rows.map((row) => {
+      setHasStorageLineItem(rows.some((row) => {
         const charge = Array.isArray(row.charge) ? row.charge[0] : row.charge;
-        return { id: row.asset_billing_line_item_id, name: row.display_name || row.line_item_name, utilityKind: charge?.utility_kind ?? null, chargeTypeName: charge?.charge_type_name ?? '' };
+        return (row.display_name || row.line_item_name) === '倉庫料' || charge?.charge_type_name === '倉庫料';
+      }));
+      setLineItems(rows.flatMap((row) => {
+        const charge = Array.isArray(row.charge) ? row.charge[0] : row.charge;
+        return charge?.utility_kind ? [{ id: row.asset_billing_line_item_id, name: row.display_name || row.line_item_name, utilityKind: charge.utility_kind, chargeTypeName: charge.charge_type_name ?? '' }] : [];
       }));
     };
     void load();
@@ -287,6 +291,14 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   const displayDigitOptions = [0, 1, 2, 3].map((digits) => <option key={digits} value={digits}>{digits ? `小数第${digits}位まで` : '整数'}</option>);
   const roundingOptions = roundingModes.map((row) => <option key={row} value={row}>{roundingModeLabel[row]}</option>);
   const lineItemsFor = (categoryId: CategoryId) => lineItems.filter((row) => row.utilityKind === utilityKindOf[categoryId]);
+  // 毎月定額の小分類はKANAMETERで区画ごとの金額を入力し、金額の有無で請求を判定する。
+  // この一覧では、基本料と従量小分類の請求有無だけを設定する。
+  const tenantBillableSubItemsFor = (category: Category) => building.subItems.filter(
+    (value) => value.categoryId === category.id && (
+      (value.kind === 'basic' && category.fixedBillable)
+      || (value.kind === 'custom' && !value.isMonthlyFixed)
+    ),
+  );
   // 分類ごとの色分けです。電気は黄、水道は青、ガスは赤にします。
   const categoryClass = (id: CategoryId) => `meter-cat-${id}`;
   const rowLabel = (tenant: TenantConfig, index: number) => tenant.rows.length > 1 ? `${tenant.name}（${splitName(tenant.rows[index], index)}）` : tenant.name;
@@ -316,10 +328,10 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
           : resolveUnitPrice(target, meter, building).price;
       // 使用料は、メーターごとに計算する行はメーターの行ごとに、まとめて計算する行は分割した行の合計を1つの欄に出します。
       // どちらも請求に使う計算結果（使用量の丸め・金額の丸めを通したもの）をそのまま出します。
-      const perMeter = row?.sumMode[targetCategory.id] === 'perMeter';
+      const perMeter = target.amountCalculationScope === 'meter';
       // 区間に分かれたメーターは、メーターごとの使用料をグループ内の最初の区間の行にだけ出します。
       const amountOf = (meter: MeterShare) => group.meters.find((item) => (item.meterId ?? item.id) === (meter.meterId ?? meter.id)) !== meter ? null
-        : result?.groups.find((value) => value.key === (meter.meterId ?? meter.id))?.amount ?? null;
+        : result?.groups.find((value) => value.key.startsWith(`${meter.meterId ?? meter.id}:`))?.amount ?? null;
       return {
         ...group, result, priceOf, amountOf, perMeter,
         floor: [...new Set(group.meters.map((item) => item.label).filter(Boolean))].join('・'),
@@ -354,9 +366,17 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
   const setSplitCount = (tenant: TenantConfig, count: number) => {
     const next = Math.max(1, Math.min(9, count));
     // 行を減らしたときは、消えた行の区画は1行目で計算します（どの行にも無い区画は1行目の扱いのため）。
-    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {}, splitLabel: '', unitIds: [] });
+    const rows = Array.from({ length: next }, (_, index) => tenant.rows[index] ?? { ...tenant.rows[0], id: newId(), invoiceNo: index + 1, fixedCharges: {}, splitLabel: '', invoiceNote: '', unitIds: [], billingUnitIds: [] });
     updateTenant(tenant.id, { rows });
   };
+  const toggleSplitItem = (tenant: TenantConfig, item: 'rent' | 'common' | 'storage' | 'variable', checked: boolean) => updateTenant(tenant.id, {
+    rows: tenant.rows.map((row) => ({
+      ...row,
+      splitItems: checked
+        ? [...new Set([...(row.splitItems ?? ['rent', 'common', 'storage', 'variable']), item])]
+        : (row.splitItems ?? ['rent', 'common', 'storage', 'variable']).filter((value) => value !== item),
+    })),
+  });
   // 分割行の区画です。1つの区画は1つの行にだけ持たせます。
   const toggleRowUnit = (tenant: TenantConfig, index: number, unitId: string, checked: boolean) => updateTenant(tenant.id, {
     rows: tenant.rows.map((row, position) => ({
@@ -374,6 +394,19 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
         : checked ? row.unitIds.filter((id) => !unitIds.includes(id)) : row.unitIds,
     })),
   });
+  const toggleRowBillingUnit = (tenant: TenantConfig, index: number, billingUnitId: string, checked: boolean) => {
+    const allGroupedUnitIds = new Set(billingUnits.filter((group) => group.tenantId === tenant.id).flatMap((group) => group.memberUnitIds));
+    updateTenant(tenant.id, {
+      rows: tenant.rows.map((row, position) => {
+        const selectedBillingUnitIds = position === index
+          ? checked ? [...new Set([...(row.billingUnitIds ?? []), billingUnitId])] : (row.billingUnitIds ?? []).filter((id) => id !== billingUnitId)
+          : checked ? (row.billingUnitIds ?? []).filter((id) => id !== billingUnitId) : (row.billingUnitIds ?? []);
+        const physicalUnitIds = row.unitIds.filter((id) => !allGroupedUnitIds.has(id));
+        const groupedUnitIds = billingUnits.filter((group) => selectedBillingUnitIds.includes(group.id)).flatMap((group) => group.memberUnitIds);
+        return { ...row, billingUnitIds: selectedBillingUnitIds, unitIds: [...new Set([...physicalUnitIds, ...groupedUnitIds])] };
+      }),
+    });
+  };
   // テナントが検針期間の前後に借りている貸室です（分割行の区画の選択肢）。
   const tenantUnits = (tenantId: string) => {
     const found = new Set<string>();
@@ -384,13 +417,13 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
     const groups = billingUnits.filter((row) => row.tenantId === tenantId);
     const ownUnits = tenantUnits(tenantId);
     const groupedIds = new Set(groups.flatMap((row) => row.memberUnitIds));
-    const physicalUnits = ownUnits.map((unit, index) => ({ unit, index })).filter(({ unit }) => !groupedIds.has(unit.id)).map(({ unit, index }) => ({ id: unit.id, label: unitLabel(unit), memberUnitIds: [unit.id], order: index }));
-    const splitUnits = groups.map((row, index) => { const firstMember = ownUnits.find((unit) => row.memberUnitIds.includes(unit.id)); return { id: row.id, label: [firstMember?.floor, row.name].filter(Boolean).join(' '), memberUnitIds: row.memberUnitIds, order: Math.min(...row.memberUnitIds.map((id) => ownUnits.findIndex((unit) => unit.id === id)).filter((position) => position >= 0), ownUnits.length) + index / 100 }; });
+    const physicalUnits = ownUnits.map((unit, index) => ({ unit, index })).filter(({ unit }) => !groupedIds.has(unit.id)).map(({ unit, index }) => ({ id: unit.id, label: unitLabel(unit), memberUnitIds: [unit.id], billingUnitId: null as string | null, order: index }));
+    const splitUnits = groups.map((row, index) => { const firstMember = ownUnits.find((unit) => row.memberUnitIds.includes(unit.id)); return { id: row.id, label: [firstMember?.floor, row.name].filter(Boolean).join(' '), memberUnitIds: row.memberUnitIds, billingUnitId: row.id as string | null, order: Math.min(...row.memberUnitIds.map((id) => ownUnits.findIndex((unit) => unit.id === id)).filter((position) => position >= 0), ownUnits.length) + index / 100 }; });
     return [...physicalUnits, ...splitUnits].sort((left, right) => left.order - right.order);
   };
   const addSubItem = (categoryId: CategoryId) => {
     const id = newId();
-    setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', ...subItemDefaults() }] }));
+    setBuilding((current) => ({ ...current, subItems: [...current.subItems, { id, categoryId, name: '新しい小分類', kind: 'custom', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, periodPatternId: '', taxMode: 'exclusive', taxRoundingMode: 'floor', amountCalculationScope: 'tenant', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', ...subItemDefaults() }] }));
     setTenants((current) => current.map((tenant) => ({ ...tenant, rows: tenant.rows.map((row) => ({ ...row, billable: { ...row.billable, [id]: true } })) })));
   };
   // 小分類を消すと、保存したときに配下のメーターと過去月の検針値もまとめて消えます。
@@ -600,7 +633,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <select value={subItem.unitPriceRoundingMode} onChange={(event) => updateSubItem(subItem.id, { unitPriceRoundingMode: event.target.value as RoundingMode })}>{roundingOptions}</select>
               </span>
             </div>}
-          {inclusiveOnly && price !== null && <p className="meter-hint">税込単価のため、使用料の計算では税抜単価 {toExclusive(price, subItem, building.taxRate)} 円（税抜換算の丸め：{roundingModeLabel[subItem.taxRoundingMode]}）を使います。</p>}
+          {inclusiveOnly && price !== null && <p className="meter-hint">税込単価のため、使用料の計算では税抜単価 {toExclusive(price, subItem, building.taxRate)} 円（税抜換算の丸め：{subItem.taxRoundingMode === 'none' ? 'ー' : roundingModeLabel[subItem.taxRoundingMode]}）を使います。</p>}
         </div>;
       })()}
 
@@ -657,7 +690,7 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <td className="numeric">{row.billable[subItem.id] ? yen.format(row.fixedCharges[subItem.id] ?? 0) : <span className="meter-muted">契約に基本料なし</span>}</td>
                 <td className={partial ? 'numeric meter-warn' : 'numeric meter-muted'}>{ratio ? `${ratio.days}／${ratio.totalDays}日${partial ? '（日割り）' : ''}` : '—'}</td>
                 <td className="numeric">{row.billable[subItem.id] ? yen.format(billedOf(tenant.id, index)) : ''}</td>
-                {monthlyFixedItems.map((item) => <td key={item.id}><span className="meter-settings-pair"><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /><OptionalNumberInput value={row.fixedCharges[item.id] ?? null} digits={0} placeholder="金額" onChange={(fixedAmount) => updateRow(tenant.id, index, { fixedCharges: { ...row.fixedCharges, [item.id]: fixedAmount ?? 0 }, billable: { ...row.billable, [item.id]: fixedAmount !== null } })} /><span className="meter-unit">円</span></span></td>)}
+                {monthlyFixedItems.map((item) => <td key={item.id}><span className="meter-settings-pair"><input type="checkbox" checked={row.billable[item.id] ?? false} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [item.id]: event.target.checked } })} /><span>{yen.format(row.fixedCharges[item.id] ?? 0)} 円</span></span></td>)}
               </tr>;
             }))}</tbody>
             <tfoot><tr>
@@ -871,41 +904,37 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
               <tr>
                 <th className="meter-col-name" rowSpan={2}>テナント</th>
                 {visibleCategories.map((item) => {
-                  const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  const detailColumns = customs.length === 1 && !customs[0]?.isMonthlyFixed ? 0 : customs.length;
-                  return <th key={item.id} colSpan={2 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
+                  const billableItems = tenantBillableSubItemsFor(item);
+                  const detailColumns = billableItems.length === 1 && billableItems[0]?.kind === 'custom' ? 0 : billableItems.length;
+                  return <th key={item.id} colSpan={1 + detailColumns} className={`meter-contract-group ${categoryClass(item.id)}`}>{item.name}</th>;
                 })}
                 <th rowSpan={2}>備考</th>
                 <th rowSpan={2}>データ分割設定</th>
+                <th rowSpan={2}>分割する項目</th>
                 {tenants.some((item) => item.splitEnabled) && <th rowSpan={2}>分割行の区画</th>}
+                {tenants.some((item) => item.splitEnabled) && <th rowSpan={2}>請求書備考</th>}
                 {tenants.some((item) => item.invoiceSplitByUnit) && <th rowSpan={2}>請求書</th>}
               </tr>
               <tr>{visibleCategories.flatMap((item) => [
                 <th key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>請求</th>,
 ...(() => {
-                  const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
-                  if (customs.length === 1 && !customs[0]?.isMonthlyFixed) return [];
-                  return customs.map((value) => <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>);
+                  const billableItems = tenantBillableSubItemsFor(item);
+                  if (billableItems.length === 1 && billableItems[0]?.kind === 'custom') return [];
+                  return billableItems.map((value) => <th key={`${value.id}-b`} className={categoryClass(item.id)}>{value.name}</th>);
                 })(),
-                <th key={`${item.id}-sum`} className={categoryClass(item.id)}>計算方法</th>,
               ])}</tr>
             </thead>
             <tbody>{tenants.flatMap((tenant) => tenant.rows.map((row, index) => <tr key={row.id} className={`${index === 0 ? 'meter-contract-first' : 'meter-contract-sub'}${tenant.splitEnabled ? ' meter-contract-split' : ''}`}>
               <td className="meter-col-name">{index === 0 ? <strong>{tenant.name}</strong> : <span className="meter-contract-continued">{tenant.name}</span>}{tenant.splitEnabled ? <input className="meter-split-label" value={row.splitLabel} placeholder={`分割 ${index + 1} の識別名（3F など）`} onChange={(event) => updateRow(tenant.id, index, { splitLabel: event.target.value })} /> : null}</td>
               {visibleCategories.flatMap((item) => {
-                const customs = building.subItems.filter((value) => value.categoryId === item.id && value.kind === 'custom');
+                const billableItems = tenantBillableSubItemsFor(item);
                 const enabled = row.categoryBillable[item.id] !== false;
                 return [
                   <td key={`${item.id}-billable`} className={`meter-contract-group ${categoryClass(item.id)}`}>
                     <input type="checkbox" checked={enabled} onChange={(event) => updateRow(tenant.id, index, { categoryBillable: { ...row.categoryBillable, [item.id]: event.target.checked } })} />
                   </td>,
-                  ...(customs.length === 1 && !customs[0]?.isMonthlyFixed ? [] : customs.map((value) =>
-                    <td key={`${value.id}-b`} className={categoryClass(item.id)}>{value.isMonthlyFixed
-                      ? <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />
-                      : <input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} />}</td>)),
-                  <td key={`${item.id}-sum`} className={categoryClass(item.id)}>
-                    <select value={row.sumMode[item.id] ?? 'aggregate'} disabled={!enabled} onChange={(event) => updateRow(tenant.id, index, { sumMode: { ...row.sumMode, [item.id]: event.target.value as SumMode } })}>{sumModes.map((value) => <option key={value} value={value}>{sumModeLabel[value]}</option>)}</select>
-                  </td>,
+                  ...(billableItems.length === 1 && billableItems[0]?.kind === 'custom' ? [] : billableItems.map((value) =>
+                    <td key={`${value.id}-b`} className={categoryClass(item.id)}><input type="checkbox" checked={row.billable[value.id] ?? false} disabled={!enabled} aria-label={`${value.name}を請求する`} onChange={(event) => updateRow(tenant.id, index, { billable: { ...row.billable, [value.id]: event.target.checked } })} /></td>)),
                 ];
               })}
               <td><input className="meter-note-input" value={row.note} placeholder="—" onChange={(event) => updateRow(tenant.id, index, { note: event.target.value })} /></td>
@@ -913,16 +942,18 @@ export function MeterReadingPage({ propertyId, period, settingsOnly = false }: {
                 <label className="meter-check"><input type="checkbox" checked={tenant.splitEnabled} onChange={(event) => { updateTenant(tenant.id, { splitEnabled: event.target.checked }); if (!event.target.checked) setSplitCount(tenant, 1); else if (tenant.rows.length < 2) setSplitCount(tenant, 2); }} />分割する</label>
                 {tenant.splitEnabled && <input type="number" min="1" max="9" className="meter-narrow" value={tenant.rows.length} onChange={(event) => setSplitCount(tenant, Number(event.target.value))} />}
               </span> : null}</td>
+              <td className="meter-split-items-cell">{index === 0 && tenant.splitEnabled ? <details><summary>{(row.splitItems ?? ['rent', 'common', 'storage', 'variable']).filter((value) => value !== 'storage' || hasStorageLineItem).length}項目</summary>{([['rent', '賃料'], ['common', '共益費'], ...(hasStorageLineItem ? [['storage', '倉庫料'] as const] : []), ['variable', '変動費']] as const).map(([value, label]) => <label key={value} className="meter-check"><input type="checkbox" checked={(row.splitItems ?? ['rent', 'common', 'storage', 'variable']).includes(value)} onChange={(event) => toggleSplitItem(tenant, value, event.target.checked)} />{label}</label>)}</details> : <span className="meter-muted">—</span>}</td>
               {tenants.some((item) => item.splitEnabled) && <td className="meter-row-units">{tenant.splitEnabled
-                ? tenantBillingUnitOptions(tenant.id).map((unit) => <label key={unit.id} className="meter-check"><input type="checkbox" checked={unit.memberUnitIds.every((id) => row.unitIds.includes(id))} onChange={(event) => toggleRowUnits(tenant, index, unit.memberUnitIds, event.target.checked)} />{unit.label}</label>)
+                ? tenantBillingUnitOptions(tenant.id).map((unit) => <label key={unit.id} className="meter-check"><input type="checkbox" checked={unit.billingUnitId ? (row.billingUnitIds ?? []).includes(unit.billingUnitId) : unit.memberUnitIds.length > 0 && unit.memberUnitIds.every((id) => row.unitIds.includes(id))} onChange={(event) => unit.billingUnitId ? toggleRowBillingUnit(tenant, index, unit.billingUnitId, event.target.checked) : toggleRowUnits(tenant, index, unit.memberUnitIds, event.target.checked)} />{unit.label}</label>)
                 : <span className="meter-muted">—</span>}</td>}
+              {tenants.some((item) => item.splitEnabled) && <td>{tenant.splitEnabled ? <input className="meter-note-input" value={row.invoiceNote ?? ''} placeholder="請求明細の備考先頭" onChange={(event) => updateRow(tenant.id, index, { invoiceNote: event.target.value })} /> : <span className="meter-muted">—</span>}</td>}
               {tenants.some((item) => item.invoiceSplitByUnit) && <td>{tenant.invoiceSplitByUnit
                 ? <select value={row.invoiceNo} onChange={(event) => updateRow(tenant.id, index, { invoiceNo: Number(event.target.value) })}>{[1, 2, 3].map((no) => <option key={no} value={no}>請求書 {no}</option>)}</select>
                 : <span className="meter-muted">—</span>}</td>}
             </tr>))}</tbody>
           </table>
         </div>
-        <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。分割したテナントは、各行で計算する区画を選びます（どの行にも選んでいない区画のメーターは1行目で計算します）。</p>
+        <p className="meter-hint">請求書は、請求設定の請求書分割設定で区画ごとに分けているテナントだけ選べます。分割したテナントは、各行で計算する区画を選びます（どの行にも選んでいない区画のメーターは1行目で計算します）。毎月定額の金額はKANAMETERで区画ごとに編集します。</p>
       </section>
     </div>}
     </fieldset>

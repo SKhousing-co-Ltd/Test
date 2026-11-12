@@ -426,7 +426,7 @@ function formatCurrency(value: number): string {
 // 公共料金の列です。検針設定で基本料を請求する分類の基本料と、請求設定で「単価をレントロールに載せる」明細項目の単価を出します。
 // 見出しは2行で、1行目に分類（電気・水道・ガス）、2行目に「基本料」「（請求内容）単価」を出します。
 type UtilityColumn = { key: string; group: string; label: string; kind: 'basic' | 'price' | 'fixed'; id: string; fallback: { value: number; taxMode: string } | null };
-type UtilityValue = { value: number; taxMode: string; isDefault: boolean };
+type UtilityValue = { value: number; taxMode: string; isDefault: boolean; variable?: boolean };
 const utilityCategoryNames: Record<string, string> = { electric: '電気', water: '水道', gas: 'ガス' };
 const utilityCategoryOrder = ['electric', 'water', 'gas', 'other'];
 const unitPriceFormatter = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 4 });
@@ -456,7 +456,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const [viewMode, setViewMode] = useState<"current" | "snapshot">("current");
   const [snapshotDates, setSnapshotDates] = useState<string[]>([]);
   const [utilityColumns, setUtilityColumns] = useState<UtilityColumn[]>([]);
-  const [utilityValues, setUtilityValues] = useState<Record<string, Record<string, { value: number; taxMode: string }>>>({});
+  const [utilityValues, setUtilityValues] = useState<Record<string, Record<string, { value: number; taxMode: string; variable?: boolean }>>>({});
   const [tableScrollPosition, setTableScrollPosition] = useState<"left" | "middle" | "right">("left");
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const totalsWrapRef = useRef<HTMLDivElement>(null);
@@ -468,8 +468,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     const loadUtility = async () => {
       const [settingResult, lineItemResult, contractResult, priceSettingResult, billingGroupResult, monthlyFixedResult] = await Promise.all([
         client.from('asset_meter_category_setting').select('category, is_billable, is_basic_billable').eq('asset_id', propertyId),
-        client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, category, sub_item_name, asset_billing_line_item_id, default_unit_price, tax_mode, sort_order, is_monthly_fixed').eq('asset_id', propertyId).eq('sub_item_kind', 'custom').order('sort_order'),
-        client.from('lease_contract_unit').select('lease_contract_unit_id, unit_id, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode)').eq('unit.property_id', propertyId),
+        client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, category, sub_item_name, asset_billing_line_item_id, default_unit_price, tax_mode, sort_order, is_monthly_fixed, calculation_mode, price_mode').eq('asset_id', propertyId).eq('sub_item_kind', 'custom').order('sort_order'),
+        client.from('lease_contract_unit').select('lease_contract_unit_id, unit_id, unit:unit_master!inner(property_id), contract:lease_contract!inner(tenant_id), prices:lease_contract_unit_utility_price(asset_billing_line_item_id, unit_price, tax_mode), categoryPrices:lease_contract_unit_category_price(category, unit_price, tax_mode), basics:lease_contract_unit_basic_charge(category, amount, tax_mode), meterTerms:lease_contract_unit_meter_term(asset_meter_sub_item_id, price_mode)').eq('unit.property_id', propertyId),
         client.from('asset_utility_price_setting').select('category, price_scope, default_unit_price, default_tax_mode, show_in_rent_roll').eq('asset_id', propertyId),
         client.from('meter_reading_contract').select('meter_reading_contract_id, tenant_id, units:meter_reading_contract_unit(unit_id), items:meter_reading_contract_item(asset_meter_sub_item_id, is_billable)').eq('asset_id', propertyId),
         client.from('meter_reading_month_fixed_charge').select('billing_month, meter_reading_contract_id, asset_meter_sub_item_id, amount').eq('asset_id', propertyId).order('billing_month', { ascending: false }),
@@ -481,11 +481,11 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const basicColumns: UtilityColumn[] = ['electric', 'water', 'gas']
         .filter((category) => settings.some((row) => row.category === category && row.is_basic_billable && (category === 'electric' || row.is_billable)))
         .map((category) => ({ key: `basic:${category}`, group: category, label: '基本料', kind: 'basic', id: category, fallback: null }));
-      const subItems = (lineItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; category: string; sub_item_name: string; asset_billing_line_item_id: string | null; default_unit_price: number | null; tax_mode: string; is_monthly_fixed: boolean }>;
-      const fixedColumns: UtilityColumn[] = subItems.filter((item) => item.is_monthly_fixed)
+      const subItems = (lineItemResult.data ?? []) as Array<{ asset_meter_sub_item_id: string; category: string; sub_item_name: string; asset_billing_line_item_id: string | null; default_unit_price: number | null; tax_mode: string; is_monthly_fixed: boolean; calculation_mode: string; price_mode: string }>;
+      const fixedColumns: UtilityColumn[] = subItems.filter((item) => item.is_monthly_fixed && item.calculation_mode !== 'allocated_amount')
         .map((item) => ({ key: `fixed:${item.asset_meter_sub_item_id}`, group: item.category, label: item.sub_item_name, kind: 'fixed' as const, id: item.asset_meter_sub_item_id, fallback: null }));
       const priceColumns: UtilityColumn[] = subItems
-        .filter((item) => !item.is_monthly_fixed)
+        .filter((item) => !item.is_monthly_fixed && item.calculation_mode === 'meter')
         .filter((item) => item.asset_billing_line_item_id !== null)
         .map((item) => ({ key: `price:${item.asset_billing_line_item_id}`, group: item.category, label: `${item.sub_item_name}単価`, kind: 'price' as const, id: item.asset_billing_line_item_id!, fallback: item.default_unit_price === null ? null : { value: Number(item.default_unit_price), taxMode: item.tax_mode } }));
       // 単価を分類で共通にした分類は、明細項目ごとの列の代わりに分類の「単価」を1列出します。
@@ -494,9 +494,9 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
       const settingOf = (category: string) => priceSettings.find((row) => row.category === category);
       const sharedGroups = new Set(['electric', 'water', 'gas'].filter((category) => settingOf(category)?.price_scope !== 'line_item'));
       // 単価の列は、検針設定で請求している分類だけ出します。
-      const sharedColumns: UtilityColumn[] = [...sharedGroups].filter((category) => (settingOf(category)?.show_in_rent_roll ?? true) && settings.some((row) => row.category === category && (category === 'electric' || row.is_billable)))
+      const sharedColumns: UtilityColumn[] = [...sharedGroups].filter((category) => subItems.some((item) => item.category === category && item.calculation_mode === 'meter') && (settingOf(category)?.show_in_rent_roll ?? true) && settings.some((row) => row.category === category && (category === 'electric' || row.is_billable)))
         .map((category) => { const row = settingOf(category); return { key: `category:${category}`, group: category, label: '単価', kind: 'price' as const, id: category, fallback: row?.default_unit_price == null ? null : { value: Number(row.default_unit_price), taxMode: row.default_tax_mode } }; });
-      const values: Record<string, Record<string, { value: number; taxMode: string }>> = {};
+      const values: Record<string, Record<string, { value: number; taxMode: string; variable?: boolean }>> = {};
       const fixedTaxMode = new Map(subItems.map((item) => [item.asset_meter_sub_item_id, item.tax_mode]));
       const billingGroups = (billingGroupResult.data ?? []) as unknown as Array<{ meter_reading_contract_id: string; tenant_id: string; units: Array<{ unit_id: string }>; items: Array<{ asset_meter_sub_item_id: string; is_billable: boolean }> }>;
       const latestFixed = new Map<string, number>();
@@ -504,11 +504,18 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         const key = `${row.meter_reading_contract_id}|${row.asset_meter_sub_item_id}`;
         if (!latestFixed.has(key)) latestFixed.set(key, Number(row.amount));
       }
-      for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; unit_id: string; contract: { tenant_id: string } | null; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; categoryPrices: Array<{ category: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null }>) {
-        const target: Record<string, { value: number; taxMode: string }> = {};
+      for (const unit of (contractResult.data ?? []) as unknown as Array<{ lease_contract_unit_id: string; unit_id: string; contract: { tenant_id: string } | null; prices: Array<{ asset_billing_line_item_id: string; unit_price: number; tax_mode: string }> | null; categoryPrices: Array<{ category: string; unit_price: number; tax_mode: string }> | null; basics: Array<{ category: string; amount: number; tax_mode: string }> | null; meterTerms: Array<{ asset_meter_sub_item_id: string; price_mode: string }> | null }>) {
+        const target: Record<string, { value: number; taxMode: string; variable?: boolean }> = {};
         for (const price of unit.categoryPrices ?? []) target[`category:${price.category}`] = { value: Number(price.unit_price), taxMode: price.tax_mode };
         for (const price of unit.prices ?? []) target[`price:${price.asset_billing_line_item_id}`] = { value: Number(price.unit_price), taxMode: price.tax_mode };
         for (const basic of unit.basics ?? []) target[`basic:${basic.category}`] = { value: Number(basic.amount), taxMode: basic.tax_mode };
+        for (const item of subItems.filter((candidate) => !candidate.is_monthly_fixed && candidate.calculation_mode === 'meter')) {
+          const priceMode = unit.meterTerms?.find((term) => term.asset_meter_sub_item_id === item.asset_meter_sub_item_id)?.price_mode ?? item.price_mode;
+          if (priceMode === 'fixed') continue;
+          const key = sharedGroups.has(item.category) ? `category:${item.category}` : `price:${item.asset_billing_line_item_id}`;
+          if (!sharedGroups.has(item.category) && !item.asset_billing_line_item_id) continue;
+          target[key] = { value: 0, taxMode: item.tax_mode, variable: true };
+        }
         for (const group of billingGroups.filter((row) => row.tenant_id === unit.contract?.tenant_id && (!row.units.length || row.units.some((linked) => linked.unit_id === unit.unit_id)))) {
           for (const item of group.items.filter((row) => row.is_billable)) {
             const key = `fixed:${item.asset_meter_sub_item_id}`;
@@ -531,6 +538,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   // 契約区画の単価が無い入居区画は、明細項目の既定単価を「既定」として出します。
   // 水道は契約ごとに請求有無・単価が異なるため、既定単価では補完しません。
   const utilityValueOf = (row: RentRollRow, column: UtilityColumn): UtilityValue | null => {
+    // 公共料金を表示する商品区分は貸室と倉庫だけです。
+    if (!['office', 'warehouse'].includes(row.productCategory)) return null;
     if (!row.leaseContractUnitId) return null;
     const own = utilityValues[row.leaseContractUnitId]?.[column.key];
     if (own) return { ...own, isDefault: false };
@@ -1214,7 +1223,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                     {shownUtilityColumns.map((column) => {
                       const utility = utilityValueOf(row, column);
                       const note = utility?.taxMode === 'inclusive' ? '税込' : '';
-                      return <td key={column.key} className={`numeric rent-roll-utility-value utility-${column.kind}`}>{utility ? <>{column.kind === 'basic' ? formatCurrency(utility.value) : unitPriceFormatter.format(utility.value)}{note && <small>{note}</small>}</> : '—'}</td>;
+                      return <td key={column.key} className={`numeric rent-roll-utility-value utility-${column.kind}`}>{utility ? utility.variable ? '変動' : <>{column.kind === 'basic' ? formatCurrency(utility.value) : unitPriceFormatter.format(utility.value)}{note && <small>{note}</small>}</> : '—'}</td>;
                     })}
                     {viewMode === "snapshot" && row.status !== "vacant" && (
                       <td>

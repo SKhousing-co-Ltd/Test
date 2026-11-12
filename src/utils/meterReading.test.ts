@@ -77,6 +77,18 @@ test('変動単価は、契約単価・メーターの上書きではなくそ�
   assert.equal(result.amount, 11594);
 });
 
+test('小分類の金額計算単位ごとに使用量と金額を丸める', () => {
+  const shares: MeterShare[] = [
+    { id: 'M1', meterId: 'M1', unitId: 'A', subItemId: 'water_usage', code: '1', label: '', tenantId: 'T1', rowIndex: 0, usage: 0.7 },
+    { id: 'M2', meterId: 'M2', unitId: 'A', subItemId: 'water_usage', code: '2', label: '', tenantId: 'T1', rowIndex: 0, usage: 0.7 },
+    { id: 'M3', meterId: 'M3', unitId: 'B', subItemId: 'water_usage', code: '3', label: '', tenantId: 'T1', rowIndex: 0, usage: 0.7 },
+  ];
+  const item = water({ variablePriceMethod: 'manual', monthly: input({ unitPrice: 1 }) });
+  assert.equal(calculateSubItem({ ...item, amountCalculationScope: 'meter' }, category, row, 'T1', 0, shares, 0.1).amount, 0);
+  assert.equal(calculateSubItem({ ...item, amountCalculationScope: 'unit' }, category, row, 'T1', 0, shares, 0.1).amount, 1);
+  assert.equal(calculateSubItem({ ...item, amountCalculationScope: 'tenant' }, category, row, 'T1', 0, shares, 0.1).amount, 2);
+});
+
 test('変動単価が決まっていない月は0円になる', () => {
   const result = calculateSubItem(water(), category, row, 'T1', 0, meters, 0.1);
   assert.equal(result.amount, 0);

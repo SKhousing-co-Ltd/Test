@@ -43,3 +43,23 @@
 
 /* 保存状態の表示です。 */
 .invoice-creation-heading p.invoice-save-state { margin-top: 4px; color: #56708c; font-size: 11px; font-weight: 700; }
+
+/* 明細項目1・2の複数選択フィルターです。 */
+.invoice-multi-filter { position: relative; display: grid; gap: 4px; }
+.invoice-multi-filter > span { display: block; }
+.invoice-multi-filter details { position: relative; }
+.invoice-multi-filter summary { min-width: 105px; padding: 4px 22px 4px 5px; overflow: hidden; border: 1px solid #d4dfeb; border-radius: 4px; color: #48627e; background: #fff; font-weight: 400; text-align: left; text-overflow: ellipsis; cursor: pointer; list-style: none; }
+.invoice-multi-filter summary::-webkit-details-marker { display: none; }
+.invoice-multi-filter summary::after { position: absolute; top: 7px; right: 7px; content: '▼'; color: #6b8198; font-size: 8px; }
+.invoice-multi-filter-menu { position: absolute; top: calc(100% + 3px); left: 0; z-index: 20; display: grid; min-width: 220px; max-height: 260px; padding: 7px; overflow: auto; border: 1px solid #c9d7e6; border-radius: 6px; background: #fff; box-shadow: 0 8px 22px rgb(35 63 91 / 18%); }
+.invoice-multi-filter-menu label { display: flex !important; align-items: center; gap: 7px !important; min-height: 28px; padding: 4px 6px; color: #425d78; font-size: 11px; font-weight: 500; text-align: left; white-space: nowrap; cursor: pointer; }
+.invoice-multi-filter-menu label:first-child { margin-bottom: 3px; border-bottom: 1px solid #e5ebf2; }
+.invoice-multi-filter-menu input { width: 14px; height: 14px; margin: 0; accent-color: #397fc2; }
+
+/* KANAMETERと同じ、高い単価から赤・橙・黄の順で色分けします。 */
+.invoice-csv-table td.invoice-unit-price-cell { font-weight: 700; text-align: right; }
+.invoice-csv-table td.invoice-unit-price-rank-1 { color: #9b1c1c; background: #fde8e8; }
+.invoice-csv-table td.invoice-unit-price-rank-2 { color: #9a4d08; background: #fff0dc; }
+.invoice-csv-table td.invoice-unit-price-rank-3 { color: #765d00; background: #fff8c7; }
+.invoice-csv-table td.invoice-unit-price-unset { color: #7b8581; background: #eef1f0; }
+.invoice-csv-table td.invoice-unit-price-cell input { color: inherit; font-weight: inherit; }

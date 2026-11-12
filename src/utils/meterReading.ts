@@ -18,6 +18,7 @@ export type RoundingMode = 'floor' | 'ceil' | 'round';
 // まとめて計算：全メーターの使用量を合計してから単価をかける
 // メーターごと：メーターごとに使用量×単価を出して合計する
 export type SumMode = 'aggregate' | 'perMeter';
+export type AmountCalculationScope = 'meter' | 'unit' | 'tenant';
 export const sumModeLabel: Record<SumMode, string> = { aggregate: 'まとめて計算', perMeter: 'メーターごとに計算' };
 export const roundingModeLabel: Record<RoundingMode, string> = { floor: '切り捨て', ceil: '切り上げ', round: '四捨五入' };
 
@@ -65,7 +66,8 @@ export type SubItem = {
   // 税込の単価は、この丸め方で税抜へ戻します（契約区画の税込単価も同じ丸め方です）。
   // 税抜換算は金額を出す処理なので、必ず小数点以下を処理します。
   taxMode: TaxMode;
-  taxRoundingMode: RoundingMode;
+  taxRoundingMode: RoundingMode | 'none';
+  amountCalculationScope?: AmountCalculationScope;
   // 使用量の小数点以下の扱いです。
   usageRoundingDigits: number;
   // 使用量を画面に出すときの小数点以下の桁数です（計算の丸めとは別です）。
@@ -120,8 +122,14 @@ export type ContractRow = {
   note: string;
   // 分割した行を見分けるための名前です（3F など）。空欄なら「分割 n」と表示します。
   splitLabel: string;
+  // データ分割の対象にする請求項目です。
+  splitItems?: Array<'rent' | 'common' | 'storage' | 'variable'>;
+  // 分割行から作る請求明細の備考先頭へ付ける文言です。
+  invoiceNote?: string;
   // 分割した行が受け持つ区画です。どの行にも無い区画は1行目で計算します。
   unitIds: string[];
+  // 請求区画は物理区画が重複する場合があるため、請求区画そのもののIDも保持します。
+  billingUnitIds?: string[];
 };
 
 // メーター識別には階数だけを入れます（2F、B1F など）。全角は半角に直し、英数字以外は取り除きます。
@@ -190,6 +198,7 @@ const contractRow = (id: string, electric: number | null, options: { invoiceNo?:
   note: '',
   splitLabel: '',
   unitIds: [],
+  billingUnitIds: [],
 });
 
 const tenant = (id: string, name: string, electric: number | null, expected: number, options: { rounding?: RoundingMode; basic?: number; rows?: number; invoiceSplit?: boolean } = {}): TenantConfig => ({
@@ -281,7 +290,7 @@ export const metersFor = (subItemId: string, tenantId: string, rowIndex: number,
   meters.filter((row) => row.subItemId === subItemId && row.tenantId === tenantId && row.rowIndex === rowIndex);
 
 export function toExclusive(price: number, subItem: SubItem, taxRate: number, taxMode: TaxMode = subItem.taxMode) {
-  if (taxMode !== 'inclusive' || !price) return price;
+  if (taxMode !== 'inclusive' || !price || subItem.taxRoundingMode === 'none') return price;
   return roundDigits(price / (1 + taxRate), 0, subItem.taxRoundingMode);
 }
 
@@ -336,17 +345,19 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   const roundUsage = (value: number) => roundDigits(value, subItem.usageRoundingDigits, subItem.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const empty = { subItem, meters: [], usage: 0, amount: 0, groups: [] as ChargeGroup[] };
-  if (!row.billable[subItem.id]) return empty;
+  // 毎月定額はKANAMETERで区画ごとの金額が入力されているかだけで請求を判定する。
+  // KANAMEの旧「小分類を請求する」フラグは参照しない。
+  if (!subItem.isMonthlyFixed && !row.billable[subItem.id]) return empty;
 
   if (subItem.kind === 'basic' || subItem.isMonthlyFixed) {
-    const monthly = (subItem.kind === 'basic' ? category.fixedBillable : row.billable[subItem.id]) ? row.fixedCharges[subItem.id] ?? 0 : 0;
+    const monthly = (subItem.kind === 'basic' ? category.fixedBillable : true) ? row.fixedCharges[subItem.id] ?? 0 : 0;
     const fixed = subItem.isMonthlyFixed ? monthly : proratedAmount(monthly, basicRatio, row.amountRoundingMode);
     const label = fixed !== monthly && basicRatio ? `日割り（${basicRatio.days}／${basicRatio.totalDays}日）` : '固定額';
     return { ...empty, amount: fixed, groups: fixed ? [{ key: 'fixed', label, usage: 0, unitPrice: 0, amount: fixed }] : [] };
   }
 
   const own = metersFor(subItem.id, tenantId, rowIndex, meters);
-  const mode = row.sumMode[category.id] ?? 'aggregate';
+  const scope = subItem.amountCalculationScope ?? 'tenant';
   // 単価は resolveUnitPrice の順で決めます。税込単価は税抜へ戻します。
   // 変動単価は単価計算タブで決めたその月の単価を、全メーター共通で使います（未決定なら0円）。
   const monthPrice = subItem.priceMode === 'variable' ? toExclusive(variableUnitPrice(subItem, taxRate) ?? 0, subItem, taxRate) : 0;
@@ -357,10 +368,14 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   // 単価が違うメーターは、まとめて計算の場合も分けて計算します。
   const buckets = new Map<string, MeterShare[]>();
   // 中間検針で区間に分かれたメーターも、メーターごとに計算する場合は同じメーターを1つにまとめます。
-  for (const target of own) { const key = mode === 'perMeter' ? target.meterId ?? target.id : String(priceOf(target)); buckets.set(key, [...(buckets.get(key) ?? []), target]); }
+  for (const target of own) {
+    const groupKey = scope === 'meter' ? target.meterId ?? target.id : scope === 'unit' ? target.unitId ?? target.id : 'tenant';
+    const key = `${groupKey}:${priceOf(target)}`;
+    buckets.set(key, [...(buckets.get(key) ?? []), target]);
+  }
   const groups = [...buckets.entries()].map(([key, rows]) => {
     const groupUsage = roundUsage(rows.reduce((sum, target) => sum + target.usage, 0));
-    return { key, label: mode === 'perMeter' ? rows[0].code : buckets.size > 1 ? `単価${priceOf(rows[0])}円` : 'まとめて計算', usage: groupUsage, unitPrice: priceOf(rows[0]), amount: roundAmount(groupUsage * priceOf(rows[0])) };
+    return { key, label: scope === 'meter' ? rows[0].code : buckets.size > 1 ? `単価${priceOf(rows[0])}円` : 'まとめて計算', usage: groupUsage, unitPrice: priceOf(rows[0]), amount: roundAmount(groupUsage * priceOf(rows[0])) };
   });
   return { subItem, meters: own, usage, amount: groups.reduce((sum, group) => sum + group.amount, 0), groups };
 }
@@ -400,6 +415,7 @@ export type TenantResult = ReturnType<typeof calculateTenant>;
 // 請求書作成へ渡す明細です。小分類・増額分ごと、テナントの契約行ごとに1行にします。
 // invoiceNo は、請求書分割設定で区画ごとに分けているテナントの、何番目の請求書に載せるかです。
 export type MeterInvoiceLine = {
+  meterReadingContractId?: string | null;
   tenantId: string; tenantName: string; invoiceNo: number; category: CategoryId; lineItemId: string | null; sourceName: string;
   usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string;
 };
@@ -421,7 +437,7 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
   const unitOf = (id: CategoryId) => building.categories.find((row) => row.id === id)?.unit ?? '';
   const order = meterSourceOrder(building);
   return result.rows.flatMap((row) => {
-    const shared = { tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
+    const shared = { meterReadingContractId: row.row.id, tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
     const subItems = row.categories.flatMap((category) => {
       if (row.row.categoryBillable[category.category.id] === false) return [];
       const customItems = category.subItems.filter((item) => item.subItem.kind === 'custom');

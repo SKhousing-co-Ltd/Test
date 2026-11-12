@@ -68,6 +68,18 @@
 .billing-terms-field { padding: 12px 14px; }
 .billing-terms-label { display: block; margin-bottom: 6px; color: #64748b; font-size: 11px; }
 .utility-price-table input[type="number"] { width: 110px; }
+.utility-contract-group + .utility-contract-group { margin-top: 22px; }
+.utility-contract-group h4 { margin: 0 0 8px; font-size: 14px; color: #334155; }
+.utility-contract-group > .billing-terms-preview { margin: 0 0 10px; }
+.utility-category-list { padding: 14px 16px; }
+.utility-category-list .utility-contract-group { padding: 14px; border: 1px solid #e3e9f1; border-radius: 8px; background: #fff; }
+.utility-category-common { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; padding: 10px 12px; margin-bottom: 12px; background: #f7fafc; border-radius: 6px; font-size: 12px; }
+.utility-category-common label { display: inline-flex; align-items: center; gap: 7px; }
+.utility-category-common select { min-width: 150px; border: 1px solid #d7e0eb; border-radius: 6px; padding: 7px 9px; background: #fff; }
+.utility-category-common input[type="number"] { width: 110px; }
+.utility-category-common .utility-monthly-prices { flex-basis: 100%; }
+.utility-category-list .utility-price-table select { min-width: 120px; }
+.utility-category-list .utility-price-table td:nth-child(2) select { display: block; margin-top: 5px; }
 .utility-monthly-prices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .utility-monthly-price { display: inline-flex; align-items: center; gap: 4px; }
 .utility-monthly-price input[type="number"] { width: 90px; }

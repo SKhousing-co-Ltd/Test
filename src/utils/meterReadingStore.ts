@@ -16,6 +16,7 @@ import { loadSavedTenantOrder, orderTenants } from './tenantOrder.ts';
 
 export type MeterReadingSnapshot = {
   building: BuildingConfig;
+  persistedSubItemIds?: string[];
   tenants: TenantConfig[];
   meters: AssetMeter[];
   // 当月と前月の検針日です。前月の検針日は、検針期間（前回検針日の翌日から）を決めるのに使います。
@@ -53,7 +54,7 @@ type CategorySettingRow = { asset_id: string; category: CategoryId; usage_unit: 
 type SubItemRow = {
   asset_meter_sub_item_id: string; asset_id: string; category: CategoryId; sub_item_name: string; sub_item_kind: 'basic' | 'custom';
   asset_billing_line_item_id: string | null; price_mode: PriceMode; default_unit_price: number | null; tax_mode: TaxMode;
-  tax_rounding_mode: RoundingMode; usage_rounding_digits: number; usage_rounding_mode: RoundingMode; usage_display_digits: number;
+  tax_rounding_mode: RoundingMode | 'none'; amount_calculation_scope: SubItem['amountCalculationScope']; usage_rounding_digits: number; usage_rounding_mode: RoundingMode; usage_display_digits: number;
   billing_period_pattern_id: string | null; sort_order: number;
   variable_price_method: VariablePriceMethod; unit_price_rounding_digits: number; unit_price_rounding_mode: RoundingMode;
   show_unit_price_on_invoice: boolean; input_mode: InputMode | null;
@@ -69,11 +70,18 @@ type ContractRowRecord = {
   electric_billable: boolean; water_billable: boolean; gas_billable: boolean;
   electric_sum_mode: SumMode; water_sum_mode: SumMode; gas_sum_mode: SumMode;
   amount_rounding_mode: RoundingMode; note: string | null; split_label: string | null;
+  split_items: Array<'rent' | 'common' | 'storage' | 'variable'> | null; invoice_note: string | null;
 };
 type ContractItemRow = { meter_reading_contract_id: string; asset_meter_sub_item_id: string; is_billable: boolean; unit_price: number | null; fixed_amount: number | null };
-type MonthlyFixedChargeRow = { billing_month: string; meter_reading_contract_id: string; asset_meter_sub_item_id: string; amount: number };
+
+// 基本料を契約区画へ移す前のデータには、is_billable=false のまま固定額が
+// 保存されていない行があります。現在は契約区画の基本料が請求の根拠なので、
+// その旧形式だけは既定の「請求する」として読み込みます。
+export const contractItemBillable = (subItem: Pick<SubItem, 'kind'>, item?: Pick<ContractItemRow, 'is_billable' | 'fixed_amount'>) =>
+  item ? (subItem.kind === 'basic' && item.fixed_amount == null ? true : item.is_billable) : true;
+type MonthlyFixedChargeRow = { billing_month: string; meter_reading_contract_id: string; lease_contract_unit_id: string | null; asset_meter_sub_item_id: string; amount: number };
 type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item_id: string; meter_code: string; meter_label: string | null; is_active: boolean };
-type AssignmentRow = { asset_meter_unit_assignment_id: string; asset_meter_id: string; unit_id: string; effective_from: string; effective_to: string | null };
+type AssignmentRow = { asset_meter_unit_assignment_id: string; asset_meter_id: string; unit_id: string | null; lease_contract_billing_unit_id: string | null; effective_from: string; effective_to: string | null };
 type BreakRow = { asset_meter_id: string; break_date: string; reading: number | null; usage_amount: number | null };
 type OccupancyRow = { occupancy_date: string; unit_id: string; unit_type: string; tenant_id: string; tenant_name: string };
 type UnitRow = { unit_id: string; unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string };
@@ -149,9 +157,9 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   // 小さなグループに分けて読み込みます。
   const [settingResult, subItemResult, surchargeResult, contractResult, meterResult, monthResult] = await retryFailedFetch('検針基本設定', () => Promise.all([
     client.from('asset_meter_category_setting').select('asset_id, category, usage_unit, is_billable, is_basic_billable').eq('asset_id', assetId),
-    client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, usage_rounding_digits, usage_rounding_mode, usage_display_digits, billing_period_pattern_id, sort_order, variable_price_method, unit_price_rounding_digits, unit_price_rounding_mode, show_unit_price_on_invoice, input_mode, is_monthly_fixed').eq('asset_id', assetId).order('sort_order'),
+    client.from('asset_meter_sub_item').select('asset_meter_sub_item_id, asset_id, category, sub_item_name, sub_item_kind, asset_billing_line_item_id, price_mode, default_unit_price, tax_mode, tax_rounding_mode, amount_calculation_scope, usage_rounding_digits, usage_rounding_mode, usage_display_digits, billing_period_pattern_id, sort_order, variable_price_method, unit_price_rounding_digits, unit_price_rounding_mode, show_unit_price_on_invoice, input_mode, is_monthly_fixed').eq('asset_id', assetId).order('sort_order'),
     client.from('asset_meter_surcharge').select('asset_meter_surcharge_id, asset_id, category, surcharge_name, asset_billing_line_item_id, is_billable, billing_period_pattern_id, calculation_scope').eq('asset_id', assetId).order('surcharge_name'),
-    client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note, split_label').eq('asset_id', assetId).order('row_no'),
+    client.from('meter_reading_contract').select('meter_reading_contract_id, asset_id, tenant_id, row_no, invoice_number, electric_billable, water_billable, gas_billable, electric_sum_mode, water_sum_mode, gas_sum_mode, amount_rounding_mode, note, split_label, split_items, invoice_note').eq('asset_id', assetId).order('row_no'),
     client.from('asset_meter').select('asset_meter_id, asset_id, asset_meter_sub_item_id, meter_code, meter_label, is_active').eq('asset_id', assetId).order('sort_order').order('meter_code'),
     client.from('meter_reading_month').select('asset_id, billing_month, meter_date, status').eq('asset_id', assetId).in('billing_month', [billingMonth, previousMonth]),
   ]));
@@ -161,7 +169,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     client.from('meter_reading_entry').select('asset_id, billing_month, asset_meter_id, usage_amount, previous_reading, current_reading, previous_reading_manual, exchange_removed_reading, exchange_installed_reading').eq('asset_id', assetId).in('billing_month', [billingMonth, previousMonth]),
     client.from('billing_invoice_split_setting').select('split_mode, code:billing_code!inner(tenant_id)').eq('asset_id', assetId).eq('split_mode', 'unit'),
     client.from('meter_reading_month_sub_item').select('asset_meter_sub_item_id, unit_price, billed_inclusive, billed_tax, billed_exclusive, billed_usage').eq('asset_id', assetId).eq('billing_month', billingMonth),
-    client.from('asset_meter_unit_assignment').select('asset_meter_unit_assignment_id, asset_meter_id, unit_id, effective_from, effective_to, meter:asset_meter!asset_meter_unit_assignment_asset_meter_id_fkey!inner(asset_id)').eq('meter.asset_id', assetId).order('effective_from'),
+    client.from('asset_meter_unit_assignment').select('asset_meter_unit_assignment_id, asset_meter_id, unit_id, lease_contract_billing_unit_id, effective_from, effective_to, meter:asset_meter!asset_meter_unit_assignment_asset_meter_id_fkey!inner(asset_id)').eq('meter.asset_id', assetId).order('effective_from'),
     client.from('meter_reading_break').select('asset_meter_id, break_date, reading, usage_amount').eq('asset_id', assetId).eq('billing_month', billingMonth).order('break_date'),
   ]));
   const [occupancyResult, unitResult, billingUnitResult, lineItemResult, contractPriceResult, priceSettingResult] = await retryFailedFetch('契約・区画設定', () => Promise.all([
@@ -193,19 +201,25 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   let contractItemRows: ContractItemRow[] = [];
   let monthlyFixedRows: MonthlyFixedChargeRow[] = [];
   const unitIdsByContract = new Map<string, string[]>();
+  const billingUnitIdsByContract = new Map<string, string[]>();
   if (contractIds.length) {
-    const [itemResult, contractUnitResult, monthlyFixedResult] = await retryFailedFetch('データ分割設定', () => Promise.all([
+    const [itemResult, contractUnitResult, contractBillingUnitResult, monthlyFixedResult] = await retryFailedFetch('データ分割設定', () => Promise.all([
       client.from('meter_reading_contract_item').select('meter_reading_contract_id, asset_meter_sub_item_id, is_billable, unit_price, fixed_amount').in('meter_reading_contract_id', contractIds),
       client.from('meter_reading_contract_unit').select('meter_reading_contract_id, unit_id').in('meter_reading_contract_id', contractIds),
-      client.from('meter_reading_month_fixed_charge').select('billing_month, meter_reading_contract_id, asset_meter_sub_item_id, amount').eq('asset_id', assetId).lte('billing_month', billingMonth).in('meter_reading_contract_id', contractIds).order('billing_month', { ascending: false }),
+      client.from('meter_reading_contract_billing_unit').select('meter_reading_contract_id, lease_contract_billing_unit_id').in('meter_reading_contract_id', contractIds),
+      client.from('meter_reading_month_fixed_charge').select('billing_month, meter_reading_contract_id, lease_contract_unit_id, asset_meter_sub_item_id, amount').eq('asset_id', assetId).lte('billing_month', billingMonth).in('meter_reading_contract_id', contractIds).order('billing_month', { ascending: false }),
     ]));
     if (itemResult.error) throw new Error(`契約行の設定を読み込めませんでした: ${itemResult.error.message}`);
     if (contractUnitResult.error) throw new Error(`分割行の区画を読み込めませんでした: ${contractUnitResult.error.message}`);
+    if (contractBillingUnitResult.error) throw new Error(`分割行の請求区画を読み込めませんでした: ${contractBillingUnitResult.error.message}`);
     if (monthlyFixedResult.error) throw new Error(`毎月定額を読み込めませんでした: ${monthlyFixedResult.error.message}`);
     contractItemRows = (itemResult.data ?? []) as ContractItemRow[];
     monthlyFixedRows = (monthlyFixedResult.data ?? []) as MonthlyFixedChargeRow[];
     for (const row of (contractUnitResult.data ?? []) as Array<{ meter_reading_contract_id: string; unit_id: string }>) {
       unitIdsByContract.set(row.meter_reading_contract_id, [...(unitIdsByContract.get(row.meter_reading_contract_id) ?? []), row.unit_id]);
+    }
+    for (const row of (contractBillingUnitResult.data ?? []) as Array<{ meter_reading_contract_id: string; lease_contract_billing_unit_id: string }>) {
+      billingUnitIdsByContract.set(row.meter_reading_contract_id, [...(billingUnitIdsByContract.get(row.meter_reading_contract_id) ?? []), row.lease_contract_billing_unit_id]);
     }
   }
 
@@ -224,13 +238,13 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
   for (const id of categoryIds) {
     const own = subItemRows.filter((row) => row.category === id);
     if (!own.some((row) => row.sub_item_kind === 'basic')) {
-      subItems.push({ id: newId(), categoryId: id, name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() });
+      subItems.push({ id: newId(), categoryId: id, name: '基本料', kind: 'basic', lineItemId: '', priceMode: 'fixed', defaultUnitPrice: null, taxMode: 'exclusive', taxRoundingMode: 'floor', amountCalculationScope: 'tenant', usageRoundingDigits: 1, usageDisplayDigits: 1, usageRoundingMode: 'round', periodPatternId: '', ...subItemDefaults() });
     }
     for (const row of own) {
       subItems.push({
         id: row.asset_meter_sub_item_id, categoryId: row.category, name: row.sub_item_name, kind: row.sub_item_kind,
         lineItemId: row.asset_billing_line_item_id ?? '', priceMode: row.price_mode, defaultUnitPrice: row.default_unit_price,
-        taxMode: row.tax_mode, taxRoundingMode: row.tax_rounding_mode,
+        taxMode: row.tax_mode, taxRoundingMode: row.tax_rounding_mode, amountCalculationScope: row.amount_calculation_scope,
         usageRoundingDigits: row.usage_rounding_digits, usageRoundingMode: row.usage_rounding_mode, usageDisplayDigits: row.usage_display_digits,
         periodPatternId: row.billing_period_pattern_id ?? '',
         variablePriceMethod: row.variable_price_method, unitPriceRoundingDigits: row.unit_price_rounding_digits, unitPriceRoundingMode: row.unit_price_rounding_mode,
@@ -271,10 +285,15 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
 
   const itemsByContract = new Map<string, ContractItemRow[]>();
   for (const row of contractItemRows) itemsByContract.set(row.meter_reading_contract_id, [...(itemsByContract.get(row.meter_reading_contract_id) ?? []), row]);
-  const latestMonthlyFixed = new Map<string, number>();
+  const latestMonthlyFixedByUnit = new Map<string, MonthlyFixedChargeRow>();
   for (const row of monthlyFixedRows) {
+    const key = `${row.meter_reading_contract_id}|${row.asset_meter_sub_item_id}|${row.lease_contract_unit_id ?? 'legacy'}`;
+    if (!latestMonthlyFixedByUnit.has(key)) latestMonthlyFixedByUnit.set(key, row);
+  }
+  const latestMonthlyFixed = new Map<string, number>();
+  for (const row of latestMonthlyFixedByUnit.values()) {
     const key = `${row.meter_reading_contract_id}|${row.asset_meter_sub_item_id}`;
-    if (!latestMonthlyFixed.has(key)) latestMonthlyFixed.set(key, Number(row.amount));
+    latestMonthlyFixed.set(key, (latestMonthlyFixed.get(key) ?? 0) + Number(row.amount));
   }
 
   const toContractRow = (record: ContractRowRecord): ContractRow => {
@@ -283,8 +302,9 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     const fixedCharges: Record<string, number> = {};
     for (const subItem of subItems) {
       const found = items.find((row) => row.asset_meter_sub_item_id === subItem.id);
-      // 未登録の小分類は、基本料以外は請求する扱いにします。
-      billable[subItem.id] = found ? found.is_billable : subItem.kind !== 'basic';
+      // 請求有無が未登録の既存テナントと、契約区画への移行前の基本料は
+      // 現在の請求状態に合わせて「請求する」として読み込みます。
+      billable[subItem.id] = contractItemBillable(subItem, found);
       if (found?.fixed_amount !== null && found?.fixed_amount !== undefined) fixedCharges[subItem.id] = Number(found.fixed_amount);
       if (subItem.isMonthlyFixed) {
         const inherited = latestMonthlyFixed.get(`${record.meter_reading_contract_id}|${subItem.id}`);
@@ -297,14 +317,17 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
       billable, fixedCharges,
       sumMode: { electric: record.electric_sum_mode, water: record.water_sum_mode, gas: record.gas_sum_mode },
       amountRoundingMode: record.amount_rounding_mode, note: record.note ?? '', splitLabel: record.split_label ?? '',
+      splitItems: record.split_items ?? ['rent', 'common', 'storage', 'variable'], invoiceNote: record.invoice_note ?? '',
       unitIds: unitIdsByContract.get(record.meter_reading_contract_id) ?? [],
+      billingUnitIds: billingUnitIdsByContract.get(record.meter_reading_contract_id) ?? [],
     };
   };
 
   // メーターです。設置区画の履歴と、対象月の検針値（指針・中間検針）をまとめます。
   const assignmentsByMeter = new Map<string, UnitAssignment[]>();
   for (const row of (assignmentResult.data ?? []) as unknown as AssignmentRow[]) {
-    assignmentsByMeter.set(row.asset_meter_id, [...(assignmentsByMeter.get(row.asset_meter_id) ?? []), { id: row.asset_meter_unit_assignment_id, unitId: row.unit_id, from: row.effective_from, to: row.effective_to }]);
+    const targetId = row.unit_id ?? (row.lease_contract_billing_unit_id ? `billing:${row.lease_contract_billing_unit_id}` : '');
+    assignmentsByMeter.set(row.asset_meter_id, [...(assignmentsByMeter.get(row.asset_meter_id) ?? []), { id: row.asset_meter_unit_assignment_id, unitId: targetId, from: row.effective_from, to: row.effective_to }]);
   }
   const breaksByMeter = new Map<string, MeterBreak[]>();
   for (const row of (breakResult.data ?? []) as BreakRow[]) {
@@ -368,6 +391,7 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     units, billingUnits, occupancy,
     previousMonthReadings: Object.fromEntries(previousReadingByMeter),
     savedContracts, invoiceSplitTenantIds: [...splitTenants], persistedContractIds: contractIds,
+    persistedSubItemIds: subItemRows.map((row) => row.asset_meter_sub_item_id),
   };
 }
 
@@ -425,7 +449,7 @@ export function contractUtilityTerms(lineItems: LineItemPriceRow[], contractUnit
 // 分割している場合は、区画を受け持つ契約行ごとに合計します。契約区画に基本料が無い分類は、契約行の基本料のままです。
 // 金額の小数点以下の処理も、契約行が受け持つ区画（検針期間に入居している区画）の契約情報から決めます。
 // 区画ごとに処理が違うときは区画IDの順で最初の区画のもの、契約情報が無い行は切り捨てです。
-// 基本料は契約区画に基本料を入れている契約だけに請求します（契約行の基本料・請求有無は使いません）。
+// 基本料は契約区画に基本料を入れており、かつテナント一覧で請求チェックがオンの契約行だけに請求します。
 // 基本料の区画は、基本料の既定の請求期間（periodOf）に入居している区画です。
 export function applyContractBasics(tenants: TenantConfig[], building: BuildingConfig, occupancy: Occupancy, period: Period, periodOf: (subItemId: string) => Period = () => period): TenantConfig[] {
   const basics = building.contractBasics ?? {};
@@ -447,6 +471,7 @@ export function applyContractBasics(tenants: TenantConfig[], building: BuildingC
       for (const category of categoryIds) {
         const basicItem = building.subItems.find((item) => item.categoryId === category && item.kind === 'basic');
         if (!basicItem) continue;
+        const basicBillable = row.billable[basicItem.id] !== false;
         let found = false; let total = 0;
         for (const [key, charges] of Object.entries(basics)) {
           const [unitId, tenantId] = key.split(':');
@@ -456,7 +481,7 @@ export function applyContractBasics(tenants: TenantConfig[], building: BuildingC
           total += charge.taxMode === 'inclusive' ? Math.floor(Number((charge.amount / (1 + building.taxRate)).toFixed(6))) : charge.amount;
         }
         fixedCharges[basicItem.id] = found ? total : 0;
-        billable[basicItem.id] = found;
+        billable[basicItem.id] = basicBillable && found;
       }
       return { ...row, fixedCharges, billable, amountRoundingMode };
     });
@@ -470,7 +495,7 @@ export const emptyContractRow = (subItems: SubItem[]): ContractRow => ({
   billable: Object.fromEntries(subItems.map((row) => [row.id, row.kind !== 'basic'])),
   fixedCharges: {},
   sumMode: { electric: 'aggregate', water: 'aggregate', gas: 'aggregate' },
-  amountRoundingMode: 'floor', note: '', splitLabel: '', unitIds: [],
+  amountRoundingMode: 'floor', note: '', splitLabel: '', splitItems: ['rent', 'common', 'storage', 'variable'], invoiceNote: '', unitIds: [],
 });
 // 元表との突き合わせはサンプルデータのときだけ使う項目なので、実データでは0にしています。
 const tenantConfig = (id: string, name: string, rows: ContractRow[], invoiceSplitByUnit: boolean): TenantConfig =>
@@ -550,6 +575,7 @@ export function breakProblems(meters: AssetMeter[]): string[] {
 export async function saveMeterReading(
   client: SupabaseClient, assetId: string, year: number, month: number,
   next: MeterReadingSnapshot, base: MeterReadingSnapshot,
+  options: { settingsOnly?: boolean } = {},
 ) {
   const problems = meterCodeProblems(next.meters, next.building.subItems);
   if (problems.length) throw new Error(`メーター番号を確認してください。${problems.join('／')}`);
@@ -568,7 +594,15 @@ export async function saveMeterReading(
   const goneSubItems = removedIds(base.building.subItems.map((row) => row.id), next.building.subItems.map((row) => row.id));
   if (goneSubItems.length) check(await client.from('asset_meter_sub_item').delete().in('asset_meter_sub_item_id', goneSubItems), '小分類');
   const sortOrders = new Map<CategoryId, number>();
-  check(await client.from('asset_meter_sub_item').upsert(next.building.subItems.map((row) => {
+  const baseSubItems = new Map(base.building.subItems.map((row) => [row.id, row]));
+  const subItemsToSave = next.building.subItems.filter((row) => {
+    const previous = baseSubItems.get(row.id);
+    const basicJustEnabled = row.kind === 'basic' &&
+      next.building.categories.find((category) => category.id === row.categoryId)?.fixedBillable &&
+      !base.building.categories.find((category) => category.id === row.categoryId)?.fixedBillable;
+    return !previous || JSON.stringify(previous) !== JSON.stringify(row) || basicJustEnabled;
+  });
+  const subItemRows = next.building.subItems.map((row) => {
     const order = sortOrders.get(row.categoryId) ?? 0;
     sortOrders.set(row.categoryId, order + 1);
     return {
@@ -586,7 +620,12 @@ export async function saveMeterReading(
       is_monthly_fixed: row.kind === 'custom' && row.isMonthlyFixed,
       input_mode: row.kind === 'basic' ? 'usage' : row.inputMode,
     };
-  })), '小分類');
+  }).filter((row) => subItemsToSave.some((item) => item.id === row.asset_meter_sub_item_id));
+  if (subItemRows.length) check(await client.from('asset_meter_sub_item').upsert(subItemRows), '小分類');
+  const persistedSubItemIds = new Set(base.persistedSubItemIds ?? base.building.subItems.map((row) => row.id));
+  for (const row of subItemRows) persistedSubItemIds.add(row.asset_meter_sub_item_id);
+  for (const id of goneSubItems) persistedSubItemIds.delete(id);
+  next.persistedSubItemIds = [...persistedSubItemIds];
 
   // 3. 増額分（単価は月ごとなので、単価だけ月次テーブルへ入れます）
   check(await client.from('asset_meter_surcharge').upsert(next.building.surcharges.map((row) => ({
@@ -610,6 +649,8 @@ export async function saveMeterReading(
     amount_rounding_mode: contractRounding.get(row.id) ?? 'floor', note: row.note || null,
     // 分割していない行は識別名を持ちません。
     split_label: tenant.rows.length > 1 ? row.splitLabel.trim() || null : null,
+    split_items: tenant.rows.length > 1 ? row.splitItems ?? ['rent', 'common', 'storage', 'variable'] : ['rent', 'common', 'storage', 'variable'],
+    invoice_note: tenant.rows.length > 1 ? row.invoiceNote?.trim() || null : null,
   })))), '契約行');
 
   // 分割行の区画です。分割していないテナントは1行目だけなので持ちません。
@@ -625,16 +666,35 @@ export async function saveMeterReading(
     }
   }
 
+  // 請求区画は物理区画の構成が同じ・重複していても、請求区画ID単位で独立して保存します。
+  const contractBillingUnits = next.tenants.filter((tenant) => tenant.rows.length > 1)
+    .flatMap((tenant) => tenant.rows.flatMap((row) => [...new Set(row.billingUnitIds ?? [])].map((billingUnitId) => ({ meter_reading_contract_id: row.id, lease_contract_billing_unit_id: billingUnitId }))));
+  if (contractBillingUnits.length) check(await client.from('meter_reading_contract_billing_unit').upsert(contractBillingUnits, { onConflict: 'meter_reading_contract_id,lease_contract_billing_unit_id', ignoreDuplicates: true }), '分割行の請求区画');
+  const keptBillingUnits = new Set(contractBillingUnits.map((row) => `${row.meter_reading_contract_id}|${row.lease_contract_billing_unit_id}`));
+  for (const row of base.tenants.flatMap((tenant) => tenant.rows).filter((item) => !goneSet.has(item.id))) {
+    for (const billingUnitId of (row.billingUnitIds ?? []).filter((id) => !keptBillingUnits.has(`${row.id}|${id}`))) {
+      check(await client.from('meter_reading_contract_billing_unit').delete().eq('meter_reading_contract_id', row.id).eq('lease_contract_billing_unit_id', billingUnitId), '分割行の請求区画');
+    }
+  }
+
   // 5. 契約行ごとの小分類設定
   const subItemIds = new Set(next.building.subItems.map((row) => row.id));
+  // 基本料の金額は契約区画から算出されるため、編集用の tenants には入っていないことがあります。
+  // 算出後の金額も保存し、旧データの false とユーザーが明示的に外した false を再読込時に区別します。
+  const effectiveRows = new Map(computeMonth(next, year, month).contractTenants
+    .flatMap((tenant) => tenant.rows.map((row) => [row.id, row] as const)));
   check(await client.from('meter_reading_contract_item').upsert(next.tenants.flatMap((tenant) => tenant.rows.flatMap((row) =>
-    next.building.subItems.map((subItem) => ({
+    next.building.subItems.filter((subItem) => persistedSubItemIds.has(subItem.id)).map((subItem) => ({
       meter_reading_contract_id: row.id, asset_meter_sub_item_id: subItem.id,
       is_billable: row.billable[subItem.id] ?? false,
       unit_price: null,
-      fixed_amount: subItem.kind === 'basic' ? row.fixedCharges[subItem.id] ?? null : null,
+      fixed_amount: subItem.kind === 'basic' ? effectiveRows.get(row.id)?.fixedCharges[subItem.id] ?? row.fixedCharges[subItem.id] ?? null : null,
     })),
   ))), '契約行の小分類設定');
+
+  // 請求設定画面では月次データを表示用に読み込んでいますが、保存対象ではありません。
+  // ここから先のメーター・割当・検針日・読取値・月次単価には一切触れません。
+  if (options.settingsOnly) return;
 
   // 6. メーター（小分類ごと削除はカスケードで消えるため、残っているものだけ整理します）
   const goneMeters = removedIds(base.meters.filter((row) => subItemIds.has(row.subItemId)).map((row) => row.id), next.meters.map((row) => row.id));
@@ -654,7 +714,12 @@ export async function saveMeterReading(
   );
   if (goneAssignments.length) check(await client.from('asset_meter_unit_assignment').delete().in('asset_meter_unit_assignment_id', goneAssignments), 'メーターの区画');
   const assignments = next.meters.flatMap((row) => row.assignments.map((item) => ({
-    asset_meter_unit_assignment_id: item.id, asset_meter_id: row.id, unit_id: item.unitId, effective_from: item.from, effective_to: item.to,
+    asset_meter_unit_assignment_id: item.id,
+    asset_meter_id: row.id,
+    unit_id: item.unitId.startsWith('billing:') ? null : item.unitId,
+    lease_contract_billing_unit_id: item.unitId.startsWith('billing:') ? item.unitId.slice('billing:'.length) : null,
+    effective_from: item.from,
+    effective_to: item.to,
   })));
   if (assignments.length) check(await client.from('asset_meter_unit_assignment').upsert(assignments), 'メーターの区画');
 
@@ -663,13 +728,8 @@ export async function saveMeterReading(
     asset_id: assetId, billing_month: billingMonth, meter_date: next.meterDate || null, status: next.status,
   }, { onConflict: 'asset_id,billing_month' }), '検針日');
 
-  const monthlyFixedCharges = next.tenants.flatMap((tenant) => tenant.rows.flatMap((row) =>
-    next.building.subItems.filter((item) => item.isMonthlyFixed && row.billable[item.id]).map((item) => ({
-      asset_id: assetId, billing_month: billingMonth, meter_reading_contract_id: row.id,
-      asset_meter_sub_item_id: item.id, amount: row.fixedCharges[item.id] ?? 0,
-    })),
-  ));
-  if (monthlyFixedCharges.length) check(await client.from('meter_reading_month_fixed_charge').upsert(monthlyFixedCharges, { onConflict: 'asset_id,billing_month,meter_reading_contract_id,asset_meter_sub_item_id' }), '毎月定額');
+  // 毎月定額はKANAMETERが契約区画ごとに保存します。旧請求グループ単位の
+  // 値をここで書き戻すと、区画別の金額を壊すため読み取り表示に限定します。
 
   // 仕入の請求金額を入れた増額分は、増額分タブで算出した単価を保存します。
   const effectiveSurcharges = computeMonth(next, year, month).building.surcharges;
@@ -680,7 +740,7 @@ export async function saveMeterReading(
   })), { onConflict: 'asset_id,billing_month,asset_meter_surcharge_id' }), '増額分の単価');
 
   // 変動単価の月次入力です。決め方を切り替えても、もう一方の入力は消さずに残します。
-  const variableSubItems = next.building.subItems.filter((row) => row.kind === 'custom' && row.priceMode === 'variable');
+  const variableSubItems = next.building.subItems.filter((row) => persistedSubItemIds.has(row.id) && row.kind === 'custom' && row.priceMode === 'variable');
   if (variableSubItems.length) check(await client.from('meter_reading_month_sub_item').upsert(variableSubItems.map((row) => ({
     asset_id: assetId, billing_month: billingMonth, asset_meter_sub_item_id: row.id,
     unit_price: row.monthly.unitPrice,
@@ -718,6 +778,7 @@ export async function saveMeterReading(
 // 月次確定です。確定した金額は、そのときの使用量・単価・丸めごと残します。
 // 単価や丸めの設定を後から変えても、確定済みの月の金額は動きません。
 export type ConfirmedAmount = {
+  meterReadingContractId: string | null;
   tenantId: string; tenantName: string; rowNo: number; invoiceNo: number; category: CategoryId;
   sourceKind: 'subItem' | 'surcharge'; sourceId: string; sourceName: string; lineItemId: string | null; lineItemName: string | null;
   usage: number; usageUnit: string; unitPrice: number | null; amount: number;
@@ -725,11 +786,12 @@ export type ConfirmedAmount = {
 
 export async function loadConfirmedAmounts(client: SupabaseClient, assetId: string, year: number, month: number): Promise<ConfirmedAmount[]> {
   const { data, error } = await client.from('meter_reading_confirmed_amount')
-    .select('tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_id, source_name, asset_billing_line_item_id, line_item_name, usage_amount, usage_unit, unit_price, amount')
+    .select('meter_reading_contract_id, tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_id, source_name, asset_billing_line_item_id, line_item_name, usage_amount, usage_unit, unit_price, amount')
     .eq('asset_id', assetId).eq('billing_month', monthStart(year, month))
     .order('tenant_name').order('row_no');
   if (error) throw new Error(`確定した金額を読み込めませんでした: ${error.message}`);
   return (data ?? []).map((row) => ({
+    meterReadingContractId: row.meter_reading_contract_id,
     tenantId: row.tenant_id, tenantName: row.tenant_name, rowNo: row.row_no, invoiceNo: row.invoice_number, category: row.category,
     sourceKind: row.source_kind, sourceId: row.source_id, sourceName: row.source_name, lineItemId: row.asset_billing_line_item_id, lineItemName: row.line_item_name,
     usage: Number(row.usage_amount), usageUnit: row.usage_unit ?? '', unitPrice: numberOrNull(row.unit_price), amount: Number(row.amount),
@@ -758,19 +820,48 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
   // KANAMETERで確定済みの月は、旧検針画面用のスナップショットを組み立てず、
   // KANAME連携用に保存された確定明細を直接使用します。
   if (currentMonth?.status === 'confirmed') {
-    const [confirmed, subItemResult, surchargeResult] = await Promise.all([
+    const [confirmed, subItemResult, surchargeResult, contractTermResult, billingTermResult, contractUnitResult, billingUnitResult, contractBillingResult] = await Promise.all([
       loadConfirmedAmounts(client, assetId, year, month),
       client.from('asset_meter_sub_item')
-        .select('asset_meter_sub_item_id, category, sort_order, billing_period_pattern_id, show_unit_price_on_invoice')
+        .select('asset_meter_sub_item_id, category, sub_item_kind, sort_order, billing_period_pattern_id, show_unit_price_on_invoice, show_usage_on_invoice')
         .eq('asset_id', assetId),
       client.from('asset_meter_surcharge')
         .select('asset_meter_surcharge_id, category, billing_period_pattern_id')
         .eq('asset_id', assetId),
+      client.from('lease_contract_unit_meter_term').select('lease_contract_unit_id, asset_meter_sub_item_id, show_unit_price_on_invoice, show_usage_on_invoice'),
+      client.from('lease_contract_billing_unit_meter_term').select('lease_contract_billing_unit_id, asset_meter_sub_item_id, show_unit_price_on_invoice, show_usage_on_invoice'),
+      client.from('lease_contract_unit').select('lease_contract_unit_id, contract:lease_contract(tenant_id), unit:unit_master!inner(property_id)').eq('unit.property_id', assetId),
+      client.from('lease_contract_billing_unit').select('lease_contract_billing_unit_id, contract:lease_contract(tenant_id), members:lease_contract_billing_unit_member(contractUnit:lease_contract_unit(unit:unit_master(property_id)))'),
+      client.from('meter_reading_contract')
+        .select('meter_reading_contract_id, items:meter_reading_contract_item(asset_meter_sub_item_id, is_billable)')
+        .eq('asset_id', assetId),
     ]);
     if (subItemResult.error) throw new Error(`検針項目を読み込めませんでした: ${subItemResult.error.message}`);
     if (surchargeResult.error) throw new Error(`増額分設定を読み込めませんでした: ${surchargeResult.error.message}`);
+    if (contractBillingResult.error) throw new Error(`テナントごとの請求有無を読み込めませんでした: ${contractBillingResult.error.message}`);
+    for (const result of [contractTermResult, billingTermResult, contractUnitResult, billingUnitResult]) if (result.error) throw new Error(`契約ごとの請求書表示設定を読み込めませんでした: ${result.error.message}`);
+    const contractTerms = new Map<string, { show_unit_price_on_invoice: boolean; show_usage_on_invoice: boolean }>();
+    for (const unit of contractUnitResult.data ?? []) {
+      const contract = Array.isArray(unit.contract) ? unit.contract[0] : unit.contract;
+      for (const term of (contractTermResult.data ?? []).filter((row) => row.lease_contract_unit_id === unit.lease_contract_unit_id))
+        if (contract?.tenant_id) contractTerms.set(`${contract.tenant_id}:${term.asset_meter_sub_item_id}`, term);
+    }
+    for (const unit of billingUnitResult.data ?? []) {
+      const contract = Array.isArray(unit.contract) ? unit.contract[0] : unit.contract;
+      if (!(unit.members ?? []).some((member) => {
+        const contractUnit = Array.isArray(member.contractUnit) ? member.contractUnit[0] : member.contractUnit;
+        const physicalUnit = Array.isArray(contractUnit?.unit) ? contractUnit.unit[0] : contractUnit?.unit;
+        return physicalUnit?.property_id === assetId;
+      })) continue;
+      for (const term of (billingTermResult.data ?? []).filter((row) => row.lease_contract_billing_unit_id === unit.lease_contract_billing_unit_id))
+        if (contract?.tenant_id) contractTerms.set(`${contract.tenant_id}:${term.asset_meter_sub_item_id}`, term);
+    }
     const subItems = new Map((subItemResult.data ?? []).map((row) => [row.asset_meter_sub_item_id, row]));
     const surcharges = new Map((surchargeResult.data ?? []).map((row) => [row.asset_meter_surcharge_id, row]));
+    const currentBillable = new Map<string, boolean>();
+    for (const contract of contractBillingResult.data ?? []) {
+      for (const item of contract.items ?? []) currentBillable.set(`${contract.meter_reading_contract_id}:${item.asset_meter_sub_item_id}`, item.is_billable);
+    }
     const sourceOrder = new Map<string, number>();
     for (const category of categoryIds) {
       for (const row of (subItemResult.data ?? [])
@@ -784,20 +875,27 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
     }
     const tenantOrder = new Map<string, number>();
     for (const row of confirmed) if (!tenantOrder.has(row.tenantId)) tenantOrder.set(row.tenantId, tenantOrder.size);
-    const orderedConfirmed = [...confirmed].sort((left, right) =>
+    const orderedConfirmed = confirmed.filter((row) => row.sourceKind !== 'subItem'
+      || !row.meterReadingContractId
+      // データ分割で「変動費のみ」を選んだ行でも、基本料は分割対象外。
+      // 小分類の請求可否が false でも、確定済みの基本料明細は請求書へ渡す。
+      || subItems.get(row.sourceId)?.sub_item_kind === 'basic'
+      || currentBillable.get(`${row.meterReadingContractId}:${row.sourceId}`) !== false).sort((left, right) =>
       (tenantOrder.get(left.tenantId) ?? 9999) - (tenantOrder.get(right.tenantId) ?? 9999)
       || left.rowNo - right.rowNo
       || (sourceOrder.get(left.sourceId) ?? 9999) - (sourceOrder.get(right.sourceId) ?? 9999)
     );
     const lines: MeterInvoiceLine[] = orderedConfirmed.map((row) => {
       const subItem = row.sourceKind === 'subItem' ? subItems.get(row.sourceId) : undefined;
+      const term = contractTerms.get(`${row.tenantId}:${row.sourceId}`);
       const surcharge = row.sourceKind === 'surcharge' ? surcharges.get(row.sourceId) : undefined;
       const basic = row.sourceKind === 'subItem' && row.unitPrice === null && !row.usage;
       return {
+        meterReadingContractId: row.meterReadingContractId,
         tenantId: row.tenantId, tenantName: row.tenantName, invoiceNo: row.invoiceNo, category: row.category, lineItemId: row.lineItemId, sourceName: row.sourceName,
-        usage: basic || row.sourceKind === 'surcharge' ? null : row.usage,
-        unit: basic || row.sourceKind === 'surcharge' ? '' : row.usageUnit,
-        unitPrice: row.sourceKind === 'surcharge' || subItem?.show_unit_price_on_invoice === false ? null : row.unitPrice,
+        usage: basic || row.sourceKind === 'surcharge' || (term?.show_usage_on_invoice ?? subItem?.show_usage_on_invoice) === false ? null : row.usage,
+        unit: basic || row.sourceKind === 'surcharge' || (term?.show_usage_on_invoice ?? subItem?.show_usage_on_invoice) === false ? '' : row.usageUnit,
+        unitPrice: row.sourceKind === 'surcharge' || (term?.show_unit_price_on_invoice ?? subItem?.show_unit_price_on_invoice) === false ? null : row.unitPrice,
         amount: row.amount,
         periodPatternId: subItem?.billing_period_pattern_id ?? surcharge?.billing_period_pattern_id ?? '',
       };
@@ -825,6 +923,7 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
       const surcharge = row.sourceKind === 'surcharge' ? snapshot.building.surcharges.find((item) => item.id === row.sourceId) : undefined;
       const basic = subItem?.kind === 'basic' || (row.sourceKind === 'subItem' && row.unitPrice === null && !row.usage);
       return {
+        meterReadingContractId: row.meterReadingContractId,
         tenantId: row.tenantId, tenantName: row.tenantName, invoiceNo: row.invoiceNo, category: row.category, lineItemId: row.lineItemId, sourceName: row.sourceName,
         usage: basic || row.sourceKind === 'surcharge' ? null : row.usage,
         unit: basic || row.sourceKind === 'surcharge' ? '' : row.usageUnit,

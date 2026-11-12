@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { computeMonth, meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
+import { computeMonth, contractItemBillable, meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
 import { floorLabel, subItemDefaults, type ContractRow, type RoundingMode, type SubItem, type SumMode } from './meterReading.ts';
 import { addDays, type AssetMeter, type Occupancy } from './meterAllocation.ts';
 
@@ -43,7 +43,7 @@ const contractRow = (id: string): ContractRow => ({
   billable: { basic: true, light: true },
   fixedCharges: { basic: 50379 },
   sumMode: { electric: 'aggregate' as SumMode, water: 'aggregate' as SumMode, gas: 'aggregate' as SumMode },
-  amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '', unitIds: [],
+  amountRoundingMode: 'round' as RoundingMode, note: '', splitLabel: '', unitIds: [], billingUnitIds: [],
 });
 const assetMeter = (id: string, code: string, over: Partial<AssetMeter> = {}): AssetMeter => ({
   id, subItemId: 'light', code, label: '', assignments: [{ id: `A-${id}`, unitId: 'U1', from: '1900-01-01', to: null }], usage: 0,
@@ -82,6 +82,12 @@ const rowsOf = (table: string, op: string) => {
 const filtersOf = (table: string, op: string) => calls.find((entry) => entry.table === table && entry.op === op)?.filters;
 const reset = () => { calls.length = 0; };
 
+test('契約区画へ移行前の基本料フラグは請求中として表示する', () => {
+  assert.equal(contractItemBillable(subItem('basic', '基本料', 'basic'), { is_billable: false, fixed_amount: null }), true);
+  assert.equal(contractItemBillable(subItem('basic', '基本料', 'basic'), { is_billable: false, fixed_amount: 0 }), false);
+  assert.equal(contractItemBillable(subItem('light', '電灯', 'custom'), { is_billable: false, fixed_amount: null }), false);
+});
+
 test('検針値は対象月の行として保存される', async () => {
   reset();
   await saveMeterReading(client, 'A1', 2026, 9, snapshot(), snapshot());
@@ -97,15 +103,53 @@ test('検針値は対象月の行として保存される', async () => {
 test('指針入力の小分類は、指針と、指針から求めた使用量を保存する', async () => {
   reset();
   const next = snapshot({ meters: [assetMeter('M1', 'A-1', { usage: 999, previousReading: 1200.5, currentReading: 1500, previousReadingManual: true })] });
+  const base = snapshot();
   next.building.subItems[1] = { ...next.building.subItems[1], inputMode: 'reading' };
-  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
   assert.deepEqual(rowsOf('meter_reading_entry', 'upsert')?.[0], {
     asset_id: 'A1', billing_month: '2026-09-01', asset_meter_id: 'M1', usage_amount: 299.5,
     previous_reading: 1200.5, current_reading: 1500, previous_reading_manual: true, exchange_removed_reading: null, exchange_installed_reading: null,
   });
   assert.equal(rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'light')?.input_mode, 'reading');
-  // 基本料は入力方式を持たないため、使用量のままにします。
-  assert.equal(rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'basic')?.input_mode, 'usage');
+  // 変更していない基本料は書き直しません。
+  assert.equal(rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'basic'), undefined);
+});
+
+test('テナント設定の保存では変更していない小分類を書き直さない', async () => {
+  reset();
+  const base = snapshot();
+  const next = snapshot();
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
+  assert.equal(rowsOf('asset_meter_sub_item', 'upsert'), undefined);
+});
+
+test('未登録の基本料を契約行の小分類設定へ書き込まない', async () => {
+  reset();
+  const base = snapshot();
+  base.persistedSubItemIds = ['light'];
+  const next = snapshot();
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
+  assert.equal(rowsOf('meter_reading_contract_item', 'upsert')?.some((row) => row.asset_meter_sub_item_id === 'basic'), false);
+});
+
+test('請求設定の保存で区画別の毎月定額を書き換えない', async () => {
+  reset();
+  const base = snapshot();
+  base.building.subItems[1] = { ...base.building.subItems[1], isMonthlyFixed: true };
+  base.tenants[0].rows[0].fixedCharges.light = 5000;
+  const next = structuredClone(base);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
+  assert.equal(rowsOf('meter_reading_month_fixed_charge', 'upsert'), undefined);
+});
+
+test('請求設定だけの保存では月次読取値・検針日・メーター割当へ触れない', async () => {
+  reset();
+  await saveMeterReading(client, 'A1', 2026, 11, snapshot(), snapshot(), { settingsOnly: true });
+  const monthlyTables = new Set([
+    'asset_meter', 'asset_meter_unit_assignment', 'meter_reading_month', 'meter_reading_month_surcharge',
+    'meter_reading_month_sub_item', 'meter_reading_entry', 'meter_reading_break',
+  ]);
+  assert.deepEqual(calls.filter((entry) => monthlyTables.has(entry.table)), []);
 });
 
 test('メーター交換の月は、旧・新メーターの使用量を足して保存する', async () => {
@@ -147,6 +191,17 @@ test('基本料は固定額、それ以外は契約単価として保存され�
   assert.deepEqual(items.find((item) => item.asset_meter_sub_item_id === 'light'), { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'light', is_billable: true, unit_price: null, fixed_amount: null });
 });
 
+test('契約基本料を明示的に外した行は、OFFと算出額を一緒に保存する', async () => {
+  reset();
+  const next = snapshot();
+  next.tenants[0].rows[0].billable.basic = false;
+  delete next.tenants[0].rows[0].fixedCharges.basic;
+  await saveMeterReading(client, 'A1', 2026, 9, next, snapshot());
+  const basic = rowsOf('meter_reading_contract_item', 'upsert')?.find((item) => item.asset_meter_sub_item_id === 'basic');
+  assert.deepEqual(basic, { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'basic', is_billable: false, unit_price: null, fixed_amount: 50379 });
+  assert.equal(contractItemBillable(subItem('basic', '基本料', 'basic'), basic as { is_billable: boolean; fixed_amount: number }), false);
+});
+
 test('消えた小分類・契約行だけが削除される', async () => {
   reset();
   const base = snapshot();
@@ -164,9 +219,21 @@ test('メーターは契約行ではなく区画の履歴で保存する（旧�
   reset();
   await saveMeterReading(client, 'A1', 2026, 9, snapshot(), snapshot());
   assert.equal('meter_reading_contract_id' in (rowsOf('asset_meter', 'upsert')?.[0] ?? {}), false);
-  assert.deepEqual(rowsOf('asset_meter_unit_assignment', 'upsert'), [{ asset_meter_unit_assignment_id: 'A-M1', asset_meter_id: 'M1', unit_id: 'U1', effective_from: '1900-01-01', effective_to: null }]);
+  assert.deepEqual(rowsOf('asset_meter_unit_assignment', 'upsert'), [{ asset_meter_unit_assignment_id: 'A-M1', asset_meter_id: 'M1', unit_id: 'U1', lease_contract_billing_unit_id: null, effective_from: '1900-01-01', effective_to: null }]);
   const order = calls.map((entry) => `${entry.table}:${entry.op}`);
   assert.ok(order.indexOf('asset_meter:upsert') < order.indexOf('asset_meter_unit_assignment:upsert'));
+});
+
+test('請求区画のメーター割当は物理区画をnullにして保存する', async () => {
+  reset();
+  const next = snapshot({ meters: [assetMeter('M1', 'A-1', { assignments: [
+    { id: 'A-M1', unitId: 'billing:B-1', from: '1900-01-01', to: null },
+  ] })] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('asset_meter_unit_assignment', 'upsert'), [{
+    asset_meter_unit_assignment_id: 'A-M1', asset_meter_id: 'M1', unit_id: null,
+    lease_contract_billing_unit_id: 'B-1', effective_from: '1900-01-01', effective_to: null,
+  }]);
 });
 
 test('区画を選び直して消えた紐づけは、入れ直す前に削除する', async () => {
@@ -196,6 +263,21 @@ test('分割したテナントだけ分割行の区画を書き込み、外れ�
     { meter_reading_contract_id: 'C2', unit_id: 'U2' },
   ]);
   assert.deepEqual(filtersOf('meter_reading_contract_unit', 'delete'), [['meter_reading_contract_id', 'C3'], ['unit_id', 'U9']]);
+});
+
+test('構成区画が重複する請求区画も、分割行ごとに請求区画IDで保存する', async () => {
+  reset();
+  const next = snapshot({ tenants: [
+    { id: 'T1', name: 'テナント1', splitEnabled: true, rows: [
+      { ...contractRow('C1'), unitIds: ['U1'], billingUnitIds: ['B-A'] },
+      { ...contractRow('C2'), unitIds: ['U1'], billingUnitIds: ['B-C'] },
+    ], invoiceSplitByUnit: false, expected: 0 },
+  ] });
+  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  assert.deepEqual(rowsOf('meter_reading_contract_billing_unit', 'upsert'), [
+    { meter_reading_contract_id: 'C1', lease_contract_billing_unit_id: 'B-A' },
+    { meter_reading_contract_id: 'C2', lease_contract_billing_unit_id: 'B-C' },
+  ]);
 });
 
 test('一覧に居ないテナントが中間検針で出てきたら、保存済みの契約行の設定で加える', () => {
@@ -255,11 +337,12 @@ test('メーターは画面の並び順を保存する', async () => {
 test('変動単価の小分類だけ、決め方・単価の丸めと月次の入力を保存する', async () => {
   reset();
   const next = snapshot();
+  const base = snapshot();
   next.building.subItems[1] = {
     ...next.building.subItems[1], priceMode: 'variable', variablePriceMethod: 'billed', unitPriceRoundingDigits: 3, unitPriceRoundingMode: 'round',
     monthly: { unitPrice: 300, billedInclusive: 110000, billedTax: null, billedExclusive: null, billedUsage: 325 },
   };
-  await saveMeterReading(client, 'A1', 2026, 9, next, next);
+  await saveMeterReading(client, 'A1', 2026, 9, next, base);
   const saved = rowsOf('asset_meter_sub_item', 'upsert')?.find((row) => row.asset_meter_sub_item_id === 'light');
   assert.equal(saved?.variable_price_method, 'billed');
   assert.equal(saved?.unit_price_rounding_digits, 3);
@@ -375,5 +458,15 @@ test('契約情報に基本料が無いテナントには、基本料を請求�
   const next = snapshot();
   next.building.contractBasics = {};
   const basic = computeMonth(next, 2026, 9).results[0].rows[0].categories[0].subItems.find((item) => item.subItem.id === 'basic');
+  assert.equal(basic?.amount, 0);
+});
+
+test('テナント一覧で基本料をオフにした場合は、契約情報に基本料があっても請求しない', () => {
+  const next = snapshot();
+  next.tenants[0].rows[0].billable.basic = false;
+  const month = computeMonth(next, 2026, 9);
+  const row = month.results[0].rows[0];
+  const basic = row.categories[0].subItems.find((item) => item.subItem.id === 'basic');
+  assert.equal(month.contractTenants[0].rows[0].billable.basic, false);
   assert.equal(basic?.amount, 0);
 });

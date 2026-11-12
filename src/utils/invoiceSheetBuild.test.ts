@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildInvoiceSheet, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet } from './invoiceSheet.ts';
+import { buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet } from './invoiceSheet.ts';
 
 const invoiceRow = (invoiceKey: string, tenantId: string, line: string, invoiceNumber = ''): InvoiceRow => {
   const values = Array.from({ length: 21 }, () => ''); values[0] = invoiceNumber; values[11] = line;
@@ -32,6 +32,27 @@ test('保存済み請求書へ、確定後に増えた0円の電気代増額分�
   assert.equal(mergeMissingZeroSurchargeRows(merged, sheet([savedRow, surcharge])).rows.length, 2);
 });
 
+test('データ分割した変動費は検針契約行の請求区画に設定した請求書へ載せる', () => {
+  const assignments = [
+    { lease_contract_unit_id: null, lease_contract_billing_unit_id: 'billing-a', invoice_number: 2 },
+    { lease_contract_unit_id: null, lease_contract_billing_unit_id: 'billing-b', invoice_number: 3 },
+  ];
+  assert.equal(invoiceNumberForUnitAssignments(assignments, [], ['billing-a'], new Map()), 2);
+  assert.equal(invoiceNumberForUnitAssignments(assignments, [], ['billing-b'], new Map()), 3);
+  assert.equal(invoiceNumberForUnitAssignments(assignments, [], [], new Map()), 1);
+});
+
+test('変動費の物理区画IDを請求書分割の契約区画IDへ変換する', () => {
+  const mapping = new Map([
+    ['physical-a', ['lease-a-current', 'lease-a-past']],
+    ['physical-b', ['lease-b']],
+  ]);
+  assert.deepEqual(
+    leaseContractUnitIdsForPhysicalUnits(['physical-a', 'physical-b', 'physical-a'], mapping),
+    ['lease-a-current', 'lease-a-past', 'lease-b'],
+  );
+});
+
 // Supabase のクエリを真似た最小の偽クライアントです。テーブルごとに決めた行を返します。
 function fakeClient(tables: Record<string, unknown[]>, rentRoll: unknown[]): SupabaseClient {
   const query = (data: unknown) => {
@@ -50,6 +71,16 @@ const source = (contractId: string, tenantId: string, rent: number) => ({ unit_i
 const terms = (contractId: string, overrides: Record<string, unknown> = {}) => ({ lease_contract_id: contractId, due_month_offset: 0, due_day_of_month: 0, due_holiday_adjustment: 'previous', period_month_offset: 1, is_annual_billing: false, annual_billing_month: null, annual_start_offset: null, ...overrides });
 const code = (tenantId: string, issue: string) => ({ billing_code_id: `bc-${tenantId}`, tenant_id: tenantId, issue_code: issue, is_primary: true, invoice_display_name: null, invoice_subject: null });
 
+test('請求先コードが1件だけならメイン未設定でも請求書に割り当てる', async () => {
+  const onlyCode = { ...code('A', '4423'), is_primary: false };
+  const row = (await buildInvoiceSheet(
+    fakeClient({ billing_code: [onlyCode], lease_contract: [terms('c1')] }, [source('c1', 'A', 100000)]),
+    'p', '物件', 2026, 10,
+  )).sheet.rows[0];
+  assert.equal(row.values[1], '4423');
+  assert.match(row.invoiceKey, /:bc-A:single$/);
+});
+
 test('既定の条件：当月末日（土日祝は前日）・翌月分', async () => {
   const client = fakeClient({ billing_code: [code('A', '1001')], lease_contract: [terms('c1')] }, [source('c1', 'A', 100000)]);
   const { sheet, termsNotice } = await buildInvoiceSheet(client, 'p', '物件', 2026, 10);
@@ -67,6 +98,58 @@ test('看板契約のその他月額は請求書で看板料として表示す�
   assert.equal(sheet.rows[0].values[11], '看板料');
   assert.equal(sheet.rows[0].values[15], '30,000');
   assert.equal(sheet.rows[0].chargeType, '看板料');
+});
+
+test('分割した固定費は明細項目順を優先し、同じ項目内は分割行順にする', async () => {
+  const first = { ...source('c1', 'A', 90000), monthly_parking_amount: 1000 };
+  const second = source('c2', 'A', 120000);
+  const meterContracts = [
+    { meter_reading_contract_id: 'm1', tenant_id: 'A', row_no: 1, split_items: ['rent'], invoice_note: '12.97坪', units: [{ unit_id: 'u-c2' }] },
+    { meter_reading_contract_id: 'm2', tenant_id: 'A', row_no: 2, split_items: ['rent'], invoice_note: '9.08坪', units: [{ unit_id: 'u-c1' }] },
+  ];
+  const client = fakeClient({ billing_code: [code('A', '1001')], lease_contract: [terms('c1'), terms('c2')], meter_reading_contract: meterContracts }, [first, second]);
+  const rows = (await buildInvoiceSheet(client, 'p', '物件', 2026, 10)).sheet.rows;
+  assert.deepEqual(rows.map((row) => [row.values[11], row.values[15], row.values[20]]), [
+    ['賃料', '120,000', '12.97坪'],
+    ['賃料', '90,000', '9.08坪'],
+    ['駐車料', '1,000', ''],
+  ]);
+});
+
+test('明細項目で独立させた請求書を優先し、その他の明細は区画の請求書へ分ける', async () => {
+  const first = { ...source('c1', 'A', 100000), other_monthly_amount: 1000 };
+  const second = { ...source('c2', 'A', 200000), other_monthly_amount: 2000 };
+  const tables = {
+    billing_code: [code('A', '1001')],
+    lease_contract: [terms('c1'), terms('c2')],
+    lease_contract_unit: [
+      { lease_contract_unit_id: 'lcu1', lease_contract_id: 'c1', unit: { unit_code: '10c1', unit_name: '区画A' } },
+      { lease_contract_unit_id: 'lcu2', lease_contract_id: 'c2', unit: { unit_code: '10c2', unit_name: '区画B' } },
+    ],
+    billing_charge_type: [
+      { billing_charge_type_id: 'rent-type', charge_type_name: '賃料', is_active: true },
+      { billing_charge_type_id: 'other-type', charge_type_name: 'その他月額', is_active: true },
+    ],
+    asset_billing_line_item: [
+      { asset_billing_line_item_id: 'rent-item', billing_charge_type_id: 'rent-type', line_item_name: '賃料', display_name: '賃料' },
+      { asset_billing_line_item_id: 'other-item', billing_charge_type_id: 'other-type', line_item_name: 'その他月額', display_name: 'その他月額' },
+    ],
+    billing_invoice_split_setting: [{
+      billing_code_id: 'bc-A', split_mode: 'line_item_unit', split_count: 3,
+      assignments: [{ asset_billing_line_item_id: 'rent-item', lease_contract_unit_id: null, lease_contract_billing_unit_id: null, invoice_number: 1 }],
+      unitAssignments: [
+        { lease_contract_unit_id: 'lcu1', lease_contract_billing_unit_id: null, invoice_number: 2 },
+        { lease_contract_unit_id: 'lcu2', lease_contract_billing_unit_id: null, invoice_number: 3 },
+      ],
+    }],
+  };
+  const rows = (await buildInvoiceSheet(fakeClient(tables, [first, second]), 'p', '物件', 2026, 10)).sheet.rows;
+  const cards = [...new Set(rows.map((row) => row.invoiceKey))].map((key) => rows.filter((row) => row.invoiceKey === key).map((row) => [row.values[11], row.values[15]]));
+  assert.deepEqual(cards, [
+    [['賃料', '300,000']],
+    [['その他', '1,000']],
+    [['その他', '2,000']],
+  ]);
 });
 
 test('年払い（10月請求・翌月～1年分）：10月は月額×12で1年分、他の月は0円・明細項目1は空白', async () => {
