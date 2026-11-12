@@ -13,10 +13,10 @@ type RentRollSource = { unit_id: string | null; unit_code: string; unit_name: st
 type BillingCode = { billing_code_id: string; tenant_id: string | null; issue_code: string; is_primary: boolean; invoice_display_name: string | null; invoice_subject: string | null };
 export type DuePattern = { billing_due_date_pattern_id: string; pattern_number: number; month_offset: number; day_of_month: number; holiday_adjustment: 'previous' | 'next' };
 type ContractAllocation = { lease_contract_unit_id: string; billing_code_id: string };
-type ContractUnit = { lease_contract_unit_id: string; lease_contract_id: string; unit: { unit_code: string; unit_name: string | null } | { unit_code: string; unit_name: string | null }[] | null };
+type ContractUnit = { lease_contract_unit_id: string; lease_contract_id: string; unit: { unit_id: string; unit_code: string; unit_name: string | null } | { unit_id: string; unit_code: string; unit_name: string | null }[] | null };
 type BillingUnitMember = { lease_contract_billing_unit_id: string; lease_contract_unit_id: string };
 type SplitItem = 'rent' | 'common' | 'storage' | 'variable';
-type MeterContractSplit = { meter_reading_contract_id: string; tenant_id: string; row_no: number; split_items: SplitItem[] | null; invoice_note: string | null; units: Array<{ unit_id: string }> | { unit_id: string } | null };
+type MeterContractSplit = { meter_reading_contract_id: string; tenant_id: string; row_no: number; split_items: SplitItem[] | null; invoice_note: string | null; units: Array<{ unit_id: string }> | { unit_id: string } | null; billingUnits: Array<{ lease_contract_billing_unit_id: string }> | { lease_contract_billing_unit_id: string } | null };
 type LineItemAllocation = { billing_code_id: string; line_item: { asset_billing_line_item_id: string; billing_charge_type_id: string } | null; group: { tenant_id: string | null } | null };
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string };
 type AssetLineItem = { asset_billing_line_item_id: string; billing_charge_type_id: string; line_item_name: string; display_name: string | null };
@@ -24,12 +24,41 @@ type AssetLineItem = { asset_billing_line_item_id: string; billing_charge_type_i
 type MeterLine = { name: string; chargeType: string; invoiceNo: number; usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string; note: string };
 type InvoiceSplitAssignment = { asset_billing_line_item_id: string; lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number | null; billingUnit?: { billing_unit_name: string } | Array<{ billing_unit_name: string }> | null };
 type InvoiceSplitUnitAssignment = { lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number };
-type InvoiceSplitSetting = { billing_code_id: string; split_mode: 'unit' | 'line_item'; assignments: InvoiceSplitAssignment[] | null; unitAssignments: InvoiceSplitUnitAssignment[] | null };
+type InvoiceSplitSetting = { billing_code_id: string; split_mode: 'unit' | 'line_item' | 'line_item_unit'; split_count: number; assignments: InvoiceSplitAssignment[] | null; unitAssignments: InvoiceSplitUnitAssignment[] | null };
 export type PeriodPattern = { billing_period_pattern_id: string; pattern_name: string; start_month_offset: number; start_day_type: string; start_meter_day_offset: number; end_month_offset: number; end_day_type: string; end_meter_day_offset: number };
 
 // 請求書の1行（明細1行）です。values はCSVの列順の値です。
 // chargeType は入金明細・請求明細でどの請求種別の列に入れるか、tenantId・tenantName・floor は明細の行の見出しに使います。
 export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string };
+
+export function invoiceNumberForUnitAssignments(
+  assignments: InvoiceSplitUnitAssignment[],
+  unitIds: Array<string | undefined>,
+  billingUnitIds: Array<string | undefined>,
+  billingUnitsByUnit: ReadonlyMap<string, string[]>,
+): number {
+  for (const billingUnitId of billingUnitIds) {
+    if (!billingUnitId) continue;
+    const direct = assignments.find((assignment) => assignment.lease_contract_billing_unit_id === billingUnitId);
+    if (direct) return direct.invoice_number;
+  }
+  for (const unitId of unitIds) {
+    if (!unitId) continue;
+    const direct = assignments.find((assignment) => assignment.lease_contract_unit_id === unitId);
+    if (direct) return direct.invoice_number;
+    const billingIds = billingUnitsByUnit.get(unitId) ?? [];
+    const billing = assignments.find((assignment) => assignment.lease_contract_billing_unit_id && billingIds.includes(assignment.lease_contract_billing_unit_id));
+    if (billing) return billing.invoice_number;
+  }
+  return 1;
+}
+
+export function leaseContractUnitIdsForPhysicalUnits(
+  physicalUnitIds: Array<string | undefined>,
+  leaseContractUnitIdsByPhysicalUnit: Map<string, string[]>,
+) {
+  return [...new Set(physicalUnitIds.flatMap((unitId) => unitId ? (leaseContractUnitIdsByPhysicalUnit.get(unitId) ?? []) : []))];
+}
 
 // 請求書を1つのカードとして並べ替えます。カード内の明細順は変えず、請求書番号は上から振り直します。
 export function reorderInvoiceCards(rows: InvoiceRow[], invoiceKeys: string[]): InvoiceRow[] {
@@ -168,13 +197,13 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: referenceDate }),
     client.from('billing_code').select('billing_code_id, tenant_id, issue_code, is_primary, invoice_display_name, invoice_subject').eq('property_id', propertyId).eq('is_active', true),
     client.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
-    client.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, unit:unit_master!inner(property_id, unit_code, unit_name)').eq('unit.property_id', propertyId),
+    client.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, unit:unit_master!inner(unit_id, property_id, unit_code, unit_name)').eq('unit.property_id', propertyId),
     client.from('lease_contract_billing_unit_member').select('lease_contract_billing_unit_id, lease_contract_unit_id'),
-    client.from('meter_reading_contract').select('meter_reading_contract_id, tenant_id, row_no, split_items, invoice_note, units:meter_reading_contract_unit(unit_id)').eq('asset_id', propertyId).order('row_no'),
+    client.from('meter_reading_contract').select('meter_reading_contract_id, tenant_id, row_no, split_items, invoice_note, units:meter_reading_contract_unit(unit_id), billingUnits:meter_reading_contract_billing_unit(lease_contract_billing_unit_id)').eq('asset_id', propertyId).order('row_no'),
     client.from('billing_code_line_item_allocation').select('billing_code_id, line_item:asset_billing_line_item(asset_billing_line_item_id, billing_charge_type_id), group:billing_code_allocation_group(tenant_id)'),
     client.from('billing_charge_type').select('billing_charge_type_id, charge_type_name').eq('is_active', true),
     client.from('asset_billing_line_item').select('asset_billing_line_item_id, billing_charge_type_id, line_item_name, display_name').eq('asset_id', propertyId).eq('is_active', true),
-    client.from('billing_invoice_split_setting').select('billing_code_id, split_mode, assignments:billing_invoice_split_assignment(asset_billing_line_item_id, lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number, billingUnit:lease_contract_billing_unit(billing_unit_name)), unitAssignments:billing_invoice_split_unit_assignment(lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number)').eq('asset_id', propertyId),
+    client.from('billing_invoice_split_setting').select('billing_code_id, split_mode, split_count, assignments:billing_invoice_split_assignment(asset_billing_line_item_id, lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number, billingUnit:lease_contract_billing_unit(billing_unit_name)), unitAssignments:billing_invoice_split_unit_assignment(lease_contract_unit_id, lease_contract_billing_unit_id, invoice_number)').eq('asset_id', propertyId),
     client.from('asset_billing_period_pattern').select('billing_period_pattern_id, pattern_name, start_month_offset, start_day_type, start_meter_day_offset, end_month_offset, end_day_type, end_meter_day_offset').eq('asset_id', propertyId).order('sort_order'),
     loadSavedTenantOrder(client, propertyId),
     meterPromise,
@@ -207,7 +236,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     periodRangeByPattern[id] = periodRange(calendarYear, month, pattern, meterData?.meterDates[category]);
     return id;
   };
-  const contractUnits = (unitResult.data ?? []) as unknown as ContractUnit[]; const contractByUnit = new Map(contractUnits.map((unit) => [unit.lease_contract_unit_id, unit.lease_contract_id])); const unitIdBySource = new Map(contractUnits.map((unit) => [`${unit.lease_contract_id}:${firstOf(unit.unit)?.unit_code ?? ''}`, unit.lease_contract_unit_id])); const unitLabelById = new Map(contractUnits.map((unit) => [unit.lease_contract_unit_id, firstOf(unit.unit)?.unit_name || firstOf(unit.unit)?.unit_code || '区画名なし'])); const billingUnitsByUnit = new Map<string, string[]>(); for (const member of (billingUnitMemberResult.data ?? []) as BillingUnitMember[]) billingUnitsByUnit.set(member.lease_contract_unit_id, [...(billingUnitsByUnit.get(member.lease_contract_unit_id) ?? []), member.lease_contract_billing_unit_id]); const codeByContract = new Map<string, BillingCode>(); for (const allocation of (allocationResult.data ?? []) as ContractAllocation[]) { const contractId = contractByUnit.get(allocation.lease_contract_unit_id); const code = codeById.get(allocation.billing_code_id); if (contractId && code) codeByContract.set(contractId, code); }
+  const contractUnits = (unitResult.data ?? []) as unknown as ContractUnit[]; const contractByUnit = new Map(contractUnits.map((unit) => [unit.lease_contract_unit_id, unit.lease_contract_id])); const unitIdBySource = new Map(contractUnits.map((unit) => [`${unit.lease_contract_id}:${firstOf(unit.unit)?.unit_code ?? ''}`, unit.lease_contract_unit_id])); const unitLabelById = new Map(contractUnits.map((unit) => [unit.lease_contract_unit_id, firstOf(unit.unit)?.unit_name || firstOf(unit.unit)?.unit_code || '区画名なし'])); const leaseContractUnitIdsByPhysicalUnit = new Map<string, string[]>(); for (const contractUnit of contractUnits) { const physicalUnitId = firstOf(contractUnit.unit)?.unit_id; if (physicalUnitId) leaseContractUnitIdsByPhysicalUnit.set(physicalUnitId, [...(leaseContractUnitIdsByPhysicalUnit.get(physicalUnitId) ?? []), contractUnit.lease_contract_unit_id]); } const billingUnitsByUnit = new Map<string, string[]>(); for (const member of (billingUnitMemberResult.data ?? []) as BillingUnitMember[]) billingUnitsByUnit.set(member.lease_contract_unit_id, [...(billingUnitsByUnit.get(member.lease_contract_unit_id) ?? []), member.lease_contract_billing_unit_id]); const codeByContract = new Map<string, BillingCode>(); for (const allocation of (allocationResult.data ?? []) as ContractAllocation[]) { const contractId = contractByUnit.get(allocation.lease_contract_unit_id); const code = codeById.get(allocation.billing_code_id); if (contractId && code) codeByContract.set(contractId, code); }
   const splitDefaults: SplitItem[] = ['rent', 'common', 'storage', 'variable'];
   const meterSplitByTenantUnit = new Map<string, { rowNo: number; splitItems: SplitItem[]; note: string }>();
   const meterSplitByContract = new Map<string, { rowNo: number; splitItems: SplitItem[]; note: string }>();
@@ -222,18 +251,10 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   const typeNameById = new Map(((typeResult.data ?? []) as ChargeType[]).map((type) => [type.billing_charge_type_id, type.charge_type_name])); const assetItemById = new Map(((assetItemResult.data ?? []) as AssetLineItem[]).map((item) => [item.asset_billing_line_item_id, item])); const lineItemIdByChargeName = new Map<string, string>(); for (const item of (assetItemResult.data ?? []) as AssetLineItem[]) { const chargeName = typeNameById.get(item.billing_charge_type_id); if (chargeName && !lineItemIdByChargeName.has(chargeName)) lineItemIdByChargeName.set(chargeName, item.asset_billing_line_item_id); } const codeByTenantItem = new Map<string, BillingCode>(); for (const allocation of (lineAllocationResult.data ?? []) as unknown as LineItemAllocation[]) { const code = codeById.get(allocation.billing_code_id); const name = typeNameById.get(allocation.line_item?.billing_charge_type_id ?? ''); if (code && name && allocation.group?.tenant_id) codeByTenantItem.set(`${allocation.group.tenant_id}:${name}`, code); }
   const splitByCode = new Map(((splitResult.data ?? []) as unknown as InvoiceSplitSetting[]).map((setting) => [setting.billing_code_id, setting]));
   // 区画で分ける設定は、区画ごとの請求書番号だけを保存します。未登録の区画は請求書①です。
-  const unitInvoiceNumber = (split: InvoiceSplitSetting | undefined, unitIds: Array<string | undefined>) => {
+  const unitInvoiceNumber = (split: InvoiceSplitSetting | undefined, unitIds: Array<string | undefined>, billingUnitIds: Array<string | undefined> = []) => {
     const assignments = split?.unitAssignments ?? [];
     if (!assignments.length) return 1;
-    for (const unitId of unitIds) {
-      if (!unitId) continue;
-      const direct = assignments.find((assignment) => assignment.lease_contract_unit_id === unitId);
-      if (direct) return direct.invoice_number;
-      const billingIds = billingUnitsByUnit.get(unitId) ?? [];
-      const billing = assignments.find((assignment) => assignment.lease_contract_billing_unit_id && billingIds.includes(assignment.lease_contract_billing_unit_id));
-      if (billing) return billing.invoice_number;
-    }
-    return 1;
+    return invoiceNumberForUnitAssignments(assignments, unitIds, billingUnitIds, billingUnitsByUnit);
   };
   type Invoice = { contractTerms: BillingTerms[]; lineTerms: Map<string, BillingTerms>; lineNotes: Map<string, string>; code: string; tenantName: string; floor: string; displayName: string | null; subject: string | null; unitNames: Set<string>; lines: Map<string, number>; counts: Map<string, number>; meterLines: MeterLine[] };
   const invoices = new Map<string, Invoice>();
@@ -243,7 +264,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
       const amount = Number(source[item.field] ?? 0); if (!amount) continue;
       const itemName = lineItemName(source, item);
       const target = codeByTenantItem.get(`${source.tenant_id}:${itemName}`) ?? (source.lease_contract_id ? codeByContract.get(source.lease_contract_id) : undefined) ?? primaryCodeByTenant.get(source.tenant_id);
-      const split = target ? splitByCode.get(target.billing_code_id) : undefined; const lineItemId = lineItemIdByChargeName.get(itemName); const splitAssignment = split?.assignments?.find((assignment) => assignment.asset_billing_line_item_id === lineItemId); const sourceUnitId = source.lease_contract_id ? unitIdBySource.get(`${source.lease_contract_id}:${source.unit_code}`) : undefined; const splitKey = split?.split_mode === 'unit' ? `invoice:${unitInvoiceNumber(split, [sourceUnitId])}` : split?.split_mode === 'line_item' ? `invoice:${splitAssignment?.invoice_number ?? 1}` : 'single';
+      const split = target ? splitByCode.get(target.billing_code_id) : undefined; const lineItemId = lineItemIdByChargeName.get(itemName); const splitAssignment = split?.assignments?.find((assignment) => assignment.asset_billing_line_item_id === lineItemId); const sourceUnitId = source.lease_contract_id ? unitIdBySource.get(`${source.lease_contract_id}:${source.unit_code}`) : undefined; const splitKey = split?.split_mode === 'unit' ? `invoice:${unitInvoiceNumber(split, [sourceUnitId])}` : split?.split_mode === 'line_item' ? `invoice:${splitAssignment?.invoice_number ?? 1}` : split?.split_mode === 'line_item_unit' ? `invoice:${splitAssignment?.invoice_number ?? unitInvoiceNumber(split, [sourceUnitId])}` : 'single';
       const key = `${source.tenant_id}:${target?.billing_code_id ?? 'unassigned'}:${splitKey}`; const invoice = invoices.get(key) ?? { contractTerms: [], lineTerms: new Map<string, BillingTerms>(), lineNotes: new Map<string, string>(), code: target?.issue_code ?? '未採番', tenantName: source.tenant_name, floor: source.floor_label ?? '', displayName: target?.invoice_display_name ?? null, subject: target?.invoice_subject ?? null, unitNames: new Set<string>(), lines: new Map<string, number>(), counts: new Map<string, number>(), meterLines: [] };
       const assignedUnitLabel = split?.split_mode === 'unit' ? (sourceUnitId ? unitLabelById.get(sourceUnitId) : splitAssignment?.lease_contract_unit_id ? unitLabelById.get(splitAssignment.lease_contract_unit_id) : null) : null; invoice.unitNames.add(assignedUnitLabel ?? ([source.floor_label, source.unit_name ?? source.unit_code].filter(Boolean).join(' ') || source.unit_code)); const sourceTerms = termsOf(source.lease_contract_id); invoice.contractTerms.push(sourceTerms); const meterSplit = source.unit_id ? meterSplitByTenantUnit.get(`${source.tenant_id}:${source.unit_id}`) : undefined; const splitItem: SplitItem | null = source.unit_type === 'warehouse' ? 'storage' : item.field === 'monthly_rent_amount' ? 'rent' : item.field === 'monthly_common_charge_amount' ? 'common' : item.field === 'other_monthly_amount' ? 'storage' : null; const shouldSplit = Boolean(meterSplit && splitItem && meterSplit.splitItems.includes(splitItem)); const fixedLineKey = shouldSplit ? `${itemName}::meter-split:${meterSplit!.rowNo}` : itemName; if (!invoice.lineTerms.has(fixedLineKey)) invoice.lineTerms.set(fixedLineKey, sourceTerms); if (shouldSplit && meterSplit?.note) invoice.lineNotes.set(fixedLineKey, meterSplit.note); invoice.lines.set(fixedLineKey, (invoice.lines.get(fixedLineKey) ?? 0) + amount); if (countedItems.has(itemName)) invoice.counts.set(fixedLineKey, (invoice.counts.get(fixedLineKey) ?? 0) + 1); invoices.set(key, invoice);
     }
@@ -258,10 +279,20 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     const prefix = `${line.tenantId}:${target?.billing_code_id ?? 'unassigned'}:`;
     let splitKey = 'single';
     if (split?.split_mode === 'line_item') splitKey = `invoice:${splitAssignment?.invoice_number ?? 1}`;
+    else if (split?.split_mode === 'line_item_unit' && splitAssignment?.invoice_number) splitKey = `invoice:${splitAssignment.invoice_number}`;
+    else if (split?.split_mode === 'line_item_unit') {
+      const contract = line.meterReadingContractId ? meterContractById.get(line.meterReadingContractId) : undefined;
+      const physicalUnits = contract?.units ? (Array.isArray(contract.units) ? contract.units : [contract.units]).map((unit) => unit.unit_id) : [];
+      const units = leaseContractUnitIdsForPhysicalUnits(physicalUnits, leaseContractUnitIdsByPhysicalUnit);
+      const billingUnits = contract?.billingUnits ? (Array.isArray(contract.billingUnits) ? contract.billingUnits : [contract.billingUnits]).map((unit) => unit.lease_contract_billing_unit_id) : [];
+      splitKey = `invoice:${unitInvoiceNumber(split, units, billingUnits)}`;
+    }
     else if (split?.split_mode === 'unit') {
       const contract = line.meterReadingContractId ? meterContractById.get(line.meterReadingContractId) : undefined;
-      const units = contract?.units ? (Array.isArray(contract.units) ? contract.units : [contract.units]).map((unit) => unit.unit_id) : [];
-      splitKey = `invoice:${unitInvoiceNumber(split, units)}`;
+      const physicalUnits = contract?.units ? (Array.isArray(contract.units) ? contract.units : [contract.units]).map((unit) => unit.unit_id) : [];
+      const units = leaseContractUnitIdsForPhysicalUnits(physicalUnits, leaseContractUnitIdsByPhysicalUnit);
+      const billingUnits = contract?.billingUnits ? (Array.isArray(contract.billingUnits) ? contract.billingUnits : [contract.billingUnits]).map((unit) => unit.lease_contract_billing_unit_id) : [];
+      splitKey = `invoice:${unitInvoiceNumber(split, units, billingUnits)}`;
     }
     const key = `${prefix}${splitKey}`;
     const invoice = invoices.get(key) ?? { contractTerms: [], lineTerms: new Map<string, BillingTerms>(), lineNotes: new Map<string, string>(), code: target?.issue_code ?? '未採番', tenantName: line.tenantName, floor: '', displayName: target?.invoice_display_name ?? null, subject: target?.invoice_subject ?? null, unitNames: new Set<string>(), lines: new Map<string, number>(), counts: new Map<string, number>(), meterLines: [] };

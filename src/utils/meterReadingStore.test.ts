@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { computeMonth, meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
+import { computeMonth, contractItemBillable, meterCodeProblems, saveMeterReading, type MeterReadingSnapshot } from './meterReadingStore.ts';
 import { floorLabel, subItemDefaults, type ContractRow, type RoundingMode, type SubItem, type SumMode } from './meterReading.ts';
 import { addDays, type AssetMeter, type Occupancy } from './meterAllocation.ts';
 
@@ -81,6 +81,12 @@ const rowsOf = (table: string, op: string) => {
 };
 const filtersOf = (table: string, op: string) => calls.find((entry) => entry.table === table && entry.op === op)?.filters;
 const reset = () => { calls.length = 0; };
+
+test('契約区画へ移行前の基本料フラグは請求中として表示する', () => {
+  assert.equal(contractItemBillable(subItem('basic', '基本料', 'basic'), { is_billable: false, fixed_amount: null }), true);
+  assert.equal(contractItemBillable(subItem('basic', '基本料', 'basic'), { is_billable: false, fixed_amount: 0 }), false);
+  assert.equal(contractItemBillable(subItem('light', '電灯', 'custom'), { is_billable: false, fixed_amount: null }), false);
+});
 
 test('検針値は対象月の行として保存される', async () => {
   reset();
@@ -183,6 +189,17 @@ test('基本料は固定額、それ以外は契約単価として保存され�
   const items = rowsOf('meter_reading_contract_item', 'upsert') ?? [];
   assert.deepEqual(items.find((item) => item.asset_meter_sub_item_id === 'basic'), { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'basic', is_billable: true, unit_price: null, fixed_amount: 50379 });
   assert.deepEqual(items.find((item) => item.asset_meter_sub_item_id === 'light'), { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'light', is_billable: true, unit_price: null, fixed_amount: null });
+});
+
+test('契約基本料を明示的に外した行は、OFFと算出額を一緒に保存する', async () => {
+  reset();
+  const next = snapshot();
+  next.tenants[0].rows[0].billable.basic = false;
+  delete next.tenants[0].rows[0].fixedCharges.basic;
+  await saveMeterReading(client, 'A1', 2026, 9, next, snapshot());
+  const basic = rowsOf('meter_reading_contract_item', 'upsert')?.find((item) => item.asset_meter_sub_item_id === 'basic');
+  assert.deepEqual(basic, { meter_reading_contract_id: 'C1', asset_meter_sub_item_id: 'basic', is_billable: false, unit_price: null, fixed_amount: 50379 });
+  assert.equal(contractItemBillable(subItem('basic', '基本料', 'basic'), basic as { is_billable: boolean; fixed_amount: number }), false);
 });
 
 test('消えた小分類・契約行だけが削除される', async () => {

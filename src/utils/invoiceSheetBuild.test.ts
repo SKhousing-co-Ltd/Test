@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildInvoiceSheet, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet } from './invoiceSheet.ts';
+import { buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet } from './invoiceSheet.ts';
 
 const invoiceRow = (invoiceKey: string, tenantId: string, line: string, invoiceNumber = ''): InvoiceRow => {
   const values = Array.from({ length: 21 }, () => ''); values[0] = invoiceNumber; values[11] = line;
@@ -30,6 +30,27 @@ test('保存済み請求書へ、確定後に増えた0円の電気代増額分�
   const merged = mergeMissingZeroSurchargeRows(sheet([savedRow]), sheet([savedRow, surcharge]));
   assert.deepEqual(merged.rows.map((row) => [row.values[11], row.values[15]]), [['電気代', '1,000'], ['電気代増額分', '0']]);
   assert.equal(mergeMissingZeroSurchargeRows(merged, sheet([savedRow, surcharge])).rows.length, 2);
+});
+
+test('データ分割した変動費は検針契約行の請求区画に設定した請求書へ載せる', () => {
+  const assignments = [
+    { lease_contract_unit_id: null, lease_contract_billing_unit_id: 'billing-a', invoice_number: 2 },
+    { lease_contract_unit_id: null, lease_contract_billing_unit_id: 'billing-b', invoice_number: 3 },
+  ];
+  assert.equal(invoiceNumberForUnitAssignments(assignments, [], ['billing-a'], new Map()), 2);
+  assert.equal(invoiceNumberForUnitAssignments(assignments, [], ['billing-b'], new Map()), 3);
+  assert.equal(invoiceNumberForUnitAssignments(assignments, [], [], new Map()), 1);
+});
+
+test('変動費の物理区画IDを請求書分割の契約区画IDへ変換する', () => {
+  const mapping = new Map([
+    ['physical-a', ['lease-a-current', 'lease-a-past']],
+    ['physical-b', ['lease-b']],
+  ]);
+  assert.deepEqual(
+    leaseContractUnitIdsForPhysicalUnits(['physical-a', 'physical-b', 'physical-a'], mapping),
+    ['lease-a-current', 'lease-a-past', 'lease-b'],
+  );
 });
 
 // Supabase のクエリを真似た最小の偽クライアントです。テーブルごとに決めた行を返します。
@@ -82,6 +103,42 @@ test('分割した固定費は明細項目順を優先し、同じ項目内は�
     ['賃料', '120,000', '12.97坪'],
     ['賃料', '90,000', '9.08坪'],
     ['駐車料', '1,000', ''],
+  ]);
+});
+
+test('明細項目で独立させた請求書を優先し、その他の明細は区画の請求書へ分ける', async () => {
+  const first = { ...source('c1', 'A', 100000), other_monthly_amount: 1000 };
+  const second = { ...source('c2', 'A', 200000), other_monthly_amount: 2000 };
+  const tables = {
+    billing_code: [code('A', '1001')],
+    lease_contract: [terms('c1'), terms('c2')],
+    lease_contract_unit: [
+      { lease_contract_unit_id: 'lcu1', lease_contract_id: 'c1', unit: { unit_code: '10c1', unit_name: '区画A' } },
+      { lease_contract_unit_id: 'lcu2', lease_contract_id: 'c2', unit: { unit_code: '10c2', unit_name: '区画B' } },
+    ],
+    billing_charge_type: [
+      { billing_charge_type_id: 'rent-type', charge_type_name: '賃料', is_active: true },
+      { billing_charge_type_id: 'other-type', charge_type_name: 'その他月額', is_active: true },
+    ],
+    asset_billing_line_item: [
+      { asset_billing_line_item_id: 'rent-item', billing_charge_type_id: 'rent-type', line_item_name: '賃料', display_name: '賃料' },
+      { asset_billing_line_item_id: 'other-item', billing_charge_type_id: 'other-type', line_item_name: 'その他月額', display_name: 'その他月額' },
+    ],
+    billing_invoice_split_setting: [{
+      billing_code_id: 'bc-A', split_mode: 'line_item_unit', split_count: 3,
+      assignments: [{ asset_billing_line_item_id: 'rent-item', lease_contract_unit_id: null, lease_contract_billing_unit_id: null, invoice_number: 1 }],
+      unitAssignments: [
+        { lease_contract_unit_id: 'lcu1', lease_contract_billing_unit_id: null, invoice_number: 2 },
+        { lease_contract_unit_id: 'lcu2', lease_contract_billing_unit_id: null, invoice_number: 3 },
+      ],
+    }],
+  };
+  const rows = (await buildInvoiceSheet(fakeClient(tables, [first, second]), 'p', '物件', 2026, 10)).sheet.rows;
+  const cards = [...new Set(rows.map((row) => row.invoiceKey))].map((key) => rows.filter((row) => row.invoiceKey === key).map((row) => [row.values[11], row.values[15]]));
+  assert.deepEqual(cards, [
+    [['賃料', '300,000']],
+    [['その他', '1,000']],
+    [['その他', '2,000']],
   ]);
 });
 

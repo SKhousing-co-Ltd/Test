@@ -73,6 +73,12 @@ type ContractRowRecord = {
   split_items: Array<'rent' | 'common' | 'storage' | 'variable'> | null; invoice_note: string | null;
 };
 type ContractItemRow = { meter_reading_contract_id: string; asset_meter_sub_item_id: string; is_billable: boolean; unit_price: number | null; fixed_amount: number | null };
+
+// 基本料を契約区画へ移す前のデータには、is_billable=false のまま固定額が
+// 保存されていない行があります。現在は契約区画の基本料が請求の根拠なので、
+// その旧形式だけは既定の「請求する」として読み込みます。
+export const contractItemBillable = (subItem: Pick<SubItem, 'kind'>, item?: Pick<ContractItemRow, 'is_billable' | 'fixed_amount'>) =>
+  item ? (subItem.kind === 'basic' && item.fixed_amount == null ? true : item.is_billable) : true;
 type MonthlyFixedChargeRow = { billing_month: string; meter_reading_contract_id: string; lease_contract_unit_id: string | null; asset_meter_sub_item_id: string; amount: number };
 type MeterRow = { asset_meter_id: string; asset_id: string; asset_meter_sub_item_id: string; meter_code: string; meter_label: string | null; is_active: boolean };
 type AssignmentRow = { asset_meter_unit_assignment_id: string; asset_meter_id: string; unit_id: string | null; lease_contract_billing_unit_id: string | null; effective_from: string; effective_to: string | null };
@@ -296,9 +302,9 @@ export async function loadMeterReading(client: SupabaseClient, assetId: string, 
     const fixedCharges: Record<string, number> = {};
     for (const subItem of subItems) {
       const found = items.find((row) => row.asset_meter_sub_item_id === subItem.id);
-      // 請求有無が未登録の既存テナントは、従来どおり請求する扱いにします。
-      // 画面で基本料をオフにした後は保存された is_billable=false を使用します。
-      billable[subItem.id] = found ? found.is_billable : true;
+      // 請求有無が未登録の既存テナントと、契約区画への移行前の基本料は
+      // 現在の請求状態に合わせて「請求する」として読み込みます。
+      billable[subItem.id] = contractItemBillable(subItem, found);
       if (found?.fixed_amount !== null && found?.fixed_amount !== undefined) fixedCharges[subItem.id] = Number(found.fixed_amount);
       if (subItem.isMonthlyFixed) {
         const inherited = latestMonthlyFixed.get(`${record.meter_reading_contract_id}|${subItem.id}`);
@@ -673,12 +679,16 @@ export async function saveMeterReading(
 
   // 5. 契約行ごとの小分類設定
   const subItemIds = new Set(next.building.subItems.map((row) => row.id));
+  // 基本料の金額は契約区画から算出されるため、編集用の tenants には入っていないことがあります。
+  // 算出後の金額も保存し、旧データの false とユーザーが明示的に外した false を再読込時に区別します。
+  const effectiveRows = new Map(computeMonth(next, year, month).contractTenants
+    .flatMap((tenant) => tenant.rows.map((row) => [row.id, row] as const)));
   check(await client.from('meter_reading_contract_item').upsert(next.tenants.flatMap((tenant) => tenant.rows.flatMap((row) =>
     next.building.subItems.filter((subItem) => persistedSubItemIds.has(subItem.id)).map((subItem) => ({
       meter_reading_contract_id: row.id, asset_meter_sub_item_id: subItem.id,
       is_billable: row.billable[subItem.id] ?? false,
       unit_price: null,
-      fixed_amount: subItem.kind === 'basic' ? row.fixedCharges[subItem.id] ?? null : null,
+      fixed_amount: subItem.kind === 'basic' ? effectiveRows.get(row.id)?.fixedCharges[subItem.id] ?? row.fixedCharges[subItem.id] ?? null : null,
     })),
   ))), '契約行の小分類設定');
 
