@@ -17,6 +17,7 @@ type ParkingFacility = {
 };
 
 export type ParkingCurrentRow = {
+  unit_type?: string;
   snapshot_as_of_date: string;
   space_status: ParkingSpaceStatus;
   property_id: string;
@@ -55,8 +56,6 @@ export type ParkingCurrentRow = {
   chassis_number: string | null;
   vehicle_effective_from: string | null;
 };
-
-type BicycleLedgerRow = { unit_id: string; unit_code: string; unit_name: string | null; lease_contract_id: string | null; contract_start_date: string | null; contract_end_date: string | null; tenant_name: string | null; monthly_total_amount: number | null };
 
 type VehicleHistory = {
   parking_vehicle_history_id: string;
@@ -98,7 +97,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const [facilities, setFacilities] = useState<ParkingFacility[]>([]);
   const [parkingTypes, setParkingTypes] = useState<ParkingType[]>([]);
   const [rows, setRows] = useState<ParkingCurrentRow[]>([]);
-  const [bicycleRows, setBicycleRows] = useState<BicycleLedgerRow[]>([]);
+  const [ledgerType, setLedgerType] = useState<'parking' | 'bicycle_parking'>('parking');
   const [propertyId, setPropertyId] = useState('');
   const [asOfDate, setAsOfDate] = useState(today);
   const [scopeFilter, setScopeFilter] = useState<'all' | ParkingScope | 'vacant' | 'unavailable'>('all');
@@ -138,12 +137,16 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       p_property_id: nextPropertyId,
       p_as_of_date: nextAsOfDate,
     });
-    const bicycleResult = await supabase.rpc('rent_roll_list_with_terms_at_date', { p_property_id: nextPropertyId, p_as_of_date: nextAsOfDate });
-    if (bicycleResult.error) setError(`駐輪場契約を読み込めませんでした: ${bicycleResult.error.message}`);
-    else setBicycleRows(((bicycleResult.data ?? []) as Array<BicycleLedgerRow & { unit_type?: string }>).filter((row) => row.unit_type === 'bicycle_parking' && Boolean(row.lease_contract_id)));
     if (loadError) setError(`駐車場台帳を読み込めませんでした: ${loadError.message}`);
     else {
       const baseRows = (data ?? []) as unknown as ParkingCurrentRow[];
+      const unitIds = [...new Set(baseRows.map((row) => row.unit_id))];
+      const unitResults = await Promise.all(Array.from({ length: Math.ceil(unitIds.length / 200) }, (_, index) =>
+        supabase!.from('unit_master').select('unit_id, unit_type').in('unit_id', unitIds.slice(index * 200, (index + 1) * 200))));
+      const unitError = unitResults.find((result) => result.error)?.error;
+      if (unitError) { setError(`区画種別を読み込めませんでした: ${unitError.message}`); setRows([]); setLoading(false); return; }
+      const unitTypes = new Map(unitResults.flatMap((result) => result.data ?? []).map((unit) => [unit.unit_id, unit.unit_type]));
+      if (unitIds.some((id) => !unitTypes.has(id))) { setError('一部の区画種別を確認できません。再読み込みしてください。'); setRows([]); setLoading(false); return; }
       const contractIds = [...new Set(baseRows.map((row) => row.lease_contract_id).filter((id): id is string => Boolean(id)))];
       const pendingResult = nextAsOfDate < today || !contractIds.length
         ? { data: [], error: null }
@@ -174,12 +177,13 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             : null;
           return {
             ...row,
+            unit_type: unitTypes.get(row.unit_id),
             termination_in_progress: Boolean(workflow),
             termination_scheduled: Boolean(futureTerminationDate || futureContractEndDate),
             termination_date: futureTerminationDate ?? futureContractEndDate,
           };
         }));
-        setError(bicycleResult.error ? `駐輪場契約を読み込めませんでした: ${bicycleResult.error.message}` : '');
+        setError('');
       }
     }
     setLoading(false);
@@ -207,21 +211,21 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     if (!targetContractUnitId) return;
     const target = rows.find((row) => row.lease_contract_unit_id === targetContractUnitId);
-    if (target) { setSelected(target); setDetailOpen(true); }
+    if (target) { setLedgerType(target.unit_type === 'bicycle_parking' ? 'bicycle_parking' : 'parking'); setSelected(target); setDetailOpen(true); }
   }, [rows, targetContractUnitId]);
 
   useEffect(() => {
-    if (!supabase || !selected?.lease_contract_unit_id) { setVehicleHistory([]); return; }
+    if (!supabase || !selected?.lease_contract_unit_id || selected.unit_type === 'bicycle_parking') { setVehicleHistory([]); return; }
     void supabase.from('parking_vehicle_history')
       .select('parking_vehicle_history_id, vehicle_model, registration_number, chassis_number, effective_from, effective_to, source_notes')
       .eq('lease_contract_unit_id', selected.lease_contract_unit_id)
       .order('effective_from', { ascending: false })
       .then(({ data }) => setVehicleHistory((data ?? []) as VehicleHistory[]));
-  }, [selected?.lease_contract_unit_id]);
+  }, [selected?.lease_contract_unit_id, selected?.unit_type]);
 
   const propertyFacilities = useMemo(
-    () => facilities.filter((facility) => facility.property_id === propertyId),
-    [facilities, propertyId],
+    () => { const ids = new Set(rows.filter((row) => row.unit_type === ledgerType).map((row) => row.parking_facility_id)); return facilities.filter((facility) => facility.property_id === propertyId && ids.has(facility.parking_facility_id)); },
+    [facilities, propertyId, rows, ledgerType],
   );
 
   const propertyParkingTypes = useMemo(() => {
@@ -232,6 +236,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const filteredRows = useMemo(() => {
     const normalized = query.normalize('NFKC').toLocaleLowerCase('ja-JP').trim();
     return rows.filter((row) => {
+      if (row.unit_type !== ledgerType) return false;
       const matchesFacility = facilityFilter === 'all' || row.parking_facility_id === facilityFilter;
       const matchesParkingType = parkingTypeFilter === 'all' || String(row.parking_type_id ?? '') === parkingTypeFilter;
       const matchesScope = scopeFilter === 'all'
@@ -239,12 +244,12 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
           ? row.space_status === scopeFilter
           : row.space_status === 'occupied' && row.parking_scope === scopeFilter);
       const matchesQuery = !normalized || [row.space_number, row.unit_code, row.facility_name, row.parking_type_name, row.tenant_name,
-        row.access_code, row.vehicle_model, row.registration_number, row.chassis_number]
+        ...(ledgerType === 'parking' ? [row.access_code, row.vehicle_model, row.registration_number, row.chassis_number] : [])]
         .some((value) => value?.normalize('NFKC').toLocaleLowerCase('ja-JP').includes(normalized));
       return matchesFacility && matchesParkingType && matchesScope && matchesQuery;
     }).sort((left, right) => collator.compare(left.facility_name, right.facility_name)
       || collator.compare(left.space_number, right.space_number));
-  }, [facilityFilter, parkingTypeFilter, query, rows, scopeFilter]);
+  }, [facilityFilter, parkingTypeFilter, query, rows, scopeFilter, ledgerType]);
 
   const summary = useMemo(() => ({
     total: filteredRows.length,
@@ -269,23 +274,27 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
 
     </div>
 
+    <div className="parking-ledger-tabs" role="tablist" aria-label="台帳の種別">
+      {([['parking', '駐車場'], ['bicycle_parking', '駐輪場']] as const).map(([type, label]) => <button key={type} type="button" role="tab" aria-selected={ledgerType === type} className={ledgerType === type ? 'active' : ''} onClick={() => { setLedgerType(type); setFacilityFilter('all'); setParkingTypeFilter('all'); setSelected(null); setDetailOpen(false); }}>{label}</button>)}
+    </div>
+
     <div className="parking-toolbar">
       <label>物件<select value={propertyId} onChange={(event) => changeProperty(event.target.value)}>
         {properties.map((property) => <option key={property.asset_id} value={property.asset_id}>{property.short_name || property.asset_name}</option>)}
       </select></label>
-      <label>駐車場<select value={facilityFilter} onChange={(event) => { setFacilityFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
-        <option value="all">すべての駐車場</option>
+      <label>施設<select value={facilityFilter} onChange={(event) => { setFacilityFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
+        <option value="all">すべての施設</option>
         {propertyFacilities.map((facility) => <option key={facility.parking_facility_id} value={facility.parking_facility_id}>{facility.facility_code}｜{facility.facility_name}</option>)}
       </select></label>
-      <label>駐車場種別<select value={parkingTypeFilter} onChange={(event) => { setParkingTypeFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
+      {ledgerType === 'parking' && <label>駐車場種別<select value={parkingTypeFilter} onChange={(event) => { setParkingTypeFilter(event.target.value); setSelected(null); setDetailOpen(false); }}>
         <option value="all">すべての種別</option>
         {propertyParkingTypes.map((type) => <option key={type.parking_type_id} value={String(type.parking_type_id)}>{type.parking_type_name}</option>)}
-      </select></label>
+      </select></label>}
       <label>基準日<input type="date" value={asOfDate} onChange={(event) => { setAsOfDate(event.target.value); setSelected(null); setDetailOpen(false); }} /></label>
       <label>状態・契約区分<select value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value as typeof scopeFilter)}>
         <option value="all">すべて</option><option value="internal">内部契約</option><option value="external">外部契約</option><option value="vacant">空き枠</option><option value="unavailable">使用不可</option>
       </select></label>
-      <label className="parking-search">検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="枠番、駐車場、テナント、車両番号" /></label>
+      <label className="parking-search">検索<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ledgerType === 'parking' ? '枠番、施設、テナント、車両番号' : '枠番、施設、テナント'} /></label>
     </div>
 
     {error ? <p className="parking-notice">{error}</p> : null}
@@ -296,28 +305,19 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       <div><span>使用不可</span><strong>{summary.unavailable}</strong></div>
     </div>
 
-    <section className="parking-panel" aria-label="駐輪場契約一覧">
-      <header><div><h3>バイク・自転車の契約</h3><p>{bicycleRows.length} 件</p></div></header>
-      <div className="parking-table-wrap"><table className="parking-table"><thead><tr><th>区画</th><th>設備名</th><th>テナント</th><th>契約開始日</th><th>契約終了日</th><th>月額</th></tr></thead><tbody>
-        {bicycleRows.map((row) => { const parkingRow = rows.find((entry) => entry.unit_id === row.unit_id && entry.lease_contract_id === row.lease_contract_id); return <tr key={row.unit_id}><td><strong>{row.unit_code}</strong></td><td>{row.unit_name || '駐輪場'}</td><td>{row.tenant_name || '—'}</td><td>{row.contract_start_date || '—'}</td><td>{row.contract_end_date || '継続中'}</td><td>{parkingRow?.parking_fee_effective_from ? `${Number(parkingRow.monthly_parking_fee).toLocaleString('ja-JP')} 円` : '未設定'}</td></tr>; })}
-        {!loading && bicycleRows.length === 0 && <tr><td colSpan={6} className="parking-empty">基準日時点のバイク・自転車契約はありません。</td></tr>}
-      </tbody></table></div>
-    </section>
-
     <div className="parking-layout">
       <div className="parking-panel">
-        <header><div><h3>{selectedProperty?.asset_name ?? '物件を選択'}</h3><p>{loading ? '読み込み中…' : `${filteredRows.length} / ${rows.length} 枠を表示`}</p></div></header>
+        <header><div><h3>{selectedProperty?.asset_name ?? '物件を選択'}（{ledgerType === 'parking' ? '駐車場' : '駐輪場'}）</h3><p>{loading ? '読み込み中…' : `${filteredRows.length} / ${rows.filter((row) => row.unit_type === ledgerType).length} 枠を表示`}</p></div></header>
         <div className="parking-table-wrap"><table className="parking-table">
-          <thead><tr><th>状態</th><th>枠番</th><th>内外</th><th>テナント</th><th>月額駐車料</th><th>暗証番号</th><th>車種</th><th>車両番号</th><th>車台番号</th><th>主契約</th></tr></thead>
+          <thead><tr><th>状態</th><th>枠番</th><th>内外</th><th>テナント</th>{ledgerType === 'bicycle_parking' && <><th>契約開始日</th><th>契約終了日</th></>}<th>月額駐車料</th>{ledgerType === 'parking' && <><th>暗証番号</th><th>車種</th><th>車両番号</th><th>車台番号</th></>}<th>主契約</th></tr></thead>
           <tbody>
-            {loading ? <tr><td colSpan={10} className="parking-empty">駐車場・駐輪場台帳を読み込んでいます。</td></tr> : null}
-            {!loading && !filteredRows.length ? <tr><td colSpan={10} className="parking-empty">条件に一致する駐車枠がありません。</td></tr> : null}
+            {loading ? <tr><td colSpan={ledgerType === 'parking' ? 10 : 8} className="parking-empty">台帳を読み込んでいます。</td></tr> : null}
+            {!loading && !filteredRows.length ? <tr><td colSpan={ledgerType === 'parking' ? 10 : 8} className="parking-empty">条件に一致する枠がありません。</td></tr> : null}
             {!loading ? filteredRows.map((row) => <tr key={row.unit_id} className={selected?.unit_id === row.unit_id ? 'selected' : ''} onClick={() => { setSelected(row); setDetailOpen(false); }}>
               <td><span className={`parking-state ${row.termination_scheduled ? 'scheduled' : row.space_status}`}>{parkingRowStatusLabel(row)}</span>{row.termination_scheduled && row.termination_date ? <small className="rent-roll-incoming-note">{formatJapaneseDate(row.termination_date)}{row.termination_in_progress ? '（手続き中）' : ''}</small> : null}</td>
               <td><strong>{row.space_number}</strong><small>{row.facility_name}{row.parking_type_name ? ` / ${row.parking_type_name}` : ''}</small></td>
               <td>{row.parking_scope === 'internal' ? '内部' : row.parking_scope === 'external' ? '外部' : '—'}</td>
-              <td>{row.tenant_name || '—'}</td><td>{row.space_status !== 'occupied' ? '—' : row.parking_fee_effective_from ? `${row.monthly_parking_fee.toLocaleString('ja-JP')}円` : <Link to={`/change-requests?parking=${encodeURIComponent(row.lease_contract_unit_id ?? '')}`} onClick={(event) => event.stopPropagation()}>未設定（対応依頼）</Link>}</td><td className="access-code">{row.access_code || '—'}</td>
-              <td>{row.vehicle_model || '—'}</td><td>{row.registration_number || '—'}</td><td>{row.chassis_number || '—'}</td>
+              <td>{row.tenant_name || '—'}</td>{ledgerType === 'bicycle_parking' && <><td>{row.contract_start_date || '—'}</td><td>{row.space_status === 'occupied' ? row.contract_end_date || '継続中' : '—'}</td></>}<td>{row.space_status !== 'occupied' ? '—' : row.parking_fee_effective_from ? `${row.monthly_parking_fee.toLocaleString('ja-JP')}円` : <Link to={`/change-requests?parking=${encodeURIComponent(row.lease_contract_unit_id ?? '')}`} onClick={(event) => event.stopPropagation()}>未設定（対応依頼）</Link>}</td>{ledgerType === 'parking' && <><td className="access-code">{row.access_code || '—'}</td><td>{row.vehicle_model || '—'}</td><td>{row.registration_number || '—'}</td><td>{row.chassis_number || '—'}</td></>}
               <td>{row.main_lease_contract_id ? <span title={row.main_lease_contract_id}>事務所契約</span> : '—'}</td>
             </tr>) : null}
           </tbody>
@@ -328,8 +328,8 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
         {selected ? <>
           <header><div><p>SPACE</p><h3>枠 {selected.space_number}</h3></div><button onClick={() => { setSelected(null); setDetailOpen(false); }} aria-label="詳細を閉じる">×</button></header>
           <dl>
-            <div><dt>駐車場</dt><dd>{selected.facility_name}</dd></div>
-            <div><dt>種別</dt><dd>{selected.parking_type_name || '—'}</dd></div>
+            <div><dt>施設</dt><dd>{selected.facility_name}</dd></div>
+            {ledgerType === 'parking' && <div><dt>種別</dt><dd>{selected.parking_type_name || '—'}</dd></div>}
             <div><dt>状態</dt><dd>{parkingRowStatusLabel(selected)}{selected.termination_scheduled && selected.termination_date ? <small className="rent-roll-incoming-note">{formatJapaneseDate(selected.termination_date)}{selected.termination_in_progress ? '（手続き中）' : ''}</small> : null}</dd></div>
             <div><dt>区分</dt><dd>{selected.parking_scope === 'internal' ? '内部' : selected.parking_scope === 'external' ? '外部' : '—'}</dd></div>
             <div><dt>契約者</dt><dd>{selected.tenant_name || '—'}</dd></div>
@@ -337,15 +337,15 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
             <div><dt>所在</dt><dd>{selected.tenant_location_label || '—'}</dd></div>
             <div><dt>子契約期間</dt><dd>{displayDate(selected.contract_start_date)} ～ {displayDate(selected.contract_end_date)}</dd></div>
             <div><dt>主契約期間</dt><dd>{selected.main_lease_contract_id ? `${displayDate(selected.main_contract_start_date)} ～ ${displayDate(selected.main_contract_end_date)}` : '—'}</dd></div>
-            <div><dt>暗証番号</dt><dd className="access-code">{selected.access_code || '—'}</dd></div>
+            {ledgerType === 'parking' && <div><dt>暗証番号</dt><dd className="access-code">{selected.access_code || '—'}</dd></div>}
             <div><dt>備考</dt><dd>{selected.notes || '—'}</dd></div>
           </dl>
           <button className="parking-detail-more" onClick={() => setDetailOpen(true)}>詳細を見る</button>
-          <section><h4>車両履歴</h4>{vehicleHistory.length ? <ol>{vehicleHistory.map((vehicle) => <li key={vehicle.parking_vehicle_history_id}>
+          {ledgerType === 'parking' && <section><h4>車両履歴</h4>{vehicleHistory.length ? <ol>{vehicleHistory.map((vehicle) => <li key={vehicle.parking_vehicle_history_id}>
             <strong>{vehicle.vehicle_model || '車種未設定'}</strong><span>{vehicle.registration_number || '番号未設定'} / {vehicle.chassis_number || '車台番号未設定'}</span>
             <small>{displayDate(vehicle.effective_from)} ～ {displayDate(vehicle.effective_to)}</small>
-          </li>)}</ol> : <p>登録された車両履歴はありません。</p>}</section>
-        </> : <div className="parking-detail-empty"><strong>枠を選択</strong><p>駐車場・契約・暗証番号・車両履歴を確認できます。</p></div>}
+          </li>)}</ol> : <p>登録された車両履歴はありません。</p>}</section>}
+        </> : <div className="parking-detail-empty"><strong>枠を選択</strong><p>施設と契約の詳細を確認できます。</p></div>}
       </aside>
     </div>
 

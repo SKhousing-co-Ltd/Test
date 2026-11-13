@@ -3691,6 +3691,16 @@ td small {
   color: #245c98;
   background: #eef6ff;
 }
+.rent-roll-product-options label.unavailable {
+  border-color: #e3e7eb;
+  color: #a5adb7;
+  background: #f0f2f4;
+  cursor: not-allowed;
+}
+.rent-roll-product-options label.unavailable small {
+  color: #a5adb7;
+  background: #e5e8eb;
+}
 .rent-roll-product-options input {
   width: 14px;
   height: 14px;
@@ -4163,6 +4173,9 @@ td small {
   color: #748399;
   font-size: 12px;
 }
+.parking-ledger-tabs { display: flex; gap: 8px; margin: 0 0 12px; }
+.parking-ledger-tabs button { padding: 9px 20px; border: 1px solid #c8d6e5; border-radius: 6px; background: #fff; color: #526980; font-weight: 700; }
+.parking-ledger-tabs button.active { border-color: #2563a4; background: #2563a4; color: #fff; }
 .parking-toolbar {
   display: flex;
   align-items: end;
