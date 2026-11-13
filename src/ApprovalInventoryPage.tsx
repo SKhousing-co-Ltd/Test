@@ -19,7 +19,7 @@ export function ApprovalInventoryPage() {
       const result = await supabase.rpc('list_approval_inventory').range(offset, offset + 499);
       if (result.error) { setError(result.error.message); setLoading(false); return; }
       const batch = (result.data ?? []) as Row[];
-      all.push(...batch.filter(row => !/^(SK-SHU-|SK-BU-)/i.test((row.ringi_number ?? '').trim())));
+      all.push(...batch.filter(row => !/^(SK-SHU-|SK-BU-|SK-TE-)/i.test((row.ringi_number ?? '').trim())));
       if (batch.length < 500) break;
     }
     setRows(all); setLoading(false);
