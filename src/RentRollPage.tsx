@@ -10,6 +10,7 @@ import {
   type ProductCategory,
 } from "./lib/product-categories";
 import { supabase } from "./lib/supabase";
+import { classifyRentRollEnd } from "./utils/rentRollStatus";
 
 type RentRollStatus =
   | "occupied"
@@ -113,6 +114,8 @@ type RentRollRow = {
   terminationScheduled?: boolean;
   terminationInProgress?: boolean;
   terminationDate?: string;
+  fixedTermEndDate?: string;
+  unitEndDate?: string;
   snapshotAsOfDate?: string;
   incomingContracts?: RentRollSource["incoming_contracts"];
 };
@@ -268,17 +271,14 @@ function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
     (incoming) => incoming.contract_start_date > asOfDate,
   );
   const inProgressTermination = source.pending_terminations?.[0] ?? null;
-  const futureTermination =
-    source.pending_terminations?.find(
-      (termination) => termination.termination_date > asOfDate,
-    ) ?? null;
-  const futureContractEndDate = [
-    source.actual_end_date,
-    source.lease_end_date,
-    source.lease_term_type === "fixed_term" ? source.contract_end_date : null,
-  ]
-    .filter((date): date is string => !!date && date > asOfDate)
-    .sort()[0] ?? null;
+  const endInfo = classifyRentRollEnd({
+    actualEndDate: source.actual_end_date,
+    leaseEndDate: source.lease_end_date,
+    contractEndDate: source.contract_end_date,
+    leaseTermType: source.lease_term_type,
+    terminationNote: Boolean(source.contract_notes?.includes("解約予定")),
+    pendingTerminationDate: inProgressTermination?.termination_date ?? null,
+  }, asOfDate);
   const leaseTermLabel = isParking
     ? "—"
     : source.lease_term_type === "ordinary"
@@ -294,15 +294,12 @@ function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
         : source.lease_term_type === "fixed_term"
           ? `${source.contract_start_date ?? "開始日未設定"} ～ ${source.contract_end_date ?? "終了日未設定"}`
           : `${source.contract_start_date ?? "開始日未設定"} ～ ${source.contract_end_date ?? "未確認"}`;
-  const isTerminationScheduled = Boolean(
-    source.contract_notes?.includes("解約予定"),
-  );
   const status: RentRollStatus = parkingUnavailable
     ? "unavailable"
     : source.leasing_status === "unavailable"
       ? source.leasing_status
       : source.lease_contract_id
-        ? isTerminationScheduled || !!futureTermination || !!futureContractEndDate
+        ? endInfo.scheduled
           ? "scheduled"
           : "occupied"
         : incomingContracts.length > 0
@@ -355,8 +352,10 @@ function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
           .filter(Boolean)
           .join(" / "),
     incomingContracts,
-    terminationInProgress: !!inProgressTermination,
-    terminationDate: futureTermination?.termination_date ?? futureContractEndDate ?? undefined,
+    terminationInProgress: endInfo.inProgress,
+    terminationDate: endInfo.terminationDate ?? undefined,
+    fixedTermEndDate: endInfo.fixedTermEndDate ?? undefined,
+    unitEndDate: endInfo.unitEndDate ?? undefined,
   };
 }
 
@@ -780,6 +779,30 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     () => sumRentRollColumns(filteredRows),
     [filteredRows],
   );
+  useEffect(() => {
+    const wrapper = tableWrapRef.current;
+    const totalsWrapper = totalsWrapRef.current;
+    const table = wrapper?.querySelector<HTMLTableElement>("table");
+    const totalsTable = totalsWrapper?.querySelector<HTMLTableElement>("table");
+    if (!wrapper || !totalsWrapper || !table || !totalsTable) return;
+
+    const syncTotals = () => {
+      const cells = table.tBodies[0]?.rows[0]?.cells;
+      const columns = totalsTable.querySelectorAll<HTMLTableColElement>("col");
+      if (!cells || cells.length !== columns.length) return;
+      totalsWrapper.style.width = `${wrapper.clientWidth}px`;
+      totalsTable.style.width = `${table.getBoundingClientRect().width}px`;
+      columns.forEach((column, index) => {
+        column.style.width = `${cells[index].getBoundingClientRect().width}px`;
+      });
+      totalsWrapper.scrollLeft = wrapper.scrollLeft;
+    };
+    syncTotals();
+    const observer = new ResizeObserver(syncTotals);
+    observer.observe(wrapper);
+    observer.observe(table);
+    return () => observer.disconnect();
+  }, [loadingRows, filteredRows.length, shownUtilityColumns, viewMode]);
   const overallSummary = useMemo(() => summarizeRows(rows), [rows]);
   const productCounts = useMemo(
     () =>
@@ -1111,16 +1134,17 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   >
                     <td className="rent-roll-pinned rent-roll-pinned-1">
                       <span className={`rent-roll-status ${row.status}`}>
-                        {row.terminationInProgress && !row.terminationDate
-                          ? "契約手続き中"
+                        {row.terminationInProgress
+                          ? "解約手続き中"
                           : statusLabel[row.status]}
                       </span>
                       {row.status === "scheduled" && row.terminationDate ? (
                         <small className="rent-roll-incoming-note">
                           {formatJapaneseDate(row.terminationDate)}
-                          {row.terminationInProgress ? "（手続き中）" : ""}
                         </small>
                       ) : null}
+                      {row.fixedTermEndDate && <small className="rent-roll-incoming-note">定期満了：{formatJapaneseDate(row.fixedTermEndDate)}</small>}
+                      {row.unitEndDate && <small className="rent-roll-incoming-note">区画利用終了：{formatJapaneseDate(row.unitEndDate)}</small>}
                       {row.incomingContracts?.length ? (
                         <small className="rent-roll-incoming-note">
                           入居予定:{" "}
@@ -1275,6 +1299,11 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         {!loadingRows && filteredRows.length > 0 && (
           <div ref={totalsWrapRef} className="rent-roll-total-wrap" aria-label="表示中の合計">
             <table className="rent-roll-table rent-roll-total-table" aria-hidden="true">
+              <colgroup>
+                {Array.from({ length: 21 }, (_, index) => <col key={`base-${index}`} />)}
+                {shownUtilityColumns.map((column) => <col key={column.key} />)}
+                {viewMode === "snapshot" && <col />}
+              </colgroup>
               <tbody>
                 <tr className="rent-roll-total-row">
                   <td className="rent-roll-pinned rent-roll-pinned-1" />
@@ -1295,7 +1324,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
                   <td className="numeric">{formatCurrency(columnTotals.securityDeposit)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.keyMoney)}</td>
                   <td className="numeric">{formatCurrency(columnTotals.renewalFee)}</td>
-                  <td colSpan={3} />
+                  <td /><td /><td />
                   {shownUtilityColumns.map((column) => <td key={column.key} />)}
                   {viewMode === "snapshot" && <td />}
                 </tr>

@@ -13,6 +13,8 @@ const adminItems = [
   { to: '/settings/tenant-billing', icon: '⚙', title: 'テナント請求設定', description: 'テナント請求に関するシステム設定を管理します。', category: '請求設定' },
   { to: '/admin/schema-explorer', icon: '◎', title: 'スキーマ探索', description: 'データベースのテーブル構成と関連を確認します。', category: 'システム情報' },
   { to: '/admin/case-progress-migration', icon: '⇄', title: '案件移行検証', description: '案件移行データの確認と検証を行います。', category: 'データ移行' },
+  { to: '/admin/parking-fee-cleanup', icon: '¥', title: '駐車料金一括整備', description: '駐車料金や契約終了日をまとめて整備します。', category: 'データ整備' },
+  { to: '/rent-roll/reconciliation', icon: '◎', title: 'レントロール整合性確認', description: '取込データとレントロールの整合性を確認します。', category: 'データ整備' },
 ];
 
 const routeTitles = new Map(adminItems.map((item) => [item.to, item.title]));
