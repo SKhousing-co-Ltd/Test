@@ -31,6 +31,10 @@
 .admin-console-page-heading>p:last-child{margin:7px 0 0;color:#b2c4d7;font-size:11px}
 .admin-console-content .page-heading .section-kicker,.admin-console-content .case-progress-heading .section-kicker,.admin-console-content .schema-explorer-header .eyebrow{color:#79d5cb}
 .admin-console-content .page-heading h2,.admin-console-content .case-progress-heading h2,.admin-console-content .schema-explorer-header h2{color:#f1f7fd}
+.admin-console-content .parking-fee-cleanup .page-header h2{color:#f1f7fd}
+.admin-console-content .parking-fee-cleanup .page-header p{color:#b2c4d7}
+.admin-console-content .rent-roll-reconciliation-page .rent-roll-heading h2{color:#f1f7fd}
+.admin-console-content .rent-roll-reconciliation-page .rent-roll-heading p{color:#b2c4d7}
 .admin-console-content .page-heading p:not(.section-kicker),.admin-console-content .case-progress-heading p:not(.section-kicker),.admin-console-content .schema-explorer-header p:not(.eyebrow){color:#b2c4d7}
 .admin-console-welcome{position:relative;display:flex;min-height:112px;align-items:center;justify-content:space-between;gap:20px;overflow:hidden;margin-bottom:25px;padding:20px 24px;border:1px solid #2b5274;border-radius:9px;background:linear-gradient(105deg,#0c2243 15%,#10485c 100%)}
 .admin-console-welcome:after{position:absolute;top:-82px;right:8%;width:220px;height:220px;border:1px solid rgb(189 221 238 / 18%);border-radius:50%;content:"";pointer-events:none}
