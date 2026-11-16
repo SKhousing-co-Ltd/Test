@@ -50,7 +50,6 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 .template-head th, .template-head td { border: 1px solid #56616d; padding: 7px 8px; text-align: left; vertical-align: middle; line-height: 1.45; }
 .template-head th { width: 34%; font-weight: 500; }.template-head td small { display: block; margin-top: 3px; color: #68727d; font-size: 9px; }.template-head .template-special th, .template-head .template-special td { height: 70px; vertical-align: top; }
 @media (max-width: 980px) { .template-paper { max-width: 680px; margin: auto; } } @media (max-width: 620px) { .template-paper { min-height: 0; padding: 35px 22px; } }
-.appsuite-sync-shortcut { position: fixed; right: 20px; bottom: 18px; z-index: 10; padding: 9px 13px; border-radius: 7px; color: #fff; background: #1769b4; box-shadow: 0 5px 16px rgb(20 70 120 / 28%); font-size: 12px; font-weight: 700; }
 .sync-panel { overflow: hidden; }
 .sync-panel > header, .preview-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid #e7edf4; }
 .sync-panel h3, .preview-panel h3 { margin: 0 0 4px; color: #2e405b; font-size: 15px; }
