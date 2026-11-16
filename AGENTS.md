@@ -9,3 +9,7 @@
 
 - DB、Supabase、Migration、テーブル、カラム、RLS、関数、ビュー、インデックスなどに関係する調査・実装を開始する前に、必ず [`docs/database-current-schema.md`](docs/database-current-schema.md) を読む。
 - 現在のDB構成はリモートDBを正とし、`supabase/migrations/` は変更履歴として扱う。古いMigrationだけから現行の名称や構造を推測しない。
+
+## Default repository location
+
+- For this project, use `C:\Users\本庄幸人\source\repos\kikan-system` as the default repository and local development server working directory.
