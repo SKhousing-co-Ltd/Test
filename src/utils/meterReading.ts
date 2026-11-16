@@ -345,9 +345,8 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
   const roundUsage = (value: number) => roundDigits(value, subItem.usageRoundingDigits, subItem.usageRoundingMode);
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const empty = { subItem, meters: [], usage: 0, amount: 0, groups: [] as ChargeGroup[] };
-  // 毎月定額はKANAMETERで区画ごとの金額が入力されているかだけで請求を判定する。
-  // KANAMEの旧「小分類を請求する」フラグは参照しない。
-  if (!subItem.isMonthlyFixed && !row.billable[subItem.id]) return empty;
+  // 基本料・従量・毎月定額のすべてで、KANAMEの小分類別請求設定を優先する。
+  if (!row.billable[subItem.id]) return empty;
 
   if (subItem.kind === 'basic' || subItem.isMonthlyFixed) {
     const monthly = (subItem.kind === 'basic' ? category.fixedBillable : true) ? row.fixedCharges[subItem.id] ?? 0 : 0;
@@ -384,12 +383,10 @@ export function calculateSubItem(subItem: SubItem, category: Category, row: Cont
 export function calculateRow(row: ContractRow, index: number, tenantId: string, building: BuildingConfig, meters: MeterShare[], ratioOf: (subItemId: string) => BasicRatio | undefined = () => undefined): RowResult {
   const roundAmount = (value: number) => applyRounding(value, 1, row.amountRoundingMode);
   const categories: CategoryResult[] = building.categories.filter((category) => category.billable && building.categoryBillingActive?.[category.id] !== false).map((category) => {
-    // 小分類が1つだけの分類は、小分類ごとの請求フラグを持たず、分類の請求有無だけで決めます。
-    const singleCustom = building.subItems.filter((item) => item.categoryId === category.id && item.kind === 'custom').length === 1;
     const subItems = building.subItems.filter((subItem) => subItem.categoryId === category.id)
       .map((subItem) => row.categoryBillable[category.id] === false
         ? { subItem, meters: [], usage: 0, amount: 0, groups: [] }
-        : calculateSubItem(subItem, category, singleCustom && subItem.kind === 'custom' ? { ...row, billable: { ...row.billable, [subItem.id]: true } } : row, tenantId, index, meters, building.taxRate, ratioOf(subItem.id), building));
+        : calculateSubItem(subItem, category, row, tenantId, index, meters, building.taxRate, ratioOf(subItem.id), building));
     return { category, subItems, usage: subItems.reduce((sum, item) => sum + item.usage, 0), amount: subItems.reduce((sum, item) => sum + item.amount, 0) };
   });
 
@@ -440,8 +437,7 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
     const shared = { meterReadingContractId: row.row.id, tenantId: result.tenant.id, tenantName: result.tenant.name, invoiceNo: result.tenant.invoiceSplitByUnit ? row.row.invoiceNo : 1 };
     const subItems = row.categories.flatMap((category) => {
       if (row.row.categoryBillable[category.category.id] === false) return [];
-      const customItems = category.subItems.filter((item) => item.subItem.kind === 'custom');
-      return category.subItems.filter((item) => item.subItem.kind === 'custom' && customItems.length === 1 || row.row.billable[item.subItem.id]).map((item) => ({
+      return category.subItems.filter((item) => row.row.billable[item.subItem.id]).map((item) => ({
       ...shared, category: category.category.id, sourceId: item.subItem.id, lineItemId: item.subItem.lineItemId || null, sourceName: item.subItem.name,
       // 基本料は固定額なので、数量・単価は出しません。単価が違うメーターが混ざる行と、
       // 請求書に単価を出さない設定の小分類も、単価は空欄にします。

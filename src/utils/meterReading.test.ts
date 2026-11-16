@@ -77,6 +77,19 @@ test('変動単価は、契約単価・メーターの上書きではなくそ�
   assert.equal(result.amount, 11594);
 });
 
+test('小分類が1つだけでも、請求しない設定なら金額を計算しない', () => {
+  const disabled = { ...row, billable: { ...row.billable, water_usage: false } };
+  const result = calculateSubItem(water({ variablePriceMethod: 'manual', monthly: input({ unitPrice: 100 }) }), category, disabled, 'T1', 0, meters, 0.1);
+  assert.equal(result.amount, 0);
+  assert.equal(result.meters.length, 0);
+});
+
+test('毎月定額の小分類も、請求しない設定なら金額を計算しない', () => {
+  const fixedItem = water({ isMonthlyFixed: true });
+  const disabled = { ...row, billable: { ...row.billable, water_usage: false }, fixedCharges: { water_usage: 5000 } };
+  assert.equal(calculateSubItem(fixedItem, category, disabled, 'T1', 0, [], 0.1).amount, 0);
+});
+
 test('小分類の金額計算単位ごとに使用量と金額を丸める', () => {
   const shares: MeterShare[] = [
     { id: 'M1', meterId: 'M1', unitId: 'A', subItemId: 'water_usage', code: '1', label: '', tenantId: 'T1', rowIndex: 0, usage: 0.7 },
