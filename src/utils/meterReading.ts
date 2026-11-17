@@ -415,6 +415,8 @@ export type MeterInvoiceLine = {
   meterReadingContractId?: string | null;
   tenantId: string; tenantName: string; invoiceNo: number; category: CategoryId; lineItemId: string | null; sourceName: string;
   usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string;
+  // 単価は、同じ請求明細にまとめる全行が検針計算で、かつ同一単価の場合だけ表示します。
+  isMeterCalculated: boolean;
 };
 // 請求書に載せる順番です。分類（電気→水道→ガス）ごとに、小分類の並び順、その後に増額分を並べます。
 export function meterSourceOrder(building: BuildingConfig): Map<string, number> {
@@ -444,12 +446,13 @@ function tenantInvoiceLines(result: TenantResult, building: BuildingConfig): Arr
       usage: item.subItem.kind === 'basic' || item.subItem.isMonthlyFixed ? null : item.usage, unit: item.subItem.kind === 'basic' || item.subItem.isMonthlyFixed ? '' : unitOf(category.category.id),
       unitPrice: item.subItem.kind !== 'basic' && !item.subItem.isMonthlyFixed && item.subItem.showUnitPriceOnInvoice && item.groups.length === 1 ? item.groups[0].unitPrice : null,
       amount: item.amount, periodPatternId: item.subItem.periodPatternId,
+      isMeterCalculated: item.subItem.kind === 'custom' && !item.subItem.isMonthlyFixed,
       }));
     });
     const surcharges = row.surcharges.filter((item) => row.row.categoryBillable[item.surcharge.categoryId] !== false).map((item) => ({
       ...shared, category: item.surcharge.categoryId, sourceId: item.surcharge.id, lineItemId: item.surcharge.lineItemId || null, sourceName: item.surcharge.name,
       // 増額分は請求しますが、単価は請求書に載せません（数量・金額だけ出します）。
-      usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: null, amount: item.amount, periodPatternId: item.surcharge.periodPatternId,
+      usage: item.usage, unit: unitOf(item.surcharge.categoryId), unitPrice: null, amount: item.amount, periodPatternId: item.surcharge.periodPatternId, isMeterCalculated: false,
     }));
     return [...subItems, ...surcharges].map((line, index) => ({ line, index }))
       .sort((left, right) => (order.get(left.line.sourceId) ?? 9999) - (order.get(right.line.sourceId) ?? 9999) || left.index - right.index)

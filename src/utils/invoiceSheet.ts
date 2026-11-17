@@ -21,7 +21,39 @@ type LineItemAllocation = { billing_code_id: string; line_item: { asset_billing_
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string };
 type AssetLineItem = { asset_billing_line_item_id: string; billing_charge_type_id: string; line_item_name: string; display_name: string | null };
 // 検針データから載せる明細です。数量に使用量、単位に kWh など、単価を出します。
-type MeterLine = { name: string; chargeType: string; invoiceNo: number; usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string; note: string };
+export type MeterLine = { lineItemId: string | null; name: string; chargeType: string; invoiceNo: number; usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string; note: string; isMeterCalculated: boolean };
+
+// 同じ請求明細項目を使う小分類は、請求書では1行にまとめます。
+// 小分類ごとの計算結果は保持し、使用量と金額だけをここで合算します。
+export function aggregateMeterLines(lines: MeterLine[]): MeterLine[] {
+  const grouped = new Map<string, MeterLine[]>();
+  const order: string[] = [];
+  lines.forEach((line, index) => {
+    // 請求明細項目が未設定の行まで小分類名だけでまとめないよう、未設定行は個別扱いにします。
+    const key = line.lineItemId ? `line-item:${line.lineItemId}` : `unassigned:${index}`;
+    if (!grouped.has(key)) order.push(key);
+    grouped.set(key, [...(grouped.get(key) ?? []), line]);
+  });
+  return order.map((key) => {
+    const members = grouped.get(key)!;
+    if (members.length === 1) return members[0];
+    const first = members[0];
+    const usages = members.map((line) => line.usage).filter((usage): usage is number => usage !== null);
+    const units = [...new Set(members.filter((line) => line.usage !== null).map((line) => line.unit))];
+    const unitPrices = members.map((line) => line.unitPrice);
+    const showsCommonUnitPrice = members.every((line) => line.isMeterCalculated && line.unitPrice !== null)
+      && unitPrices.every((price) => price === unitPrices[0]);
+    return {
+      ...first,
+      invoiceNo: Math.min(...members.map((line) => line.invoiceNo)),
+      usage: usages.length ? usages.reduce((sum, usage) => sum + usage, 0) : null,
+      unit: units.length === 1 ? units[0] : '',
+      unitPrice: showsCommonUnitPrice ? unitPrices[0] : null,
+      amount: members.reduce((sum, line) => sum + line.amount, 0),
+      note: [...new Set(members.map((line) => line.note).filter(Boolean))].join(' / '),
+    };
+  });
+}
 type InvoiceSplitAssignment = { asset_billing_line_item_id: string; lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number | null; billingUnit?: { billing_unit_name: string } | Array<{ billing_unit_name: string }> | null };
 type InvoiceSplitUnitAssignment = { lease_contract_unit_id: string | null; lease_contract_billing_unit_id: string | null; invoice_number: number };
 type InvoiceSplitSetting = { billing_code_id: string; split_mode: 'unit' | 'line_item' | 'line_item_unit'; split_count: number; assignments: InvoiceSplitAssignment[] | null; unitAssignments: InvoiceSplitUnitAssignment[] | null };
@@ -319,7 +351,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     // 明細の名前は、請求設定の明細項目名を使います。明細項目が未設定の小分類は小分類名のまま載せます。
     const meterSplit = line.meterReadingContractId ? meterSplitByContract.get(line.meterReadingContractId) : undefined;
     const note = meterSplit?.splitItems.includes('variable') ? meterSplit.note : '';
-    invoice.meterLines.push({ name: assetItem ? assetItem.display_name || assetItem.line_item_name : line.sourceName, chargeType: chargeName ?? '', invoiceNo: line.invoiceNo, usage: line.usage, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, periodPatternId: meterPeriodPatternId(line.periodPatternId, line.category), note });
+    invoice.meterLines.push({ lineItemId: line.lineItemId, name: assetItem ? assetItem.display_name || assetItem.line_item_name : line.sourceName, chargeType: chargeName ?? '', invoiceNo: line.invoiceNo, usage: line.usage, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, periodPatternId: meterPeriodPatternId(line.periodPatternId, line.category), note, isMeterCalculated: line.isMeterCalculated });
     invoices.set(key, invoice);
   }
   const periodPatternByRow: Record<string, string> = {};
@@ -364,7 +396,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     });
     const lineSpecs = [
       ...fixedLineEntries.map(([key, amount]) => { const name = key.split('::meter-split:', 1)[0]; const count = invoice.counts.get(key) ?? 0; const fixedPeriod = termsPeriodIdOf(invoice.lineTerms.get(key) ?? dueTerms); return { id: key, name, chargeType: name, amount: fixedPeriod ? amount * fixedPeriod.monthsCovered : 0, quantity: count ? String(count) : '', unit: count ? '台' : '', unitPrice: '', periodPatternId: fixedPeriod?.id ?? '', blankPeriod: !fixedPeriod, note: invoice.lineNotes.get(key) ?? '' }; }),
-      ...invoice.meterLines.map((line, index) => ({ line, index })).sort((left, right) => left.line.invoiceNo - right.line.invoiceNo || left.index - right.index).map(({ line, index }) => ({ id: `meter${index}:${line.name}`, name: line.name, chargeType: line.chargeType, amount: line.amount, quantity: line.usage === null ? '' : usageText.format(line.usage), unit: line.unit, unitPrice: line.unitPrice === null ? '' : unitPriceText.format(line.unitPrice), periodPatternId: line.periodPatternId, blankPeriod: false, note: line.note })),
+      ...aggregateMeterLines(invoice.meterLines).map((line, index) => ({ line, index })).sort((left, right) => left.line.invoiceNo - right.line.invoiceNo || left.index - right.index).map(({ line, index }) => ({ id: `meter${index}:${line.name}`, name: line.name, chargeType: line.chargeType, amount: line.amount, quantity: line.usage === null ? '' : usageText.format(line.usage), unit: line.unit, unitPrice: line.unitPrice === null ? '' : unitPriceText.format(line.unitPrice), periodPatternId: line.periodPatternId, blankPeriod: false, note: line.note })),
     ];
     lineSpecs.forEach((line, index) => {
       const values = emptyValues();

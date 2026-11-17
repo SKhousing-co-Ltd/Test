@@ -823,7 +823,7 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
     const [confirmed, subItemResult, surchargeResult, contractTermResult, billingTermResult, contractUnitResult, billingUnitResult, contractBillingResult] = await Promise.all([
       loadConfirmedAmounts(client, assetId, year, month),
       client.from('asset_meter_sub_item')
-        .select('asset_meter_sub_item_id, category, sub_item_kind, sort_order, billing_period_pattern_id, show_unit_price_on_invoice, show_usage_on_invoice')
+        .select('asset_meter_sub_item_id, category, sub_item_kind, sort_order, billing_period_pattern_id, show_unit_price_on_invoice, show_usage_on_invoice, is_monthly_fixed')
         .eq('asset_id', assetId),
       client.from('asset_meter_surcharge')
         .select('asset_meter_surcharge_id, category, billing_period_pattern_id')
@@ -898,6 +898,7 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
         unitPrice: row.sourceKind === 'surcharge' || (term?.show_unit_price_on_invoice ?? subItem?.show_unit_price_on_invoice) === false ? null : row.unitPrice,
         amount: row.amount,
         periodPatternId: subItem?.billing_period_pattern_id ?? surcharge?.billing_period_pattern_id ?? '',
+        isMeterCalculated: row.sourceKind === 'subItem' && subItem?.sub_item_kind === 'custom' && !subItem.is_monthly_fixed,
       };
     });
     return { lines, meterDates, status: currentMonth.status };
@@ -931,6 +932,7 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
         // 増額分の単価は請求書に載せません。
         unitPrice: row.sourceKind === 'surcharge' || (subItem && !subItem.showUnitPriceOnInvoice) ? null : row.unitPrice, amount: row.amount,
         periodPatternId: subItem?.periodPatternId ?? surcharge?.periodPatternId ?? '',
+        isMeterCalculated: row.sourceKind === 'subItem' && subItem?.kind === 'custom' && !subItem.isMonthlyFixed,
       };
     });
   return { lines, meterDates, status: snapshot.status };

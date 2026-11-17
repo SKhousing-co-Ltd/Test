@@ -2,7 +2,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet } from './invoiceSheet.ts';
+import { aggregateMeterLines, buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet, type MeterLine } from './invoiceSheet.ts';
+
+const meterLine = (patch: Partial<MeterLine> = {}): MeterLine => ({ lineItemId: 'electricity', name: '電気代', chargeType: '電気代', invoiceNo: 1, usage: 0, unit: 'kWh', unitPrice: 30, amount: 0, periodPatternId: 'monthly', note: '', isMeterCalculated: true, ...patch });
+
+test('同じ請求明細項目の検針計算と定額を1行にまとめ、単価を非表示にする', () => {
+  const result = aggregateMeterLines([
+    meterLine({ usage: 100, unitPrice: 30, amount: 3000 }),
+    meterLine({ usage: null, unit: '', unitPrice: null, amount: 1000, isMeterCalculated: false }),
+  ]);
+  assert.equal(result.length, 1);
+  assert.deepEqual({ usage: result[0].usage, unitPrice: result[0].unitPrice, amount: result[0].amount }, { usage: 100, unitPrice: null, amount: 4000 });
+});
+
+test('同じ請求明細項目の検針計算が同一単価なら、合算後も単価を表示する', () => {
+  const result = aggregateMeterLines([
+    meterLine({ usage: 100, amount: 3000 }),
+    meterLine({ usage: 50, amount: 1500 }),
+  ]);
+  assert.deepEqual({ usage: result[0].usage, unitPrice: result[0].unitPrice, amount: result[0].amount }, { usage: 150, unitPrice: 30, amount: 4500 });
+});
+
+test('同じ請求明細項目でも検針単価が異なる場合は単価を非表示にする', () => {
+  const result = aggregateMeterLines([
+    meterLine({ usage: 100, unitPrice: 30, amount: 3000 }),
+    meterLine({ usage: 50, unitPrice: 35, amount: 1750 }),
+  ]);
+  assert.deepEqual({ usage: result[0].usage, unitPrice: result[0].unitPrice, amount: result[0].amount }, { usage: 150, unitPrice: null, amount: 4750 });
+});
 
 const invoiceRow = (invoiceKey: string, tenantId: string, line: string, invoiceNumber = ''): InvoiceRow => {
   const values = Array.from({ length: 21 }, () => ''); values[0] = invoiceNumber; values[11] = line;
