@@ -782,11 +782,12 @@ export type ConfirmedAmount = {
   tenantId: string; tenantName: string; rowNo: number; invoiceNo: number; category: CategoryId;
   sourceKind: 'subItem' | 'surcharge'; sourceId: string; sourceName: string; lineItemId: string | null; lineItemName: string | null;
   usage: number; usageUnit: string; unitPrice: number | null; amount: number;
+  showUnitPriceOnInvoice: boolean; showUsageOnInvoice: boolean;
 };
 
 export async function loadConfirmedAmounts(client: SupabaseClient, assetId: string, year: number, month: number): Promise<ConfirmedAmount[]> {
   const { data, error } = await client.from('meter_reading_confirmed_amount')
-    .select('meter_reading_contract_id, tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_id, source_name, asset_billing_line_item_id, line_item_name, usage_amount, usage_unit, unit_price, amount')
+    .select('meter_reading_contract_id, tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_id, source_name, asset_billing_line_item_id, line_item_name, usage_amount, usage_unit, unit_price, show_unit_price_on_invoice, show_usage_on_invoice, amount')
     .eq('asset_id', assetId).eq('billing_month', monthStart(year, month))
     .order('tenant_name').order('row_no');
   if (error) throw new Error(`確定した金額を読み込めませんでした: ${error.message}`);
@@ -795,6 +796,8 @@ export async function loadConfirmedAmounts(client: SupabaseClient, assetId: stri
     tenantId: row.tenant_id, tenantName: row.tenant_name, rowNo: row.row_no, invoiceNo: row.invoice_number, category: row.category,
     sourceKind: row.source_kind, sourceId: row.source_id, sourceName: row.source_name, lineItemId: row.asset_billing_line_item_id, lineItemName: row.line_item_name,
     usage: Number(row.usage_amount), usageUnit: row.usage_unit ?? '', unitPrice: numberOrNull(row.unit_price), amount: Number(row.amount),
+    showUnitPriceOnInvoice: row.show_unit_price_on_invoice !== false,
+    showUsageOnInvoice: row.show_usage_on_invoice !== false,
   }));
 }
 
@@ -890,12 +893,14 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
       const term = contractTerms.get(`${row.tenantId}:${row.sourceId}`);
       const surcharge = row.sourceKind === 'surcharge' ? surcharges.get(row.sourceId) : undefined;
       const basic = row.sourceKind === 'subItem' && row.unitPrice === null && !row.usage;
+      const showUsageOnInvoice = row.showUsageOnInvoice && (term?.show_usage_on_invoice ?? subItem?.show_usage_on_invoice) !== false;
+      const showUnitPriceOnInvoice = row.showUnitPriceOnInvoice && (term?.show_unit_price_on_invoice ?? subItem?.show_unit_price_on_invoice) !== false;
       return {
         meterReadingContractId: row.meterReadingContractId,
         tenantId: row.tenantId, tenantName: row.tenantName, invoiceNo: row.invoiceNo, category: row.category, lineItemId: row.lineItemId, sourceName: row.sourceName,
-        usage: basic || row.sourceKind === 'surcharge' || (term?.show_usage_on_invoice ?? subItem?.show_usage_on_invoice) === false ? null : row.usage,
-        unit: basic || row.sourceKind === 'surcharge' || (term?.show_usage_on_invoice ?? subItem?.show_usage_on_invoice) === false ? '' : row.usageUnit,
-        unitPrice: row.sourceKind === 'surcharge' || (term?.show_unit_price_on_invoice ?? subItem?.show_unit_price_on_invoice) === false ? null : row.unitPrice,
+        usage: basic || row.sourceKind === 'surcharge' || !showUsageOnInvoice ? null : row.usage,
+        unit: basic || row.sourceKind === 'surcharge' || !showUsageOnInvoice ? '' : row.usageUnit,
+        unitPrice: row.sourceKind === 'surcharge' || !showUnitPriceOnInvoice ? null : row.unitPrice,
         amount: row.amount,
         periodPatternId: subItem?.billing_period_pattern_id ?? surcharge?.billing_period_pattern_id ?? '',
         isMeterCalculated: row.sourceKind === 'subItem' && subItem?.sub_item_kind === 'custom' && !subItem.is_monthly_fixed,
@@ -926,11 +931,11 @@ export async function loadMeterInvoiceData(client: SupabaseClient, assetId: stri
       return {
         meterReadingContractId: row.meterReadingContractId,
         tenantId: row.tenantId, tenantName: row.tenantName, invoiceNo: row.invoiceNo, category: row.category, lineItemId: row.lineItemId, sourceName: row.sourceName,
-        usage: basic || row.sourceKind === 'surcharge' ? null : row.usage,
-        unit: basic || row.sourceKind === 'surcharge' ? '' : row.usageUnit,
-        // 請求書に単価を出すかどうかは、確定後も今の小分類の設定に従います。
+        usage: basic || row.sourceKind === 'surcharge' || !row.showUsageOnInvoice ? null : row.usage,
+        unit: basic || row.sourceKind === 'surcharge' || !row.showUsageOnInvoice ? '' : row.usageUnit,
+        // 請求書の表示可否は、確定時に保存した契約情報の設定に従います。
         // 増額分の単価は請求書に載せません。
-        unitPrice: row.sourceKind === 'surcharge' || (subItem && !subItem.showUnitPriceOnInvoice) ? null : row.unitPrice, amount: row.amount,
+        unitPrice: row.sourceKind === 'surcharge' || !row.showUnitPriceOnInvoice ? null : row.unitPrice, amount: row.amount,
         periodPatternId: subItem?.periodPatternId ?? surcharge?.periodPatternId ?? '',
         isMeterCalculated: row.sourceKind === 'subItem' && subItem?.kind === 'custom' && !subItem.isMonthlyFixed,
       };
