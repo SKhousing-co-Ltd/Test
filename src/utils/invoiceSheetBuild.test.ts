@@ -31,6 +31,18 @@ test('同じ請求明細項目でも検針単価が異なる場合は単価を�
   assert.deepEqual({ usage: result[0].usage, unitPrice: result[0].unitPrice, amount: result[0].amount }, { usage: 150, unitPrice: null, amount: 4750 });
 });
 
+test('データ分割した変動費は同じ請求明細項目でも分割行ごとに表示する', () => {
+  const result = aggregateMeterLines([
+    meterLine({ splitRowNo: 1, usage: 1236, amount: 41990 }),
+    meterLine({ splitRowNo: 2, usage: 1, amount: 37 }),
+    meterLine({ splitRowNo: 1, usage: 329, amount: 10535 }),
+  ]);
+  assert.deepEqual(result.map((line) => ({ row: line.splitRowNo, usage: line.usage, amount: line.amount })), [
+    { row: 1, usage: 1565, amount: 52525 },
+    { row: 2, usage: 1, amount: 37 },
+  ]);
+});
+
 const invoiceRow = (invoiceKey: string, tenantId: string, line: string, invoiceNumber = ''): InvoiceRow => {
   const values = Array.from({ length: 21 }, () => ''); values[0] = invoiceNumber; values[11] = line;
   return { id: `${invoiceKey}-${line}`, invoiceKey, values, chargeType: '', tenantId, tenantName: tenantId, floor: '' };

@@ -21,7 +21,7 @@ type LineItemAllocation = { billing_code_id: string; line_item: { asset_billing_
 type ChargeType = { billing_charge_type_id: string; charge_type_name: string };
 type AssetLineItem = { asset_billing_line_item_id: string; billing_charge_type_id: string; line_item_name: string; display_name: string | null };
 // 検針データから載せる明細です。数量に使用量、単位に kWh など、単価を出します。
-export type MeterLine = { lineItemId: string | null; name: string; chargeType: string; invoiceNo: number; usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string; note: string; isMeterCalculated: boolean };
+export type MeterLine = { lineItemId: string | null; name: string; chargeType: string; invoiceNo: number; usage: number | null; unit: string; unitPrice: number | null; amount: number; periodPatternId: string; note: string; isMeterCalculated: boolean; splitRowNo?: number };
 
 // 同じ請求明細項目を使う小分類は、請求書では1行にまとめます。
 // 小分類ごとの計算結果は保持し、使用量と金額だけをここで合算します。
@@ -30,7 +30,7 @@ export function aggregateMeterLines(lines: MeterLine[]): MeterLine[] {
   const order: string[] = [];
   lines.forEach((line, index) => {
     // 請求明細項目が未設定の行まで小分類名だけでまとめないよう、未設定行は個別扱いにします。
-    const key = line.lineItemId ? `line-item:${line.lineItemId}` : `unassigned:${index}`;
+    const key = line.lineItemId ? `line-item:${line.lineItemId}:split-row:${line.splitRowNo ?? 'combined'}` : `unassigned:${index}`;
     if (!grouped.has(key)) order.push(key);
     grouped.set(key, [...(grouped.get(key) ?? []), line]);
   });
@@ -282,8 +282,10 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   const splitDefaults: SplitItem[] = ['rent', 'common', 'storage', 'variable'];
   const meterSplitByTenantUnit = new Map<string, { rowNo: number; splitItems: SplitItem[]; note: string }>();
   const meterSplitByContract = new Map<string, { rowNo: number; splitItems: SplitItem[]; note: string }>();
+  const meterContractCountByTenant = new Map<string, number>();
   const meterContractById = new Map<string, MeterContractSplit>();
   for (const contract of (meterContractResult.data ?? []) as unknown as MeterContractSplit[]) {
+    meterContractCountByTenant.set(contract.tenant_id, (meterContractCountByTenant.get(contract.tenant_id) ?? 0) + 1);
     meterContractById.set(contract.meter_reading_contract_id, contract);
     const metadata = { rowNo: contract.row_no, splitItems: contract.split_items ?? splitDefaults, note: contract.invoice_note?.trim() ?? '' };
     meterSplitByContract.set(contract.meter_reading_contract_id, metadata);
@@ -351,7 +353,8 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     // 明細の名前は、請求設定の明細項目名を使います。明細項目が未設定の小分類は小分類名のまま載せます。
     const meterSplit = line.meterReadingContractId ? meterSplitByContract.get(line.meterReadingContractId) : undefined;
     const note = meterSplit?.splitItems.includes('variable') ? meterSplit.note : '';
-    invoice.meterLines.push({ lineItemId: line.lineItemId, name: assetItem ? assetItem.display_name || assetItem.line_item_name : line.sourceName, chargeType: chargeName ?? '', invoiceNo: line.invoiceNo, usage: line.usage, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, periodPatternId: meterPeriodPatternId(line.periodPatternId, line.category), note, isMeterCalculated: line.isMeterCalculated });
+    const splitRowNo = meterSplit?.splitItems.includes('variable') && (meterContractCountByTenant.get(line.tenantId) ?? 0) > 1 ? meterSplit.rowNo : undefined;
+    invoice.meterLines.push({ lineItemId: line.lineItemId, name: assetItem ? assetItem.display_name || assetItem.line_item_name : line.sourceName, chargeType: chargeName ?? '', invoiceNo: line.invoiceNo, usage: line.usage, unit: line.unit, unitPrice: line.unitPrice, amount: line.amount, periodPatternId: meterPeriodPatternId(line.periodPatternId, line.category), note, isMeterCalculated: line.isMeterCalculated, splitRowNo });
     invoices.set(key, invoice);
   }
   const periodPatternByRow: Record<string, string> = {};
