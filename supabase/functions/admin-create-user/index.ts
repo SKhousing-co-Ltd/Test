@@ -34,10 +34,9 @@ Deno.serve(async (request) => {
 
   const body = await request.json().catch(() => null) as Record<string, unknown> | null;
   const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
-  const password = typeof body?.password === 'string' ? body.password : '';
   const employeeId = typeof body?.employee_id === 'string' ? body.employee_id : '';
   const role = body?.role;
-  if (!email.includes('@') || password.length < 6 || !employeeId || !['admin', 'manager', 'staff', 'viewer'].includes(String(role))) {
+  if (!/^[^\s@]+@sk-housing\.jp$/.test(email) || !employeeId || !['admin', 'manager', 'staff', 'viewer'].includes(String(role))) {
     return json({ error: '入力内容を確認してください。' }, 400);
   }
 
@@ -50,14 +49,14 @@ Deno.serve(async (request) => {
   if (linkedProfileError) return json({ error: '担当者の紐づけを確認できません。' }, 500);
   if (linkedProfile) return json({ error: '選択した担当者には既にアカウントが紐づいています。' }, 409);
 
-  const { data: created, error: createError } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+  const { data: created, error: createError } = await admin.auth.admin.createUser({ email, email_confirm: true });
   if (createError || !created.user) return json({ error: createError?.message ?? 'Auth アカウントを作成できませんでした。' }, 400);
 
   const { error: profileError } = await admin.from('user_profiles').update({
     employee_id: employeeId,
     role,
     account_status: 'active',
-    must_change_password: true,
+    must_change_password: false,
     approved_at: new Date().toISOString(),
     approved_by: caller.id,
   }).eq('user_id', created.user.id);
