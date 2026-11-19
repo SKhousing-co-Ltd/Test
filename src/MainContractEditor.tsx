@@ -258,7 +258,8 @@ export function MainContractEditor({ contract, asOfDate, rentTerms, onCancel, on
   };
 
   const save = async () => {
-    if (!supabase || !reason.trim() || diffs.length === 0) return;
+    if (!supabase || diffs.length === 0) return;
+    if (!reason.trim()) { setError('変更理由を入力してください。'); return; }
     setSaving(true); setError('');
     const contractChanges = Object.fromEntries(diffs.filter(({ field }) => field.scope === 'contract').map(({ field, after }) => [field.key, after]));
     const termChanges = Object.fromEntries(diffs.filter(({ field }) => field.scope === 'term').map(({ field, after }) => [field.key, after]));
@@ -334,9 +335,9 @@ export function MainContractEditor({ contract, asOfDate, rentTerms, onCancel, on
     <div className="contract-editor-diff"><div className="heading"><span>項目</span><span>変更前</span><span>変更後</span></div>
       {diffs.map(({ field, before, after }) => <div key={field.key}><strong>{field.label}</strong><span>{display(before)}</span><span>{display(after)}</span></div>)}
     </div>
-    <label>変更理由<textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="契約原本や確認資料、修正理由を入力" /></label>
+    <label>変更理由（必須）<textarea value={reason} onChange={(event) => { setReason(event.target.value); setError(''); }} placeholder="契約原本や確認資料、修正理由を入力" /></label>
     {error && <p className="contract-detail-error">{error}</p>}
-    <div className="contract-editor-actions"><button type="button" className="secondary-button" onClick={() => setConfirming(false)} disabled={saving}>戻る</button><button type="button" className="primary-button" onClick={() => void save()} disabled={saving || !reason.trim()}>{saving ? '保存中…' : '確認して保存'}</button></div>
+    <div className="contract-editor-actions"><button type="button" className="secondary-button" onClick={() => setConfirming(false)} disabled={saving}>戻る</button><button type="button" className="primary-button" onClick={() => void save()} disabled={saving}>{saving ? '保存中…' : '確認して保存'}</button></div>
   </section>;
 
   return <section className="contract-editor">
