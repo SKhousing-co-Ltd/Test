@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase } from './lib/supabase';
 import { ParkingDetailModal } from './ParkingDetailModal';
 
 type ParkingScope = 'internal' | 'external';
 export type ParkingSpaceStatus = 'occupied' | 'vacant' | 'unavailable';
-type ParkingImportStatus = ParkingSpaceStatus;
 
 type PropertyOption = { asset_id: string; asset_name: string; short_name: string | null };
 type ParkingType = { parking_type_id: number; parking_type_name: string };
@@ -57,54 +56,7 @@ export type ParkingCurrentRow = {
   vehicle_effective_from: string | null;
 };
 
-type MainContractCandidate = {
-  property_id: string;
-  lease_contract_id: string;
-  tenant_id: string;
-  tenant_name: string;
-  contract_start_date: string | null;
-  contract_end_date: string | null;
-  unit_labels: string;
-};
-
-type TenantOption = { tenant_id: string; tenant_name: string };
 type BicycleLedgerRow = { unit_id: string; unit_code: string; unit_name: string | null; lease_contract_id: string | null; contract_start_date: string | null; contract_end_date: string | null; tenant_name: string | null; monthly_total_amount: number | null };
-
-type ImportRow = {
-  parking_import_row_id: string;
-  source_row_number: number;
-  space_number: string;
-  access_code: string | null;
-  tenant_location_label: string | null;
-  tenant_name: string;
-  matched_tenant_id: string | null;
-  parking_scope: ParkingScope | null;
-  main_lease_contract_id: string | null;
-  contract_start_date: string | null;
-  vehicle_model: string | null;
-  registration_number: string | null;
-  chassis_number: string | null;
-  notes: string | null;
-  monthly_parking_fee: number | null;
-  validation_status: 'action_required' | 'ready' | 'committed' | 'error';
-  validation_messages: string[];
-  raw_payload: Record<string, unknown> | null;
-};
-
-type ParsedImportRow = {
-  source_row_number: number;
-  space_number: string;
-  access_code: string;
-  tenant_location_label: string;
-  tenant_name: string;
-  vehicle_model: string;
-  registration_number: string;
-  chassis_number: string;
-  contract_start_date: string;
-  notes: string;
-  parking_status: ParkingImportStatus;
-  is_vacant: boolean;
-};
 
 type VehicleHistory = {
   parking_vehicle_history_id: string;
@@ -119,96 +71,8 @@ type VehicleHistory = {
 const today = new Date().toISOString().slice(0, 10);
 const collator = new Intl.Collator('ja-JP', { numeric: true, sensitivity: 'base' });
 
-const parkingHeaderAliases = {
-  status: ['状態', '契約状態', '稼働状態', '空き状況'],
-  space_number: ['枠番', '駐車場番号', '区画番号', '区画', '車室番号', '車室'],
-  access_code: ['暗証番号', 'リモコン', 'リモコン番号', 'カード番号', 'アクセスコード'],
-  tenant_location_label: ['階', '所在', 'フロア', 'テナント所在'],
-  tenant_name: ['テナント名', '契約者', '契約先', '会社名', '利用者'],
-  vehicle_model: ['車種', '車名', '車両名'],
-  registration_number: ['車両番号', '登録番号', 'ナンバー', '車両登録番号'],
-  chassis_number: ['車台番号', '車体番号'],
-  contract_start_date: ['契約開始日', '開始日', '契約日', '利用開始日'],
-  notes: ['備考', 'メモ', '摘要'],
-} as const;
-
-type ParkingHeaderKey = keyof typeof parkingHeaderAliases;
-
 function displayDate(value: string | null): string {
   return value ? new Intl.DateTimeFormat('ja-JP').format(new Date(`${value}T00:00:00`)) : '—';
-}
-
-function describeUnknownError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') {
-    const record = error as Record<string, unknown>;
-    for (const key of ['message', 'error_description', 'details', 'hint', 'reason']) {
-      const value = record[key];
-      if (typeof value === 'string' && value.trim()) return value;
-    }
-    try {
-      const serialized = JSON.stringify(error);
-      if (serialized && serialized !== '{}') return serialized;
-    } catch {
-      // Fall through.
-    }
-  }
-  return String(error);
-}
-
-async function atImportStage<T>(stage: string, operation: () => Promise<T>): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    throw new Error(`${stage}: ${describeUnknownError(error)}`);
-  }
-}
-
-function excelDate(value: unknown, text: string): string {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
-  if (typeof value === 'number') return new Date(Date.UTC(1899, 11, 30) + value * 86_400_000).toISOString().slice(0, 10);
-  const normalized = text.trim().replace(/[./]/g, '-').replace(/年|月/g, '-').replace(/日/g, '');
-  const matched = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  return matched ? `${matched[1]}-${matched[2].padStart(2, '0')}-${matched[3].padStart(2, '0')}` : '';
-}
-
-function normalizeText(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase('ja-JP').replace(/[\s　_\-・]/g, '').trim();
-}
-
-function normalizeHeader(value: string): string {
-  return value.normalize('NFKC').replace(/[\s　\r\n]/g, '').trim();
-}
-
-function resolveHeaderKey(label: string): ParkingHeaderKey | null {
-  const normalized = normalizeHeader(label);
-  const entry = (Object.entries(parkingHeaderAliases) as Array<[ParkingHeaderKey, readonly string[]]>)
-    .find(([, aliases]) => aliases.some((alias) => normalizeHeader(alias) === normalized));
-  return entry?.[0] ?? null;
-}
-
-function parseImportStatus(status: string, tenantName: string, rowNumber: number): ParkingImportStatus {
-  const normalized = normalizeText(status);
-  if (!normalized) return tenantName ? 'occupied' : 'vacant';
-  if (['契約中', '使用中', '稼働中', 'occupied'].includes(normalized)) return 'occupied';
-  if (['空き', '空', '未契約', '募集中', 'vacant'].includes(normalized)) return 'vacant';
-  if (['使用不可', '貸出不可', '貸し出し不可', '貸出不能', '貸し出し不能', 'unavailable'].includes(normalized)) return 'unavailable';
-  throw new Error(`${rowNumber}行目の状態「${status}」を判定できません。「契約中」「空き」「使用不可」のいずれかを指定してください。`);
-}
-
-function importRowStatus(row: ImportRow): ParkingImportStatus {
-  const status = row.raw_payload?.parking_status;
-  if (status === 'occupied' || status === 'vacant' || status === 'unavailable') return status;
-  return row.raw_payload?.is_vacant === true || row.raw_payload?.is_vacant === 'true' ? 'vacant' : 'occupied';
-}
-
-function isVacantImportRow(row: ImportRow): boolean {
-  return importRowStatus(row) === 'vacant';
-}
-
-function isNonContractImportRow(row: ImportRow): boolean {
-  return importRowStatus(row) !== 'occupied';
 }
 
 function parkingStatusLabel(status: ParkingSpaceStatus): string {
@@ -225,121 +89,6 @@ function formatJapaneseDate(value: string): string {
 function parkingRowStatusLabel(row: ParkingCurrentRow): string {
   if (row.termination_in_progress && !row.termination_date) return '契約手続き中';
   return row.termination_scheduled ? '退去予定' : parkingStatusLabel(row.space_status);
-}
-
-async function hashFile(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function parseParkingWorkbook(file: File): Promise<{ sheetName: string; rows: ParsedImportRow[] }> {
-  const ExcelJS = await import('exceljs');
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(await file.arrayBuffer() as never);
-  const sheet = workbook.worksheets[0];
-  if (!sheet) throw new Error('ワークシートがありません。');
-
-  let headerRow = 0;
-  const headerIndexes = new Map<ParkingHeaderKey, number>();
-  sheet.eachRow((row, rowNumber) => {
-    if (headerRow) return;
-    const rowHeaders = new Map<ParkingHeaderKey, number>();
-    row.eachCell((cell, columnNumber) => {
-      const key = resolveHeaderKey(cell.text);
-      if (key && !rowHeaders.has(key)) rowHeaders.set(key, columnNumber);
-    });
-    if (!rowHeaders.has('space_number') || !rowHeaders.has('tenant_name')) return;
-    headerRow = rowNumber;
-    rowHeaders.forEach((columnNumber, key) => headerIndexes.set(key, columnNumber));
-  });
-  if (!headerRow) throw new Error('枠番とテナント名に相当する見出し行が見つかりません。標準ひな型の利用をおすすめします。');
-
-  const rows: ParsedImportRow[] = [];
-  sheet.eachRow((row, rowNumber) => {
-    if (rowNumber <= headerRow) return;
-    const cell = (key: ParkingHeaderKey) => {
-      const column = headerIndexes.get(key);
-      return column ? row.getCell(column) : null;
-    };
-    const text = (key: ParkingHeaderKey) => cell(key)?.text.trim() ?? '';
-    const spaceNumber = text('space_number');
-    if (!spaceNumber || ['計', '合計', 'total'].includes(normalizeText(spaceNumber))) return;
-
-    const tenantName = text('tenant_name');
-    const parkingStatus = parseImportStatus(text('status'), tenantName, rowNumber);
-    if (parkingStatus === 'occupied' && !tenantName) {
-      throw new Error(`${rowNumber}行目は「契約中」ですが、テナント名が空です。`);
-    }
-
-    const contractStartCell = cell('contract_start_date');
-    rows.push({
-      source_row_number: rowNumber,
-      space_number: spaceNumber,
-      access_code: text('access_code'),
-      tenant_location_label: text('tenant_location_label'),
-      tenant_name: parkingStatus === 'occupied' ? tenantName : '',
-      vehicle_model: parkingStatus === 'occupied' ? text('vehicle_model') : '',
-      registration_number: parkingStatus === 'occupied' ? text('registration_number') : '',
-      chassis_number: parkingStatus === 'occupied' ? text('chassis_number') : '',
-      contract_start_date: parkingStatus === 'occupied' && contractStartCell ? excelDate(contractStartCell.value, contractStartCell.text) : '',
-      notes: text('notes'),
-      parking_status: parkingStatus,
-      is_vacant: parkingStatus === 'vacant',
-    });
-  });
-  if (!rows.length) throw new Error('取込可能な明細がありません。');
-  return { sheetName: sheet.name, rows };
-}
-
-async function downloadParkingTemplate(): Promise<void> {
-  const ExcelJS = await import('exceljs');
-  const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet('駐車場台帳');
-  sheet.columns = [
-    { header: '状態', key: 'status', width: 12 },
-    { header: '枠番', key: 'space_number', width: 12 },
-    { header: '暗証番号', key: 'access_code', width: 16 },
-    { header: 'テナント名', key: 'tenant_name', width: 34 },
-    { header: '車種', key: 'vehicle_model', width: 20 },
-    { header: '車両番号', key: 'registration_number', width: 20 },
-    { header: '車台番号', key: 'chassis_number', width: 22 },
-    { header: '契約開始日', key: 'contract_start_date', width: 16 },
-    { header: '備考', key: 'notes', width: 32 },
-  ];
-  sheet.addRow({ status: '契約中', space_number: '1', tenant_name: '株式会社サンプル', contract_start_date: today });
-  sheet.addRow({ status: '空き', space_number: '2' });
-  sheet.addRow({ status: '使用不可', space_number: '3', notes: '設備故障等で貸出できない場合' });
-  sheet.getRow(1).font = { bold: true };
-  sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  sheet.autoFilter = { from: 'A1', to: 'I1' };
-  for (let rowNumber = 2; rowNumber <= 501; rowNumber += 1) {
-    sheet.getCell(`A${rowNumber}`).dataValidation = {
-      type: 'list', allowBlank: false, formulae: ['"契約中,空き,使用不可"'], showErrorMessage: true,
-      errorTitle: '状態を選択してください', error: '「契約中」「空き」「使用不可」のいずれかを選択してください。',
-    };
-  }
-
-  const guide = workbook.addWorksheet('入力ガイド');
-  guide.columns = [{ header: '項目', width: 22 }, { header: '入力ルール', width: 82 }];
-  guide.addRows([
-    ['状態', '契約中・空き・使用不可から選択。空き/使用不可の場合はテナント名・契約開始日は空欄で構いません。'],
-    ['使用不可', '故障・工事・物理的制約などにより貸出できない区画に使用します。基準日から使用不可として履歴管理します。'],
-    ['枠番', '必須。駐車場施設内で重複しない番号を入力してください。'],
-    ['テナント名', '契約中の場合に入力。取込後、物件内の契約先候補から照合します。'],
-    ['月額駐車料', 'Excelには入力しません。取込後に自動作成される対応依頼から、金額・適用開始日・関連する主契約区画を確認して登録します。'],
-    ['契約開始日', '任意。YYYY/MM/DD またはExcelの日付形式で入力してください。'],
-    ['その他', '暗証番号・車両情報・備考は分かる範囲で入力してください。'],
-  ]);
-  guide.getRow(1).font = { bold: true };
-
-  const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer as unknown as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = '駐車場台帳_標準ひな型.xlsx';
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 export function ParkingPage({ canManage }: { canManage: boolean }) {
@@ -359,7 +108,6 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   const [selected, setSelected] = useState<ParkingCurrentRow | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [vehicleHistory, setVehicleHistory] = useState<VehicleHistory[]>([]);
-  const [importOpen, setImportOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -518,7 +266,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
   return <section className="parking-page">
     <div className="parking-heading">
       <div><p className="section-kicker">PARKING & BICYCLE LEDGER</p><h2>駐車場・駐輪場台帳</h2><p>駐車場・バイク・自転車の契約を物件ごとに確認します。</p></div>
-      {canManage ? <button className="primary-button" onClick={() => setImportOpen(true)}>Excelを取り込む</button> : null}
+
     </div>
 
     <div className="parking-toolbar">
@@ -551,7 +299,7 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
     <section className="parking-panel" aria-label="駐輪場契約一覧">
       <header><div><h3>バイク・自転車の契約</h3><p>{bicycleRows.length} 件</p></div></header>
       <div className="parking-table-wrap"><table className="parking-table"><thead><tr><th>区画</th><th>設備名</th><th>テナント</th><th>契約開始日</th><th>契約終了日</th><th>月額</th></tr></thead><tbody>
-        {bicycleRows.map((row) => <tr key={row.unit_id}><td><strong>{row.unit_code}</strong></td><td>{row.unit_name || '駐輪場'}</td><td>{row.tenant_name || '—'}</td><td>{row.contract_start_date || '—'}</td><td>{row.contract_end_date || '継続中'}</td><td>{Number(row.monthly_total_amount ?? 0).toLocaleString('ja-JP')} 円</td></tr>)}
+        {bicycleRows.map((row) => { const parkingRow = rows.find((entry) => entry.unit_id === row.unit_id && entry.lease_contract_id === row.lease_contract_id); return <tr key={row.unit_id}><td><strong>{row.unit_code}</strong></td><td>{row.unit_name || '駐輪場'}</td><td>{row.tenant_name || '—'}</td><td>{row.contract_start_date || '—'}</td><td>{row.contract_end_date || '継続中'}</td><td>{parkingRow?.parking_fee_effective_from ? `${Number(parkingRow.monthly_parking_fee).toLocaleString('ja-JP')} 円` : '未設定'}</td></tr>; })}
         {!loading && bicycleRows.length === 0 && <tr><td colSpan={6} className="parking-empty">基準日時点のバイク・自転車契約はありません。</td></tr>}
       </tbody></table></div>
     </section>
@@ -612,254 +360,5 @@ export function ParkingPage({ canManage }: { canManage: boolean }) {
       }}
     /> : null}
 
-    {importOpen ? <ParkingImportDialog
-      propertyId={propertyId} properties={properties} facilities={facilities} parkingTypes={parkingTypes}
-      onFacilitiesChanged={loadReferenceData} onClose={() => setImportOpen(false)}
-      onCommitted={async () => { setImportOpen(false); await loadParkingRows(propertyId, asOfDate); }}
-    /> : null}
   </section>;
-}
-
-function ParkingImportDialog({ propertyId, properties, facilities, parkingTypes, onFacilitiesChanged, onClose, onCommitted }: {
-  propertyId: string;
-  properties: PropertyOption[];
-  facilities: ParkingFacility[];
-  parkingTypes: ParkingType[];
-  onFacilitiesChanged: () => Promise<void>;
-  onClose: () => void;
-  onCommitted: () => Promise<void>;
-}) {
-  const [selectedPropertyId, setSelectedPropertyId] = useState(propertyId);
-  const [facilityId, setFacilityId] = useState(facilities.find((facility) => facility.property_id === propertyId)?.parking_facility_id ?? '');
-  const [asOfDate, setAsOfDate] = useState(today);
-  const [batchId, setBatchId] = useState('');
-  const [rows, setRows] = useState<ImportRow[]>([]);
-  const [tenants, setTenants] = useState<TenantOption[]>([]);
-  const [mainContracts, setMainContracts] = useState<MainContractCandidate[]>([]);
-  const [tenantQueries, setTenantQueries] = useState<Record<string, string>>({});
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [showFacilityForm, setShowFacilityForm] = useState(false);
-  const [facilityCode, setFacilityCode] = useState('MAIN');
-  const [facilityName, setFacilityName] = useState('');
-  const [parkingTypeId, setParkingTypeId] = useState('');
-
-  const propertyFacilities = facilities.filter((facility) => facility.property_id === selectedPropertyId);
-  const selectedProperty = properties.find((property) => property.asset_id === selectedPropertyId);
-  const propertyTenantIds = useMemo(() => new Set(mainContracts.map((contract) => contract.tenant_id)), [mainContracts]);
-  const tenantById = useMemo(() => new Map(tenants.map((tenant) => [tenant.tenant_id, tenant])), [tenants]);
-
-  useEffect(() => {
-    if (!supabase) return;
-    void Promise.all([
-      supabase.from('tenant_master').select('tenant_id, tenant_name').order('tenant_name'),
-      supabase.from('parking_main_contract_candidate').select('*').eq('property_id', selectedPropertyId),
-    ]).then(([tenantResult, contractResult]) => {
-      setTenants((tenantResult.data ?? []) as TenantOption[]);
-      setMainContracts((contractResult.data ?? []) as MainContractCandidate[]);
-    });
-  }, [selectedPropertyId]);
-
-  const createFacility = async () => {
-    if (!supabase || !facilityCode.trim() || !facilityName.trim()) return;
-    setBusy(true); setMessage('');
-    const { data, error } = await supabase.from('parking_facility_master').insert({
-      property_id: selectedPropertyId,
-      facility_code: facilityCode.trim().toUpperCase(),
-      facility_name: facilityName.trim(),
-      parking_type_id: parkingTypeId ? Number(parkingTypeId) : null,
-    }).select('parking_facility_id').single();
-    if (error) setMessage(`施設を登録できませんでした: ${error.message}`);
-    else { await onFacilitiesChanged(); setFacilityId(data.parking_facility_id); setShowFacilityForm(false); }
-    setBusy(false);
-  };
-
-  const loadBatchRows = async (nextBatchId: string) => {
-    if (!supabase) return;
-    const { data, error } = await supabase.from('parking_import_row').select('*')
-      .eq('parking_import_batch_id', nextBatchId).order('source_row_number');
-    if (error) throw error;
-    setRows((data ?? []) as ImportRow[]);
-  };
-
-  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !supabase || !facilityId) return;
-    setBusy(true); setMessage('Excelを解析しています…');
-    try {
-      const [{ sheetName, rows: parsedRows }, fileHash] = await Promise.all([
-        atImportStage('Excel解析', () => parseParkingWorkbook(file)),
-        atImportStage('ファイル照合値の計算', () => hashFile(file)),
-      ]);
-      const { data, error } = await supabase.rpc('prepare_parking_import', {
-        p_property_id: selectedPropertyId,
-        p_parking_facility_id: facilityId,
-        p_as_of_date: asOfDate,
-        p_source_file_name: file.name,
-        p_source_sheet_name: sheetName,
-        p_source_file_hash: fileHash,
-        p_rows: parsedRows,
-      });
-      if (error) throw new Error(`取込準備RPC: ${describeUnknownError(error)}`);
-      setBatchId(String(data));
-      await loadBatchRows(String(data));
-      setMessage(`${parsedRows.length}行を読み込みました。状態・契約先・内外区分を確認してください。`);
-    } catch (loadError) {
-      console.error('Parking Excel import failed', loadError);
-      setMessage(`Excelを読み込めませんでした: ${describeUnknownError(loadError)}`);
-    }
-    setBusy(false);
-  };
-
-  const updateRow = (rowId: string, patch: Partial<ImportRow>) => {
-    setRows((current) => current.map((row) => row.parking_import_row_id === rowId && row.validation_status !== 'committed'
-      ? { ...row, ...patch, validation_status: row.validation_status === 'error' ? 'ready' : row.validation_status, validation_messages: row.validation_status === 'error' ? [] : row.validation_messages }
-      : row));
-  };
-
-  const setImportStatus = (row: ImportRow, status: ParkingImportStatus) => {
-    updateRow(row.parking_import_row_id, {
-      matched_tenant_id: status === 'occupied' ? row.matched_tenant_id : null,
-      parking_scope: status === 'occupied' ? row.parking_scope : null,
-      main_lease_contract_id: status === 'occupied' ? row.main_lease_contract_id : null,
-      monthly_parking_fee: null,
-      raw_payload: { ...(row.raw_payload ?? {}), parking_status: status, is_vacant: status === 'vacant' },
-    });
-  };
-
-  const applyScopeToAll = (scope: ParkingScope) => {
-    setRows((current) => current.map((row) => isNonContractImportRow(row) ? row : ({
-      ...row, parking_scope: scope, main_lease_contract_id: scope === 'external' ? null : row.main_lease_contract_id,
-    })));
-  };
-
-  const tenantChoices = (row: ImportRow): TenantOption[] => {
-    const search = normalizeText(tenantQueries[row.parking_import_row_id] ?? '');
-    const selectedTenant = row.matched_tenant_id ? tenantById.get(row.matched_tenant_id) : undefined;
-    let choices = search
-      ? tenants.filter((tenant) => normalizeText(tenant.tenant_name).includes(search))
-      : tenants.filter((tenant) => propertyTenantIds.has(tenant.tenant_id));
-    choices = [...choices].sort((left, right) => {
-      const leftProperty = propertyTenantIds.has(left.tenant_id) ? 0 : 1;
-      const rightProperty = propertyTenantIds.has(right.tenant_id) ? 0 : 1;
-      return leftProperty - rightProperty || collator.compare(left.tenant_name, right.tenant_name);
-    }).slice(0, 50);
-    if (selectedTenant && !choices.some((tenant) => tenant.tenant_id === selectedTenant.tenant_id)) choices.unshift(selectedTenant);
-    return choices;
-  };
-
-  const ready = rows.length > 0 && rows.every((row) => isNonContractImportRow(row) || Boolean(
-    row.matched_tenant_id && row.parking_scope
-      && (row.parking_scope === 'external' || row.main_lease_contract_id),
-  ));
-
-  const commit = async () => {
-    if (!supabase || !batchId || !ready) return;
-    setBusy(true); setMessage('取込内容を反映しています…');
-    try {
-      const pendingRows = rows.filter((row) => row.validation_status !== 'committed');
-      const results = await Promise.all(pendingRows.map((row) => {
-        const status = importRowStatus(row);
-        const nonContract = status !== 'occupied';
-        return supabase!.from('parking_import_row').update({
-          matched_tenant_id: nonContract ? null : row.matched_tenant_id,
-          parking_scope: nonContract ? null : row.parking_scope,
-          main_lease_contract_id: nonContract || row.parking_scope !== 'internal' ? null : row.main_lease_contract_id,
-          monthly_parking_fee: null,
-          raw_payload: { ...(row.raw_payload ?? {}), parking_status: status, is_vacant: status === 'vacant', monthly_parking_fee: null },
-          validation_status: 'ready',
-          validation_messages: status === 'vacant'
-            ? ['空き区画として登録します']
-            : status === 'unavailable'
-              ? ['使用不可区画として登録します']
-              : [],
-        }).eq('parking_import_row_id', row.parking_import_row_id);
-      }));
-      const updateError = results.find((result) => result.error)?.error;
-      if (updateError) throw updateError;
-      const { data, error } = await supabase.rpc('commit_parking_import', { p_batch_id: batchId });
-      if (error) throw error;
-      const commitResult = data as { failed_count?: number; committed_count?: number } | null;
-      const failedRows = Number(commitResult?.failed_count ?? 0);
-      const committedRows = Number(commitResult?.committed_count ?? 0);
-      await loadBatchRows(batchId);
-      if (failedRows > 0) {
-        setMessage(`${committedRows}行を反映しました。${failedRows}行はエラーのため未反映です。エラー内容を確認して修正後、再度反映してください。`);
-      } else {
-        setMessage(`${committedRows}行を反映しました。`);
-        await onCommitted();
-      }
-    } catch (commitError) {
-      console.error('Parking Excel commit failed', commitError);
-      setMessage(`反映できませんでした: ${describeUnknownError(commitError)}`);
-    }
-    setBusy(false);
-  };
-
-  const completedRows = rows.filter((row) => isNonContractImportRow(row) || Boolean(
-    row.matched_tenant_id && row.parking_scope
-      && (row.parking_scope === 'external' || row.main_lease_contract_id),
-  )).length;
-  const committedRowsCount = rows.filter((row) => row.validation_status === 'committed').length;
-  const failedRowsCount = rows.filter((row) => row.validation_status === 'error').length;
-
-  return <div className="parking-import-backdrop"><div className="parking-import-dialog" role="dialog" aria-modal="true" aria-labelledby="parking-import-title">
-    <header><div><p className="section-kicker">PARKING IMPORT</p><h2 id="parking-import-title">駐車場Excel取込</h2></div><button onClick={onClose} aria-label="取込画面を閉じる">×</button></header>
-    <div className="parking-import-controls">
-      <label>物件<select value={selectedPropertyId} disabled={Boolean(batchId)} onChange={(event) => {
-        const next = event.target.value;
-        setSelectedPropertyId(next);
-        setFacilityId(facilities.find((facility) => facility.property_id === next)?.parking_facility_id ?? '');
-        setTenantQueries({});
-      }}>{properties.map((property) => <option key={property.asset_id} value={property.asset_id}>{property.asset_name}</option>)}</select></label>
-      <label>駐車場施設<select value={facilityId} disabled={Boolean(batchId)} onChange={(event) => setFacilityId(event.target.value)}>
-        <option value="">施設を選択</option>{propertyFacilities.map((facility) => <option key={facility.parking_facility_id} value={facility.parking_facility_id}>{facility.facility_name}</option>)}
-      </select></label>
-      <label>基準日<input type="date" value={asOfDate} disabled={Boolean(batchId)} onChange={(event) => setAsOfDate(event.target.value)} /></label>
-      {!batchId ? <button className="secondary-button" onClick={() => void downloadParkingTemplate()}>標準ひな型</button> : null}
-      {!batchId ? <button className="secondary-button" onClick={() => { setFacilityName(`${selectedProperty?.asset_name ?? ''} 駐車場`); setShowFacilityForm(true); }}>施設を追加</button> : null}
-      {!batchId ? <label className="parking-file-button">Excelを選択<input type="file" accept=".xlsx" disabled={!facilityId || busy} onChange={(event) => void handleFile(event)} /></label> : null}
-    </div>
-
-    {showFacilityForm ? <div className="parking-facility-form">
-      <label>施設コード<input value={facilityCode} onChange={(event) => setFacilityCode(event.target.value)} /><small>レントロールの種別判定に使用します（例：BIKE、MACHINE1、MACHINE2、FLAT）。</small></label>
-      <label>施設名<input value={facilityName} onChange={(event) => setFacilityName(event.target.value)} /></label>
-      <label>駐車場種別<select value={parkingTypeId} onChange={(event) => setParkingTypeId(event.target.value)}><option value="">未設定</option>{parkingTypes.map((type) => <option key={type.parking_type_id} value={type.parking_type_id}>{type.parking_type_name}</option>)}</select></label>
-      <button className="primary-button" disabled={busy || !facilityCode.trim() || !facilityName.trim()} onClick={() => void createFacility()}>施設を登録</button>
-    </div> : null}
-
-    {message ? <p className="parking-import-message">{message}</p> : null}
-    {rows.length ? <>
-      <div className="parking-import-bulk"><span>契約中の行を一括設定</span><button onClick={() => applyScopeToAll('internal')}>すべて内部</button><button onClick={() => applyScopeToAll('external')}>すべて外部</button></div>
-      <p className="parking-import-message">月額駐車料はこの画面では入力しません。反映後、契約中の未設定枠が「対応依頼」に表示されます。</p>
-      <div className="parking-import-table-wrap"><table className="parking-import-table"><thead><tr><th>行</th><th>枠</th><th>状態</th><th>契約先</th><th>内外</th><th>主契約</th><th>暗証番号</th><th>車両</th><th>備考</th><th>反映結果</th></tr></thead><tbody>
-        {rows.map((row) => {
-          const status = importRowStatus(row);
-          const locked = row.validation_status === 'committed';
-          const nonContract = status !== 'occupied';
-          const candidates = mainContracts.filter((contract) => contract.tenant_id === row.matched_tenant_id);
-          const choices = tenantChoices(row);
-          const needsAction = status === 'occupied' && (!row.matched_tenant_id || !row.parking_scope || row.parking_scope === 'internal' && !row.main_lease_contract_id);
-          return <tr key={row.parking_import_row_id} className={needsAction ? 'needs-action' : ''}>
-            <td>{row.source_row_number}</td><td><strong>{row.space_number}</strong></td>
-            <td><select value={status} disabled={locked} onChange={(event) => setImportStatus(row, event.target.value as ParkingImportStatus)}><option value="occupied">契約中</option><option value="vacant">空き</option><option value="unavailable">使用不可</option></select></td>
-            <td>{nonContract ? <strong>{status === 'unavailable' ? '使用不可区画' : '空き区画'}</strong> : <>
-              <span>{row.tenant_name}</span>
-              <input value={tenantQueries[row.parking_import_row_id] ?? ''} disabled={locked} onChange={(event) => setTenantQueries((current) => ({ ...current, [row.parking_import_row_id]: event.target.value }))} placeholder="契約先を検索" aria-label={`枠${row.space_number}の契約先を検索`} />
-              <select value={row.matched_tenant_id ?? ''} disabled={locked} onChange={(event) => updateRow(row.parking_import_row_id, { matched_tenant_id: event.target.value || null, main_lease_contract_id: null })}>
-                <option value="">契約先を選択</option>{choices.map((tenant) => <option key={tenant.tenant_id} value={tenant.tenant_id}>{propertyTenantIds.has(tenant.tenant_id) ? '【物件内】' : ''}{tenant.tenant_name}</option>)}
-              </select>
-              <small>{tenantQueries[row.parking_import_row_id]?.trim() ? `検索結果 ${choices.length}件` : `物件内候補 ${propertyTenantIds.size}件。見つからない場合は検索`}</small>
-            </>}</td>
-            <td>{nonContract ? '—' : <select value={row.parking_scope ?? ''} disabled={locked} onChange={(event) => updateRow(row.parking_import_row_id, { parking_scope: event.target.value as ParkingScope || null, main_lease_contract_id: event.target.value === 'external' ? null : row.main_lease_contract_id })}><option value="">未選択</option><option value="internal">内部</option><option value="external">外部</option></select>}</td>
-            <td>{!nonContract && row.parking_scope === 'internal' ? <select value={row.main_lease_contract_id ?? ''} disabled={locked} onChange={(event) => updateRow(row.parking_import_row_id, { main_lease_contract_id: event.target.value || null })}><option value="">主契約を選択</option>{candidates.map((contract) => <option key={contract.lease_contract_id} value={contract.lease_contract_id}>{contract.unit_labels} / {displayDate(contract.contract_start_date)}</option>)}</select> : '—'}</td>
-            <td className="access-code">{row.access_code || '—'}</td>
-            <td>{nonContract ? '—' : <>{row.vehicle_model || '—'}<small>{row.registration_number || ''}</small></>}</td><td>{row.notes || '—'}</td>
-            <td><strong className={`parking-import-row-status ${row.validation_status}`}>{row.validation_status === 'committed' ? '反映済み' : row.validation_status === 'error' ? 'エラー' : '未反映'}</strong>{row.validation_messages?.map((item, index) => <small className="parking-import-row-error" key={`${row.parking_import_row_id}-${index}`}>{item}</small>)}</td>
-          </tr>;
-        })}
-      </tbody></table></div>
-    </> : <div className="parking-import-empty"><strong>.xlsxを選択してください</strong><p>標準ひな型を利用すると、列名の表記ゆれを気にせず取り込めます。既存ファイルも代表的な表記ゆれを吸収します。</p></div>}
-    <footer><span>{rows.length ? `${completedRows} / ${rows.length} 行の確認完了　・　反映済み ${committedRowsCount} 行${failedRowsCount ? `　・　エラー ${failedRowsCount} 行` : ''}` : ''}</span><div><button className="secondary-button" onClick={onClose}>キャンセル</button><button className="primary-button" disabled={!ready || busy || committedRowsCount === rows.length} onClick={() => void commit()}>{busy ? '処理中…' : failedRowsCount ? '未反映行を再反映' : '確認して反映'}</button></div></footer>
-  </div></div>;
 }
