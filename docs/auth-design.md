@@ -2,9 +2,13 @@
 
 ## 1. 認証方式
 
-本システムの認証方式には **Supabase Auth** を採用する。
+本システムの認証方式には **Supabase Auth の Google OAuth** を採用する。ログインは会社の Google Workspace アカウント（`@sk-housing.jp`）で行い、メールアドレス・パスワードによるアプリへのログインは提供しない。
 
-Supabase Auth により、メールアドレス・パスワード認証を基本とし、将来的な要件に応じて OAuth プロバイダーや多要素認証（MFA）の追加を検討できる構成とする。アプリケーション側では Supabase が発行するセッションおよび JWT を利用し、ログイン状態とユーザー識別を行う。
+Google OAuth アプリは Google Workspace 内部向けに設定し、`hd=sk-housing.jp` はアカウント選択のヒントとして利用する。`hd` パラメーターだけをドメイン制限の根拠にはしない。Supabase の発行するセッションと JWT を使ってアプリ内のユーザー識別・認可を行う。
+
+一般利用者のセルフサインアップは無効のままとし、管理者がアカウント管理画面で会社メールアドレス、担当者、ロールを登録する。登録時点で利用可能とし、初期パスワードの発行・変更は不要とする。
+
+Google OAuth の有効化、Google Cloud OAuth クライアント、Supabase の認証コールバックURL、およびアプリの許可リダイレクトURLは環境ごとに設定する。
 
 ## 2. 想定ロール
 
@@ -62,7 +66,9 @@ RLS ポリシーでは、Supabase Auth のユーザー ID とロール情報を�
 ## 6. アカウントと担当者の紐づけ
 
 - `auth.users` と `employee_master` は `user_profiles` を介して最大1対1で紐づける。
-- 従業員マスタのメールアドレスと Auth のメールアドレスが一致し、在籍状態が `active` の場合、Auth 登録トリガーが `staff`・`active` のプロフィールを自動作成する。
-- 一致しない登録は `pending` の仮アカウントとして作成し、`admin` が担当者・ロールを設定して有効化するまで業務データへアクセスさせない。
+- 管理者はアカウント管理画面で `@sk-housing.jp` のメールアドレス、在籍中の担当者、ロールを登録する。Authユーザーとプロフィールを作成し、`account_status = 'active'`、`must_change_password = false` として直ちに利用可能にする。
+- Authユーザー作成時の既存トリガーはプロフィールを初期化する。その後、管理者用 Edge Function が選択された担当者・ロール・有効状態を設定する。
+- 利用者は登録されたメールアドレスと同じ Google Workspace アカウントでログインする。既存 Auth ユーザーへの Google identity 紐付け後も `auth.users.id` を維持し、業務データの作成者・承認者などの参照を変えない。
+- 既存アカウントの移行では、既存のメールアドレスと社員紐付け・ロールを維持する。移行前に Google identity が正しい既存ユーザーへ紐付くことを確認する。
 - `employee_master.employment_status` が `inactive` になった場合、紐づくアカウントは `suspended` に同期する。過去の業務履歴は削除しない。
 - 初回の管理者は、対象アカウント作成後に Supabase SQL Editor で `user_profiles.role` を `admin` に更新して設定する。

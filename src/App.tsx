@@ -111,12 +111,17 @@ function App() {
       .maybeSingle();
     if (requestId !== profileRequestIdRef.current || currentUserIdRef.current !== requestedUserId) return;
     if (!error || blockUi) setProfile(error ? null : data as UserProfile | null);
-    if (blockUi) setIsLoading(false);
+    // A later, non-blocking auth event can supersede the initial blocking
+    // request. The latest request must always release the route-level loader.
+    setIsLoading(false);
   };
 
   useEffect(() => {
     if (!supabase) { setIsLoading(false); return; }
-    void supabase.auth.getSession().then(({ data }) => void loadProfile(data.session, true));
+    let isMounted = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (isMounted) void loadProfile(data.session, true);
+    });
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (event === 'INITIAL_SESSION') return;
 
@@ -126,9 +131,17 @@ function App() {
       }
 
       const userChanged = (nextSession?.user.id ?? null) !== currentUserIdRef.current;
-      void loadProfile(nextSession, userChanged);
+      // Supabase Auth holds an internal lock while notifying listeners. Defer
+      // profile queries until the callback returns so they cannot block OAuth
+      // session processing.
+      window.setTimeout(() => {
+        if (isMounted) void loadProfile(nextSession, userChanged);
+      }, 0);
     });
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   const signOut = async () => { await supabase?.auth.signOut(); setSession(null); setProfile(null); };
@@ -197,7 +210,8 @@ function ProtectedRoute({ session, profile, isLoading }: { session: Session | nu
 function LoginRoute({ session, profile }: { session: Session | null; profile: UserProfile | null }) {
   const location = useLocation();
   const adminAccessDenied = Boolean((location.state as { adminAccessDenied?: boolean } | null)?.adminAccessDenied);
-  if (session && profile?.account_status === 'active' && !adminAccessDenied) return <Navigate to={profile.must_change_password ? '/change-password' : '/dashboard'} replace />;
+  const destination = new URLSearchParams(location.search).get('destination') === 'admin-console' ? '/admin-console' : '/dashboard';
+  if (session && profile?.account_status === 'active' && !adminAccessDenied) return <Navigate to={destination} replace />;
   return <AuthPage adminAccessDenied={adminAccessDenied} />;
 }
 
@@ -214,23 +228,27 @@ function AdminContractPage({ role }: { role: AccountRole }) {
 }
 
 function AuthPage({ adminAccessDenied = false }: { adminAccessDenied?: boolean }) {
-  const navigate = useNavigate();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-
+  const [error, setError] = useState(() => new URLSearchParams(window.location.search).has('error')
+    ? 'Googleログインを完了できませんでした。@sk-housing.jp のアカウントを選択して再度お試しください。'
+    : '');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!email.includes('@')) return setError('メールアドレスを正しく入力してください。');
-    if (password.length < 6) return setError('パスワードは6文字以上で入力してください。');
+  const signInWithGoogle = async (destination: 'dashboard' | 'admin-console' = 'dashboard') => {
     if (!supabase) return setError('Supabaseの接続情報が設定されていません。');
-    setError(''); setIsSubmitting(true);
-    const result = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-    setIsSubmitting(false);
-    if (result.error) return setError(result.error.message);
-    const destination = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('data-destination');
-    navigate(destination === 'admin-console' ? '/admin-console' : '/dashboard', { replace: true });
+    setError('');
+    setIsSubmitting(true);
+    const redirectUrl = new URL('login', new URL(import.meta.env.BASE_URL, window.location.origin));
+    if (destination === 'admin-console') redirectUrl.searchParams.set('destination', destination);
+    const { error: signInError } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: redirectUrl.toString(),
+        queryParams: { hd: 'sk-housing.jp', prompt: 'select_account' },
+      },
+    });
+    if (signInError) {
+      setIsSubmitting(false);
+      setError('Googleログインを開始できませんでした。時間をおいて再度お試しください。');
+    }
   };
 
   return <main className="auth-screen">
@@ -245,17 +263,19 @@ function AuthPage({ adminAccessDenied = false }: { adminAccessDenied?: boolean }
         <div className="mobile-brand brand"><span className="brand-mark">要</span><span>KANAME</span></div>
         <p className="eyebrow">WELCOME</p><h2>おかえりなさい</h2><p className="muted">ログインして業務をはじめましょう。</p>
         {adminAccessDenied && <p className="form-error">管理者権限がありません。管理者アカウントでログインしてください。</p>}
-        <form id="authForm" onSubmit={submit} noValidate>
-          <label>メールアドレス<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" autoComplete="email" /></label>
-          <label>パスワード<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="パスワードを入力" autoComplete="current-password" /></label>
-          {error && <p className="form-error">{error}</p>}
-          <button className="primary-button full" type="submit" disabled={isSubmitting || !isSupabaseConfigured}>{isSubmitting ? '処理中…' : 'ログインする'} <span>→</span></button>
-        </form>
-        <div className="auth-console-entry"><button className="auth-console-button" type="submit" form="authForm" data-destination="admin-console" disabled={isSubmitting || !isSupabaseConfigured}>{isSubmitting ? '確認中…' : '管理者コンソール'}</button></div>
-        <p className="demo-note">アカウントの発行はシステム管理者へお問い合わせください。</p>
+        {error && <p className="form-error">{error}</p>}
+        <button className="primary-button full" type="button" onClick={() => void signInWithGoogle()} disabled={isSubmitting || !isSupabaseConfigured}>
+          {isSubmitting ? 'Googleへ接続中…' : <><GoogleMark />Googleアカウントでログイン</>}
+        </button>
+        <div className="auth-console-entry"><button className="auth-console-button" type="button" onClick={() => void signInWithGoogle('admin-console')} disabled={isSubmitting || !isSupabaseConfigured}>{isSubmitting ? 'Googleへ接続中…' : '管理者コンソールにログイン'}</button></div>
+        <p className="demo-note">@sk-housing.jp のGoogle Workspaceアカウントをご利用ください。アカウントの発行はシステム管理者へお問い合わせください。</p>
       </div>
     </section>
   </main>;
+}
+
+function GoogleMark() {
+  return <svg aria-hidden="true" viewBox="0 0 48 48" width="18" height="18"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.91c-.58 2.96-2.28 5.47-4.81 7.16l7.73 6C44.34 37.94 46.98 31.81 46.98 24.55Z"/><path fill="#FBBC05" d="M10.53 28.59A14.4 14.4 0 0 1 9.75 24c0-1.59.27-3.13.76-4.59l-7.98-6.19A23.9 23.9 0 0 0 0 24c0 3.87.93 7.54 2.56 10.78l7.97-6.19Z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.9-5.82l-7.73-6C30.02 37.91 27.26 39 24 39c-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 43.62 14.62 48 24 48Z"/></svg>;
 }
 
 function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut: () => Promise<void> }) {
@@ -320,7 +340,6 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selected, setSelected] = useState<UserProfile | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createdAccount, setCreatedAccount] = useState<{ email: string; password: string; loginUrl: string } | null>(null);
   const [filter, setFilter] = useState<AccountStatus | 'all'>('all');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -329,7 +348,7 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
     if (!supabase) return;
     setIsLoading(true);
     const [profileResult, employeeResult] = await Promise.all([
-      supabase.from('user_profiles').select('user_id, employee_id, email, role, account_status, must_change_password, approved_at, created_at, employee:employee_master(employee_name)').order('created_at', { ascending: false }),
+      supabase.from('user_profiles').select('user_id, employee_id, email, role, account_status, approved_at, created_at, employee:employee_master(employee_name)').order('created_at', { ascending: false }),
       supabase.from('employee_master').select('employee_id, employee_name, email, employment_status, department:department_master(department_name)').order('employee_name'),
     ]);
     if (profileResult.error || employeeResult.error) {
@@ -353,25 +372,22 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
     setSelected(null); setMessage('アカウント情報を更新しました。'); await loadData();
   };
 
-  const createAccount = async (draft: { email: string; password: string; employee_id: string; role: AccountRole }) => {
+  const createAccount = async (draft: { email: string; employee_id: string; role: AccountRole }) => {
     if (!supabase) return;
     const { error } = await supabase.functions.invoke('admin-create-user', { body: draft });
     if (error) { setMessage(`アカウントを作成できませんでした: ${error.message}`); return; }
     setShowCreateModal(false);
-    const appBaseUrl = new URL(import.meta.env.BASE_URL, window.location.origin);
-    setCreatedAccount({ email: draft.email.trim(), password: draft.password, loginUrl: new URL('login', appBaseUrl).toString() });
-    setMessage('アカウントを作成しました。初期パスワードはこの画面を閉じると再表示できません。');
+    setMessage('アカウントを作成しました。社員はGoogle Workspaceアカウントでログインできます。');
     await loadData();
   };
 
   return <>
-    <section className="page-heading"><div><p className="section-kicker">ADMINISTRATION</p><h2>アカウント管理</h2><p>ログインアカウント、担当者の紐づけ、権限、利用状態を管理します。</p></div><button className="primary-button" onClick={() => { setCreatedAccount(null); setShowCreateModal(true); }}>アカウントを作成</button></section>
+    <section className="page-heading"><div><p className="section-kicker">ADMINISTRATION</p><h2>アカウント管理</h2><p>Google Workspaceログイン、担当者の紐づけ、権限、利用状態を管理します。</p></div><button className="primary-button" onClick={() => setShowCreateModal(true)}>アカウントを作成</button></section>
     {message && <div className="account-message">{message}<button onClick={() => setMessage('')}>×</button></div>}
     <section className="account-summary"><SummaryCard label="承認待ち" value={profiles.filter((profile) => profile.account_status === 'pending').length} tone="orange" /><SummaryCard label="有効なアカウント" value={profiles.filter((profile) => profile.account_status === 'active').length} tone="green" /><SummaryCard label="利用停止中" value={profiles.filter((profile) => profile.account_status === 'suspended').length} tone="gray" /></section>
     <section className="account-panel"><header><div><h3>アカウント一覧</h3><p>未照合アカウントは、担当者を設定して承認してください。</p></div><select value={filter} onChange={(event) => setFilter(event.target.value as AccountStatus | 'all')}><option value="all">すべての状態</option><option value="pending">承認待ち</option><option value="active">有効</option><option value="suspended">利用停止</option></select></header>
-      {isLoading ? <div className="empty-state"><strong>読み込み中です…</strong></div> : <div className="table-wrap"><table className="account-table"><thead><tr><th>メールアドレス</th><th>担当者・部門</th><th>ロール</th><th>状態</th><th>登録日時</th><th /></tr></thead><tbody>{filteredProfiles.map((profile) => { const employee = employees.find((item) => item.employee_id === profile.employee_id); return <tr key={profile.user_id}><td><strong>{profile.email}</strong></td><td>{employee ? <><strong>{employee.employee_name}</strong><small>{employee.department?.department_name ?? '部門未設定'}</small></> : <span className="unlinked">未紐づけ</span>}</td><td><span className="role-pill">{roleLabel(profile.role)}</span></td><td><AccountStatusBadge status={profile.account_status} />{profile.must_change_password && <small className="account-password-pending">初回パスワード変更待ち</small>}</td><td>{new Date(profile.created_at).toLocaleDateString('ja-JP')}</td><td><button className="row-action" onClick={() => setSelected(profile)}>{profile.account_status === 'pending' ? '承認・設定' : '編集'}</button></td></tr>; })}</tbody></table></div>}
+      {isLoading ? <div className="empty-state"><strong>読み込み中です…</strong></div> : <div className="table-wrap"><table className="account-table"><thead><tr><th>メールアドレス</th><th>担当者・部門</th><th>ロール</th><th>状態</th><th>登録日時</th><th /></tr></thead><tbody>{filteredProfiles.map((profile) => { const employee = employees.find((item) => item.employee_id === profile.employee_id); return <tr key={profile.user_id}><td><strong>{profile.email}</strong></td><td>{employee ? <><strong>{employee.employee_name}</strong><small>{employee.department?.department_name ?? '部門未設定'}</small></> : <span className="unlinked">未紐づけ</span>}</td><td><span className="role-pill">{roleLabel(profile.role)}</span></td><td><AccountStatusBadge status={profile.account_status} /></td><td>{new Date(profile.created_at).toLocaleDateString('ja-JP')}</td><td><button className="row-action" onClick={() => setSelected(profile)}>{profile.account_status === 'pending' ? '承認・設定' : '編集'}</button></td></tr>; })}</tbody></table></div>}
     </section>
-    {createdAccount && <CreatedAccountModal account={createdAccount} onClose={() => setCreatedAccount(null)} />}
     {showCreateModal && <CreateAccountModal employees={employees} profiles={profiles} onClose={() => setShowCreateModal(false)} onCreate={createAccount} />}
     {selected && <AccountModal profile={selected} employees={employees} profiles={profiles} onClose={() => setSelected(null)} onSave={save} />}
   </>;
@@ -381,9 +397,8 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
 function AccountStatusBadge({ status }: { status: AccountStatus }) { const label = status === 'pending' ? '承認待ち' : status === 'active' ? '有効' : '利用停止'; return <span className={`account-status ${status}`}>{label}</span>; }
 function roleLabel(role: AccountRole) { return role === 'admin' ? 'システム管理者' : role === 'manager' ? '業務管理者' : role === 'staff' ? '担当者' : '参照専用'; }
 
-function CreateAccountModal({ employees, profiles, onClose, onCreate }: { employees: Employee[]; profiles: UserProfile[]; onClose: () => void; onCreate: (draft: { email: string; password: string; employee_id: string; role: AccountRole }) => Promise<void> }) {
+function CreateAccountModal({ employees, profiles, onClose, onCreate }: { employees: Employee[]; profiles: UserProfile[]; onClose: () => void; onCreate: (draft: { email: string; employee_id: string; role: AccountRole }) => Promise<void> }) {
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [employeeId, setEmployeeId] = useState('');
   const [role, setRole] = useState<AccountRole>('staff');
   const [error, setError] = useState('');
@@ -394,25 +409,15 @@ function CreateAccountModal({ employees, profiles, onClose, onCreate }: { employ
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail.includes('@')) return setError('メールアドレスを正しく入力してください。');
+    if (!/^[^\s@]+@sk-housing\.jp$/i.test(normalizedEmail)) return setError('@sk-housing.jp のメールアドレスを入力してください。');
     if (profiles.some((profile) => profile.email.toLowerCase() === normalizedEmail)) return setError('このメールアドレスのアカウントは既に登録されています。');
-    if (password.length < 6) return setError('仮パスワードは6文字以上で入力してください。');
     if (!employeeId) return setError('担当者を選択してください。');
     setError(''); setIsSaving(true);
-    await onCreate({ email: normalizedEmail, password, employee_id: employeeId, role });
+    await onCreate({ email: normalizedEmail, employee_id: employeeId, role });
     setIsSaving(false);
   };
 
-  return <div className="modal-backdrop"><form className="modal account-modal" onSubmit={(event) => void submit(event)}><header><div><p className="eyebrow">NEW ACCOUNT</p><h2>アカウントを作成</h2></div><button type="button" className="modal-close" onClick={onClose}>×</button></header><div className="modal-body"><label>メールアドレス（ログインID）<input type="email" autoComplete="off" value={email} onChange={(event) => setEmail(event.target.value)} required /></label><label>仮パスワード<input type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={6} required /></label><label>担当者<select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} required><option value="">担当者を選択</option>{availableEmployees.map((employee) => <option value={employee.employee_id} key={employee.employee_id}>{employee.employee_name}（{employee.department?.department_name ?? '部門未設定'}）</option>)}</select></label><label>ロール<select value={role} onChange={(event) => setRole(event.target.value as AccountRole)}><option value="admin">システム管理者</option><option value="manager">業務管理者</option><option value="staff">担当者</option><option value="viewer">参照専用</option></select></label><p className="modal-hint">初回ログイン後にパスワード変更が必要です。初期パスワードは作成完了時に一度だけ表示されます。</p>{error && <p className="form-error">{error}</p>}</div><footer><button type="button" className="secondary-button" onClick={onClose}>キャンセル</button><button className="primary-button" type="submit" disabled={isSaving}>{isSaving ? '作成中…' : '作成する'}</button></footer></form></div>;
-}
-
-function CreatedAccountModal({ account, onClose }: { account: { email: string; password: string; loginUrl: string }; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard.writeText(`初回ログインURL: ${account.loginUrl}\nID: ${account.email}\n仮パスワード: ${account.password}`);
-    setCopied(true);
-  };
-  return <div className="modal-backdrop"><section className="modal account-modal"><header><div><p className="eyebrow">ACCOUNT CREATED</p><h2>案内情報を控えてください</h2></div><button type="button" className="modal-close" onClick={onClose}>×</button></header><div className="modal-body"><p>この情報は画面を閉じると再表示できません。定型メールやチャットなど、別途決めた方法で利用者へ案内してください。</p><div className="read-only-field"><span>初回ログインURL</span><strong>{account.loginUrl}</strong></div><div className="read-only-field"><span>ID</span><strong>{account.email}</strong></div><div className="read-only-field"><span>仮パスワード</span><strong>{account.password}</strong></div><p className="modal-hint">初回ログイン後にパスワード変更が必要です。</p></div><footer><button type="button" className="secondary-button" onClick={() => void copy()}>{copied ? 'コピーしました' : '案内内容をコピー'}</button><button type="button" className="primary-button" onClick={onClose}>閉じる</button></footer></section></div>;
+  return <div className="modal-backdrop"><form className="modal account-modal" onSubmit={(event) => void submit(event)}><header><div><p className="eyebrow">NEW ACCOUNT</p><h2>アカウントを作成</h2></div><button type="button" className="modal-close" onClick={onClose}>×</button></header><div className="modal-body"><label>会社メールアドレス<input type="email" autoComplete="off" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@sk-housing.jp" required /></label><label>担当者<select value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} required><option value="">担当者を選択</option>{availableEmployees.map((employee) => <option value={employee.employee_id} key={employee.employee_id}>{employee.employee_name}（{employee.department?.department_name ?? '部門未設定'}）</option>)}</select></label><label>ロール<select value={role} onChange={(event) => setRole(event.target.value as AccountRole)}><option value="admin">システム管理者</option><option value="manager">業務管理者</option><option value="staff">担当者</option><option value="viewer">参照専用</option></select></label><p className="modal-hint">登録後すぐに、指定した会社メールアドレスのGoogle Workspaceアカウントでログインできます。</p>{error && <p className="form-error">{error}</p>}</div><footer><button type="button" className="secondary-button" onClick={onClose}>キャンセル</button><button className="primary-button" type="submit" disabled={isSaving}>{isSaving ? '作成中…' : '作成する'}</button></footer></form></div>;
 }
 
 function AccountModal({ profile, employees, profiles, onClose, onSave }: { profile: UserProfile; employees: Employee[]; profiles: UserProfile[]; onClose: () => void; onSave: (draft: Pick<UserProfile, 'employee_id' | 'role' | 'account_status'>) => Promise<void> }) {
