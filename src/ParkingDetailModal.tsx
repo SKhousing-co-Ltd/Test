@@ -566,13 +566,14 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   const contractKey = contractMeta?.source_record_key || row.lease_contract_id?.slice(0, 8) || '—';
   const currentContractStatus = contractStatusLabels[contractMeta?.contract_status ?? ''] ?? contractMeta?.contract_status ?? '—';
   const canOpenParkingDocument = Boolean(row.lease_contract_id && (parkingTemplateReady || contractDocument));
+  const isBicycle = row.unit_type === 'bicycle_parking';
 
   return <div className="parking-detail-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="parking-detail-modal" role="dialog" aria-modal="true" aria-labelledby="parking-detail-modal-title">
       <header>
         <div>
           <p className="section-kicker">PARKING REGISTRATION</p>
-          <h2 id="parking-detail-modal-title">駐車枠 {row.space_number} の登録情報</h2>
+          <h2 id="parking-detail-modal-title">{isBicycle ? '駐輪枠' : '駐車枠'} {row.space_number} の登録情報</h2>
           <span>{row.property_name} / {row.facility_name}{row.parking_type_name ? ` / ${row.parking_type_name}` : ''}</span>
         </div>
         <button className="parking-detail-close" onClick={onClose} aria-label="詳細画面を閉じる">×</button>
@@ -583,26 +584,26 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       {loading ? <div className="parking-detail-loading">登録情報を読み込んでいます…</div> : <div className="parking-detail-modal-body">
         <section>
           <div className="parking-detail-section-title">
-            <div><h3>駐車枠情報</h3><p>駐車場設備側の登録情報</p></div>
+            <div><h3>{isBicycle ? '駐輪枠情報' : '駐車枠情報'}</h3><p>施設側の登録情報</p></div>
             <span className={`parking-state ${spaceStatusClass}`}>{spaceStatusLabel}</span>
           </div>
           <div className="parking-detail-form-grid">
             <FormField label="物件" value={row.property_name} editing={false} />
-            <FormField label="駐車場" value={row.facility_name} editing={false} />
-            <FormField label="駐車場種別" value={row.parking_type_name ?? '—'} editing={false} />
+            <FormField label="施設" value={row.facility_name} editing={false} />
+            {!isBicycle && <FormField label="駐車場種別" value={row.parking_type_name ?? '—'} editing={false} />}
             <FormField label="ユニットコード" value={row.unit_code} editing={false} />
             <FormField label="枠番" value={form.space_number} editing={editing}><input value={form.space_number} onChange={(event) => set('space_number', event.target.value)} /></FormField>
-            <FormField label="全長上限（mm）" value={form.length_mm} editing={editing}><input type="number" min="0" value={form.length_mm} onChange={(event) => set('length_mm', event.target.value)} /></FormField>
+            {!isBicycle && <><FormField label="全長上限（mm）" value={form.length_mm} editing={editing}><input type="number" min="0" value={form.length_mm} onChange={(event) => set('length_mm', event.target.value)} /></FormField>
             <FormField label="全幅上限（mm）" value={form.width_mm} editing={editing}><input type="number" min="0" value={form.width_mm} onChange={(event) => set('width_mm', event.target.value)} /></FormField>
             <FormField label="全高上限（mm）" value={form.height_mm} editing={editing}><input type="number" min="0" value={form.height_mm} onChange={(event) => set('height_mm', event.target.value)} /></FormField>
-            <FormField label="重量上限（kg）" value={form.weight_limit_kg} editing={editing}><input type="number" min="0" value={form.weight_limit_kg} onChange={(event) => set('weight_limit_kg', event.target.value)} /></FormField>
+            <FormField label="重量上限（kg）" value={form.weight_limit_kg} editing={editing}><input type="number" min="0" value={form.weight_limit_kg} onChange={(event) => set('weight_limit_kg', event.target.value)} /></FormField></>}
           </div>
         </section>
 
         <section className={!occupied ? 'parking-detail-disabled-section' : ''}>
           <div className="parking-detail-section-title">
             <div>
-              <h3>駐車場契約</h3>
+              <h3>{isBicycle ? '駐輪場契約' : '駐車場契約'}</h3>
               <p>{occupied
                 ? `${displayDate(snapshotAsOfDate)} 時点の契約情報`
                 : unavailable
@@ -664,10 +665,10 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
               <FormField label="駐車料適用開始日" value={displayDate(form.parking_fee_effective_from || null)} editing={editing}>
                 <input type="date" value={form.parking_fee_effective_from} onChange={(event) => set('parking_fee_effective_from', event.target.value)} />
               </FormField>
-              <FormField label="月額共益費" value={currency(contractTotals.common)} editing={false} />
-              <FormField label="月額合計" value={currency(Number(form.monthly_parking_fee || 0) + contractTotals.common)} editing={false} />
+              {!isBicycle && <FormField label="月額共益費" value={currency(contractTotals.common)} editing={false} />}
+              <FormField label="月額合計" value={currency(Number(form.monthly_parking_fee || 0) + (isBicycle ? 0 : contractTotals.common))} editing={false} />
               <FormField label="敷金・保証金" value={currency(contractTotals.deposit)} editing={false} />
-              <FormField label="暗証番号" value={form.access_code} editing={editing}><input value={form.access_code} onChange={(event) => set('access_code', event.target.value)} /></FormField>
+              {!isBicycle && <FormField label="暗証番号" value={form.access_code} editing={editing}><input value={form.access_code} onChange={(event) => set('access_code', event.target.value)} /></FormField>}
               <FormField label="現在の契約管理状態" value={currentContractStatus} editing={false} />
               <FormField label="契約データ更新" value={displayDateTime(contractMeta?.updated_at ?? null)} editing={false} />
               <label className="parking-detail-field parking-detail-field-wide"><span>備考</span>{editing ? <textarea rows={3} value={form.notes} onChange={(event) => set('notes', event.target.value)} /> : <strong>{form.notes || '—'}</strong>}</label>
@@ -729,7 +730,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
           </> : null}
         </section>
 
-        {occupied ? <section>
+        {occupied && !isBicycle ? <section>
           <div className="parking-detail-section-title"><div><h3>車両情報</h3><p>現在の車両履歴の最新レコード</p></div></div>
           <div className="parking-detail-form-grid">
             <FormField label="車種" value={form.vehicle_model} editing={editing}><input value={form.vehicle_model} onChange={(event) => set('vehicle_model', event.target.value)} /></FormField>

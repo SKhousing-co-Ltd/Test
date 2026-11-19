@@ -11,6 +11,7 @@ import {
 } from "./lib/product-categories";
 import { supabase } from "./lib/supabase";
 import { classifyRentRollEnd } from "./utils/rentRollStatus";
+import { matchesRentRollUnitType, restoreRentRollCategories } from "./utils/rentRollCategories";
 
 type RentRollStatus =
   | "occupied"
@@ -159,7 +160,6 @@ const collator = new Intl.Collator("ja-JP", {
 
 function parkingFacilityDisplayType(code: string, masterType: string | null | undefined): string {
   const normalizedCode = code.normalize("NFKC").toUpperCase().replace(/[\s　_-]/g, "");
-  if (normalizedCode.includes("BIKE")) return "駐輪場";
   if (normalizedCode.startsWith("MACHINE")) return "機械式駐車場";
   if (normalizedCode === "FLAT") return "平面駐車場";
   return masterType || code || "駐車場";
@@ -171,13 +171,8 @@ const parkingTypeSortOrder: Record<string, number> = {
   "平面駐車場": 2,
   "駐輪場": 3,
 };
-const rentRollProductCategoryCodes = allProductCategories.filter(
-  (category) => category !== "bicycle_parking",
-);
-const rentRollProductCategoryLabel: Record<ProductCategory, string> = {
-  ...productCategoryLabel,
-  parking: "駐車場・駐輪場",
-};
+const rentRollProductCategoryCodes = allProductCategories;
+const rentRollProductCategoryLabel = productCategoryLabel;
 
 const statusLabel: Record<RentRollStatus, string> = {
   occupied: "入居中",
@@ -198,14 +193,11 @@ function formatJapaneseDate(value: string): string {
 function storedProductCategories(propertyId: string): ProductCategory[] {
   if (!propertyId) return rentRollProductCategoryCodes;
   try {
-    const stored = localStorage.getItem(
-      `rent-roll-product-filters:v1:${propertyId}`,
-    );
+    const current = localStorage.getItem(`rent-roll-product-filters:v2:${propertyId}`);
+    const stored = current ?? localStorage.getItem(`rent-roll-product-filters:v1:${propertyId}`);
     if (!stored) return rentRollProductCategoryCodes;
     const parsed = JSON.parse(stored) as unknown;
-    if (!Array.isArray(parsed)) return rentRollProductCategoryCodes;
-    const selected = new Set(parsed.map((category) => category === "bicycle_parking" ? "parking" : category));
-    return rentRollProductCategoryCodes.filter((category) => selected.has(category));
+    return restoreRentRollCategories(parsed, current === null);
   } catch {
     return rentRollProductCategoryCodes;
   }
@@ -265,8 +257,8 @@ function floorOrder(label: string): number {
 
 function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
   const parkingUnavailable =
-    source.unit_type === "parking" && source.space_status === "unavailable";
-  const isParking = source.unit_type === "parking";
+    ["parking", "bicycle_parking"].includes(source.unit_type) && source.space_status === "unavailable";
+  const isParking = ["parking", "bicycle_parking"].includes(source.unit_type);
   const incomingContracts = (source.incoming_contracts ?? []).filter(
     (incoming) => incoming.contract_start_date > asOfDate,
   );
@@ -314,7 +306,7 @@ function toRentRollRow(source: RentRollSource, asOfDate: string): RentRollRow {
     unitType: source.unit_type,
     displayType: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : "貸室等",
     status,
-    productCategory: ["parking", "bicycle_parking"].includes(source.unit_type) ? "parking" : normalizeProductCategory(source.unit_type),
+    productCategory: normalizeProductCategory(source.unit_type),
     floor: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : source.floor_label ?? "",
     unitCode: source.unit_code,
     unitName: source.unit_name ?? source.unit_code,
@@ -384,7 +376,7 @@ function toSnapshotRow(
     unitType: source.unit_type ?? "office",
     displayType: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : "貸室等",
     status,
-    productCategory: ["parking", "bicycle_parking"].includes(source.unit_type ?? "") ? "parking" : normalizeProductCategory(source.unit_type ?? "office"),
+    productCategory: normalizeProductCategory(source.unit_type ?? "office"),
     floor: source.unit_type === "parking" ? "駐車場" : source.unit_type === "bicycle_parking" ? "駐輪場" : source.floor_label ?? "",
     unitCode: source.unit_code ?? "",
     unitName: source.unit_code ?? "",
@@ -443,7 +435,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
   const [selectedProductCategories, setSelectedProductCategories] =
     useState<ProductCategory[]>(rentRollProductCategoryCodes);
   const [unitTypeFilter, setUnitTypeFilter] = useState<
-    "all" | "space" | "parking"
+    "all" | "space" | "parking" | "bicycle_parking"
   >("all");
   const [asOfDate, setAsOfDate] = useState(today);
   const [loadingProperties, setLoadingProperties] = useState(true);
@@ -672,7 +664,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
             loadedRows = loadedRows.map((row) => {
               if (row.unitType !== "parking") return row;
               const facility = facilityByUnitId.get(row.unitId);
-              return { ...row, displayType: facility?.type ?? "駐車場", floor: facility?.code.toUpperCase().includes("BIKE") ? "駐輪場" : "駐車場" };
+              return { ...row, displayType: facility?.type ?? "駐車場", floor: "駐車場" };
             });
           }
         }
@@ -738,11 +730,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         || (statusFilter === "occupied_group" && (row.status === "occupied" || row.status === "scheduled"))
         || (statusFilter === "vacant_group" && (row.status === "vacant" || row.status === "move_in_scheduled"))
         || row.status === statusFilter;
-      const matchesType =
-        unitTypeFilter === "all" ||
-        (unitTypeFilter === "parking"
-          ? row.productCategory === "parking"
-          : row.productCategory !== "parking");
+      const matchesType = matchesRentRollUnitType(row.productCategory, unitTypeFilter);
       const matchesQuery =
         !normalizedQuery ||
         [
@@ -824,7 +812,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
     if (!propertyId) return;
     try {
       localStorage.setItem(
-        `rent-roll-product-filters:v1:${propertyId}`,
+        `rent-roll-product-filters:v2:${propertyId}`,
         JSON.stringify(categories),
       );
     } catch {
@@ -956,6 +944,7 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
             <option value="all">すべて</option>
             <option value="space">貸室等</option>
             <option value="parking">駐車場</option>
+            <option value="bicycle_parking">駐輪場</option>
           </select>
         </label>
       </div>
@@ -987,16 +976,15 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
           </div>
         </div>
         <div className="rent-roll-product-options">
-          {productCategories.filter(({ code }) => code !== "bicycle_parking").map(({ code }) => (
+          {productCategories.map(({ code }) => (
             <label
               key={code}
-              className={
-                selectedProductCategories.includes(code) ? "selected" : ""
-              }
+              className={productCounts[code] === 0 ? "unavailable" : selectedProductCategories.includes(code) ? "selected" : ""}
             >
               <input
                 type="checkbox"
-                checked={selectedProductCategories.includes(code)}
+                checked={productCounts[code] > 0 && selectedProductCategories.includes(code)}
+                disabled={productCounts[code] === 0}
                 onChange={() => toggleProductCategory(code)}
               />
               <span>{rentRollProductCategoryLabel[code]}</span>
@@ -1006,8 +994,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
         </div>
         <div className="rent-roll-selected-products">
           <strong>選択中</strong>
-          {selectedProductCategories.length > 0 ? (
-            selectedProductCategories.map((category) => (
+          {selectedProductCategories.some((category) => productCounts[category] > 0) ? (
+            selectedProductCategories.filter((category) => productCounts[category] > 0).map((category) => (
               <span key={category}>{rentRollProductCategoryLabel[category]}</span>
             ))
           ) : (
@@ -1092,8 +1080,8 @@ export function RentRollPage({ capabilities }: { capabilities: ContractCapabilit
             <thead>
               <tr>
                 <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-1">状態</th>
-                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-2">商品</th>
-                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-3">種別</th>
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-2">商品区分</th>
+                <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-3">契約種別</th>
                 <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-4">階</th>
                 <th rowSpan={twoRowHeader ? 2 : 1} className="rent-roll-pinned rent-roll-pinned-5">室・枠</th>
                 {['契約期間', '契約形態'].map((label) => <th key={label} rowSpan={twoRowHeader ? 2 : 1}>{label}</th>)}
