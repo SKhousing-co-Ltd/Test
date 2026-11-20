@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
 import { periodText } from './utils/billingDates';
 import {
-  buildInvoiceSheet, csvHeaders, invalidAmountRows, loadSavedInvoiceSheet, mergeMissingZeroSurchargeRows, numberValue, orderInvoiceCardsByTenants, recalcInvoices, reorderInvoiceCards, saveInvoiceSheet, taxCategories,
+  applyCurrentBillingDisplayNames, buildInvoiceSheet, csvHeaders, invalidAmountRows, loadSavedInvoiceSheet, mergeMissingZeroSurchargeRows, numberValue, orderInvoiceCardsByTenants, recalcInvoices, reorderInvoiceCards, saveInvoiceSheet, taxCategories,
   type DuePattern, type InvoiceRow, type InvoiceSheet, type PeriodPattern,
 } from './utils/invoiceSheet';
 import { loadSavedTenantOrder, moveBefore, saveTenantOrder } from './utils/tenantOrder';
@@ -83,6 +83,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const [saving, setSaving] = useState(false);
   const [dragInvoiceKey, setDragInvoiceKey] = useState<string | null>(null);
   const [dropBeforeInvoice, setDropBeforeInvoice] = useState<number | null>(null);
+  const [editingSubjectInvoiceKey, setEditingSubjectInvoiceKey] = useState<string | null>(null);
   // 合計行の高さは内容で変わるため、見出し行の吸着位置を実測値に合わせて2行をまとめて固定します。
   const totalRowRef = useRef<HTMLTableRowElement>(null);
   const [totalRowHeight, setTotalRowHeight] = useState(42);
@@ -169,7 +170,9 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
         const addedZeroSurcharge = Boolean(saved && selectedSourceSheet !== saved.sheet);
         const inheritedPreviousNotes = sourceSheet.rows.some((row, index) => row.values[20] !== selectedSourceSheet.rows[index]?.values[20]);
         const tenantIds = orderResult.status === 'fulfilled' ? orderResult.value.sort((left, right) => left.sort_order - right.sort_order).map((item) => item.tenant_id) : [];
-        applySheet({ ...sourceSheet, rows: orderInvoiceCardsByTenants(sourceSheet.rows, tenantIds) });
+        const displayRows = await applyCurrentBillingDisplayNames(supabase, propertyId, sourceSheet.rows);
+        if (cancelled) return;
+        applySheet({ ...sourceSheet, rows: orderInvoiceCardsByTenants(displayRows, tenantIds) });
         setSavedAt(saved?.savedAt ?? '');
         if (sourceStructureChanged) { revision.current += 1; setDirty(true); setNotice('確定明細の分割構成が変わったため、最新データで請求書を作り直しました。'); }
         else if (addedZeroSurcharge) { revision.current += 1; setDirty(true); setNotice('確定した0円の電気代増額分を請求明細へ追加しました。'); }
@@ -317,6 +320,7 @@ export function InvoiceCreationPage({ propertyId, propertyName, period }: { prop
   const visibleColumns = showInvoiceNote ? [...baseColumns.slice(0, 7), invoiceNoteColumn, ...baseColumns.slice(7)] : baseColumns;
   const tableWidth = 36 + visibleColumns.reduce((sum, column) => sum + columnWidths[column], 0);
   const cellEditor = (row: InvoiceRow, column: number, summary: InvoiceRow) => {
+    if (column === 2) return <div className="invoice-name-subject"><button type="button" className="invoice-company-name" aria-label={`${summary.values[2]}の件名を編集`} aria-expanded={editingSubjectInvoiceKey === row.invoiceKey} onClick={() => setEditingSubjectInvoiceKey((current) => current === row.invoiceKey ? null : row.invoiceKey)}>{summary.values[2]}</button>{editingSubjectInvoiceKey === row.invoiceKey && <div className="invoice-subject-editor"><label>請求書の件名<input aria-label={`${summary.values[2]}の件名`} value={summary.values[3]} onChange={(event) => updateInvoiceCell(row.invoiceKey, 3, event.target.value)} /></label></div>}</div>;
     if (column === 10) return <select className="invoice-due-pattern" aria-label={`請求期間パターン ${row.id}`} title={row.values[10]} value={periodPatternByRow[row.id] ?? ''} onChange={(event) => selectPeriodPattern(row.id, event.target.value)}><option value="">未設定</option>{periodPatterns.map((pattern) => <option key={pattern.billing_period_pattern_id} value={pattern.billing_period_pattern_id}>{periodOptionLabel(pattern)}</option>)}</select>;
     // 税区分は課税・非課税・不課税から選びます。課税の明細だけ税率10%で、消費税の対象になります。
     if (column === 18) return <select className="invoice-due-pattern" aria-label={`税区分 ${row.id}`} value={row.values[18]} onChange={(event) => updateCell(row.id, 18, event.target.value)}>{!taxCategories.includes(row.values[18] as (typeof taxCategories)[number]) && <option value={row.values[18]}>{row.values[18] || '未設定'}</option>}{taxCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select>;

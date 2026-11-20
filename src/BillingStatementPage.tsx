@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { supabase } from './lib/supabase';
-import { buildInvoiceSheet, loadSavedInvoiceSheet, statementRows, type StatementRow } from './utils/invoiceSheet';
+import { applyCurrentBillingDisplayNames, buildInvoiceSheet, loadSavedInvoiceSheet, statementRows, type StatementRow } from './utils/invoiceSheet';
 import type { BillingPeriod } from './TenantBillingControls';
 import { loadSavedTenantOrder, moveBefore, saveTenantOrder } from './utils/tenantOrder';
 import './BillingStatementPage.css';
@@ -47,7 +47,9 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period }:
         const usedTypeIds = new Set(((lineItemResult.data ?? []) as BillingLineItem[]).map((item) => item.billing_charge_type_id));
         setChargeTypes(((typeResult.data ?? []) as ChargeType[]).filter((type) => usedTypeIds.has(type.billing_charge_type_id)));
         const tenantRank = new Map(savedOrder.sort((left, right) => left.sort_order - right.sort_order).map((item, index) => [item.tenant_id, index]));
-        setRows(statementRows(sheet.rows).sort((left, right) => (tenantRank.get(left.tenantId) ?? Number.MAX_SAFE_INTEGER) - (tenantRank.get(right.tenantId) ?? Number.MAX_SAFE_INTEGER)));
+        const displayRows = await applyCurrentBillingDisplayNames(supabase, propertyId, sheet.rows);
+        if (cancelled) return;
+        setRows(statementRows(displayRows).sort((left, right) => (tenantRank.get(left.tenantId) ?? Number.MAX_SAFE_INTEGER) - (tenantRank.get(right.tenantId) ?? Number.MAX_SAFE_INTEGER)));
         setSavedAt(saved?.savedAt ?? '');
       } catch (loadError) {
         if (cancelled) return;

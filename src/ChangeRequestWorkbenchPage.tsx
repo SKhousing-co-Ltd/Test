@@ -1396,7 +1396,9 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
     if (applyError) { setError(`適用できませんでした: ${applyError.message}`); return; }
     const applied = (Array.isArray(data) ? data[0] : data) as ChangeRequest | null;
     if (!applied || applied.status !== 'applied') { setError('確定済みへの更新をDBで確認できませんでした。画面を更新して再試行してください。'); return; }
-    setMessage('内容を確定し、取込依頼を確定済みにしました。'); await loadRequests();
+    setMessage(selected.request_type === 'contract_create'
+      ? '新規契約を確定しました。テナント請求で請求先コード・表示名・件名を登録してください。'
+      : '内容を確定し、取込依頼を確定済みにしました。'); await loadRequests();
   };
   const openCount = requests.filter((request) => request.status === 'open').length;
   const inReviewCount = requests.filter((request) => request.status === 'in_review').length;
@@ -1421,7 +1423,7 @@ export function ChangeRequestWorkbenchPage({ role }: { role: AccountRole }) {
 
   return <section className="change-workbench change-thread-workbench">
     <div className="page-heading change-thread-page-heading"><div><p className="section-kicker">WORK MANAGEMENT</p><h2>案件スレッド</h2><p>案件ごとの情報・確認・判断を一つの流れで進めます。</p></div><div className="thread-page-actions"><button className="secondary-button" onClick={() => void loadRequests()} disabled={loading || archiveLoading}>一覧を更新</button><button className="secondary-button" onClick={() => void recheckAll()} disabled={loading || rechecking}>{rechecking ? '再チェック中…' : '作業中を再チェック'}</button></div></div>
-    {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}</p>}
+    {error && <p className="change-message error">{error}</p>}{message && <p className="change-message">{message}{message.startsWith('新規契約を確定しました') && <> <Link to="/billing-codes">テナント請求を開く</Link></>}</p>}
     <div className="thread-work-stats">
       <button type="button" className="thread-work-stat primary" aria-pressed={filter === 'active'} onClick={() => applyMetricFilter('active')}><span>作業中</span><strong>{loading ? '—' : openCount + inReviewCount + holdCount}</strong><small>要確認・確認中・保留</small></button>
       <button type="button" className="thread-work-stat" aria-pressed={filter === 'open'} onClick={() => applyMetricFilter('open')}><span><i className="open-dot" />要確認</span><strong>{loading ? '—' : openCount}</strong></button>
