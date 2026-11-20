@@ -9,6 +9,7 @@ type AdminConsoleProfile = {
 const adminItems = [
   { to: '/appsuite-sync', icon: '⇄', title: 'AppSuite同期', description: 'AppSuiteのアプリ情報を確認し、取得内容を確認してから同期します。', category: '外部サービス連携' },
   { to: '/accounts', icon: '♙', title: 'アカウント管理', description: '利用者、担当者、権限、利用状態を管理します。', category: 'ユーザー・権限' },
+  { to: '/admin/user-feedback', icon: '✉', title: '利用者の意見', description: '利用者から寄せられた意見と添付画像を確認します。', category: '利用者サポート' },
   { to: '/admin/assets', icon: '⌂', title: '物件登録', description: '物件の基本情報を登録・更新します。', category: '物件マスタ' },
   { to: '/settings/assets', icon: '▤', title: 'アセット設定', description: '業務画面で使う物件や表示条件を設定します。', category: '表示・利用設定' },
   { to: '/settings/tenant-billing', icon: '⚙', title: 'テナント請求設定', description: 'テナント請求に関するシステム設定を管理します。', category: '請求設定' },

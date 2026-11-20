@@ -37,6 +37,8 @@ import { PropertyAcquisitionPlanPage } from './PropertyAcquisitionPlanPage';
 import { RentRollReconciliationPage } from './RentRollReconciliationPage';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 import { AdminConsoleHomePage, AdminConsoleLayout } from './AdminConsolePage';
+import { UserFeedbackWidget } from './UserFeedbackWidget';
+import { UserFeedbackAdminPage } from './UserFeedbackAdminPage';
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
 type ContractType = '新規' | '更新';
@@ -187,6 +189,7 @@ function App() {
             <Route path="/admin/case-progress-migration" element={<CaseProgressMigrationPage />} />
             <Route path="/admin/parking-fee-cleanup" element={<ParkingFeeCleanupPage role={profile?.role ?? 'viewer'} />} />
             <Route path="/rent-roll/reconciliation" element={<RentRollReconciliationPage capabilities={contractCapabilitiesForRole(profile?.role ?? 'viewer')} />} />
+            <Route path="/admin/user-feedback" element={<UserFeedbackAdminPage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
@@ -296,7 +299,7 @@ function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut:
       {(profile.role === 'admin' || canEditContractBillingTerms) && <><p className="workspace-label">管理者メニュー</p><nav>{profile.role === 'admin' && <><NavLink to="/case-progress-migration" className="nav-item"><span>⇄</span>案件移行検証</NavLink><NavLink to="/appsuite-sync" className="nav-item"><span>⇄</span>AppSuite同期</NavLink></>}{canEditContractBillingTerms && <NavLink to="/admin/contract-billing-bulk" className="nav-item"><span>¥</span>請求条件一括設定</NavLink>}</nav></>}
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
     </aside>
-    <main className="portal-main"><header className="topbar"><div><p className="breadcrumb">ホーム / {pageTitle}</p><h1>{pageTitle}</h1></div><div className="user-menu"><div className="avatar">{userName.slice(0, 1)}</div><div className="user-name"><strong>{userName}</strong><small>{roleLabel(profile.role)}</small></div><button className="logout-button" onClick={() => void logout()}>ログアウト</button></div></header><div className="page-content"><Outlet /></div></main>
+    <main className="portal-main"><header className="topbar"><div><p className="breadcrumb">ホーム / {pageTitle}</p><h1>{pageTitle}</h1></div><div className="user-menu"><div className="avatar">{userName.slice(0, 1)}</div><div className="user-name"><strong>{userName}</strong><small>{roleLabel(profile.role)}</small></div><button className="logout-button" onClick={() => void logout()}>ログアウト</button></div></header><div className="page-content"><Outlet /></div></main><UserFeedbackWidget />
   </div>;
 }
 
