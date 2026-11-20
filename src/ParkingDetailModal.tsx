@@ -51,6 +51,7 @@ type ParkingContractMeta = {
 type ContractUnitDetail = {
   lease_contract_unit_id: string;
   unit_id: string;
+  row_version: number;
   monthly_rent_amount: number | null;
   monthly_common_charge_amount: number | null;
   monthly_total_amount: number | null;
@@ -58,6 +59,31 @@ type ContractUnitDetail = {
   security_deposit_amount: number | null;
   lease_start_date: string | null;
   lease_end_date: string | null;
+};
+type ParkingFeeHistory = {
+  parking_fee_history_id: string;
+  parking_scope: ParkingScope;
+  main_lease_contract_unit_id: string | null;
+  monthly_parking_fee: number;
+  effective_from: string;
+  effective_to: string | null;
+  source_import_batch_id: string | null;
+  source_import_row_id: string | null;
+  source_file_name: string | null;
+  source_sheet_name: string | null;
+  source_row_number: number | null;
+};
+type ParkingFeeScheduleChange = {
+  action: 'upsert' | 'remove';
+  effective_from: string;
+  monthly_parking_fee?: number;
+  parking_scope?: ParkingScope;
+  main_lease_contract_unit_id?: string | null;
+  source_import_batch_id?: string | null;
+  source_import_row_id?: string | null;
+  source_file_name?: string | null;
+  source_sheet_name?: string | null;
+  source_row_number?: number | null;
 };
 type ContractSnapshot = {
   unit_id: string;
@@ -189,6 +215,15 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
   const [mainContractUnitChoicesLoading, setMainContractUnitChoicesLoading] = useState(false);
   const [contractMeta, setContractMeta] = useState<ParkingContractMeta | null>(null);
   const [contractUnits, setContractUnits] = useState<ContractUnitDetail[]>([]);
+  const [parkingFeeHistory, setParkingFeeHistory] = useState<ParkingFeeHistory[]>([]);
+  const [feeEffectiveDate, setFeeEffectiveDate] = useState(row.parking_fee_effective_from ?? row.contract_start_date ?? today);
+  const [feeAmount, setFeeAmount] = useState(String(row.monthly_parking_fee ?? 0));
+  const [feeScheduleChanges, setFeeScheduleChanges] = useState<ParkingFeeScheduleChange[]>([]);
+  const [feeScheduleReason, setFeeScheduleReason] = useState('');
+  const [feeScheduleScope, setFeeScheduleScope] = useState<ParkingScope>(row.parking_scope ?? 'external');
+  const [feeScheduleMainUnitId, setFeeScheduleMainUnitId] = useState(row.main_lease_contract_unit_id ?? '');
+  const [feeScheduleEditingTerm, setFeeScheduleEditingTerm] = useState<ParkingFeeHistory | null>(null);
+  const [feeScheduleSaving, setFeeScheduleSaving] = useState(false);
   const [contractSnapshotUnits, setContractSnapshotUnits] = useState<ContractSnapshot[]>([]);
   const [relatedSpaces, setRelatedSpaces] = useState<RelatedParkingSpace[]>([]);
   const [contractDocument, setContractDocument] = useState<ContractDocumentDetail | null>(null);
@@ -258,12 +293,15 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     void (async () => {
       setLoading(true);
       setMessage('');
-      const [spaceResult, tenantResult, contractCandidateResult] = await Promise.all([
+      const [spaceResult, tenantResult, contractCandidateResult, feeHistoryResult] = await Promise.all([
         supabase.from('parking_space_master').select('space_number, length_mm, width_mm, height_mm, weight_limit_kg').eq('unit_id', row.unit_id).single(),
         supabase.from('tenant_master').select('tenant_id, tenant_name').order('tenant_name'),
         supabase.from('parking_main_contract_candidate').select('*').eq('property_id', row.property_id),
+        row.lease_contract_unit_id
+          ? supabase.from('parking_fee_history').select('parking_fee_history_id, parking_scope, main_lease_contract_unit_id, monthly_parking_fee, effective_from, effective_to, source_import_batch_id, source_import_row_id, source_file_name, source_sheet_name, source_row_number').eq('parking_lease_contract_unit_id', row.lease_contract_unit_id).order('effective_from')
+          : Promise.resolve({ data: [], error: null }),
       ]);
-      const loadError = spaceResult.error ?? tenantResult.error ?? contractCandidateResult.error;
+      const loadError = spaceResult.error ?? tenantResult.error ?? contractCandidateResult.error ?? feeHistoryResult.error;
       if (loadError) {
         if (!cancelled) {
           setMessage(`詳細情報を読み込めませんでした: ${loadError.message}`);
@@ -301,7 +339,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       if (row.lease_contract_id) {
         const [metaResult, unitResult, snapshotResult, documentResult, templateResult] = await Promise.all([
           supabase.from('lease_contract').select('lease_contract_id, contract_status, contract_type, source_system, source_record_key, updated_at').eq('lease_contract_id', row.lease_contract_id).maybeSingle(),
-          supabase.from('lease_contract_unit').select('lease_contract_unit_id, unit_id, monthly_rent_amount, monthly_common_charge_amount, monthly_total_amount, deposit_amount, security_deposit_amount, lease_start_date, lease_end_date').eq('lease_contract_id', row.lease_contract_id),
+          supabase.from('lease_contract_unit').select('lease_contract_unit_id, unit_id, row_version, monthly_rent_amount, monthly_common_charge_amount, monthly_total_amount, deposit_amount, security_deposit_amount, lease_start_date, lease_end_date').eq('lease_contract_id', row.lease_contract_id),
           supabase.rpc('lease_contract_unit_snapshot_at_date', { p_property_id: row.property_id, p_as_of_date: snapshotAsOfDate }),
           supabase.from('lease_contract_document').select('lease_contract_document_id, document_type, pdf_file_path, pdf_generated_at, latest_word_output_revision_id, latest_formal_output_revision_id, updated_at').eq('lease_contract_id', row.lease_contract_id).maybeSingle(),
           supabase.from('contract_document_template').select('active_revision_id').eq('document_type', 'parking').maybeSingle(),
@@ -364,6 +402,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
       setAssignmentDetail(assignment);
       setTenants((tenantResult.data ?? []) as TenantOption[]);
       setMainContracts((contractCandidateResult.data ?? []) as MainContractCandidate[]);
+      setParkingFeeHistory((feeHistoryResult.data ?? []) as ParkingFeeHistory[]);
       setContractMeta(loadedContractMeta);
       setContractUnits(loadedContractUnits);
       setContractSnapshotUnits(loadedContractSnapshotUnits);
@@ -387,6 +426,10 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
         vehicle_effective_from: vehicle?.effective_from ?? current.vehicle_effective_from,
         vehicle_effective_to: vehicle?.effective_to ?? '',
       }));
+      setFeeEffectiveDate(row.parking_fee_effective_from ?? row.contract_start_date ?? today);
+      setFeeAmount(String(row.monthly_parking_fee ?? 0));
+      setFeeScheduleScope(row.parking_scope ?? 'external');
+      setFeeScheduleMainUnitId(row.main_lease_contract_unit_id ?? '');
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -468,6 +511,72 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
+  const stageFeeChange = () => {
+    const amount = Number(feeAmount);
+    if (!feeEffectiveDate || !Number.isSafeInteger(amount) || amount < 0) {
+      setMessage('適用開始日と0以上の月額駐車料を入力してください。');
+      return;
+    }
+    const scope = feeScheduleEditingTerm?.parking_scope ?? (form.parking_scope || feeScheduleScope);
+    const mainUnitId = feeScheduleEditingTerm?.main_lease_contract_unit_id ?? (form.main_lease_contract_unit_id || feeScheduleMainUnitId);
+    if (scope === 'internal' && !mainUnitId) {
+      setMessage('内部契約の駐車料には主契約区画を選択してください。');
+      return;
+    }
+    const change: ParkingFeeScheduleChange = {
+      action: 'upsert',
+      effective_from: feeEffectiveDate,
+      monthly_parking_fee: amount,
+      parking_scope: scope,
+      main_lease_contract_unit_id: scope === 'internal' ? mainUnitId : null,
+      ...(feeScheduleEditingTerm ? {
+        source_import_batch_id: feeScheduleEditingTerm.source_import_batch_id,
+        source_import_row_id: feeScheduleEditingTerm.source_import_row_id,
+        source_file_name: feeScheduleEditingTerm.source_file_name,
+        source_sheet_name: feeScheduleEditingTerm.source_sheet_name,
+        source_row_number: feeScheduleEditingTerm.source_row_number,
+      } : {}),
+    };
+    setFeeScheduleChanges((current) => [...current.filter((item) => item.effective_from !== feeEffectiveDate), change].sort((a, b) => a.effective_from.localeCompare(b.effective_from)));
+    setFeeScheduleEditingTerm(null);
+    setMessage('');
+  };
+
+  const editFeeTerm = (term: ParkingFeeHistory) => {
+    setFeeEffectiveDate(term.effective_from);
+    setFeeAmount(String(term.monthly_parking_fee));
+    setFeeScheduleScope(term.parking_scope);
+    setFeeScheduleMainUnitId(term.main_lease_contract_unit_id ?? '');
+    setFeeScheduleEditingTerm(term);
+    setMessage('');
+  };
+
+  const stageFeeCancellation = (term: ParkingFeeHistory) => {
+    const cancellation: ParkingFeeScheduleChange = { action: 'remove', effective_from: term.effective_from };
+    setFeeScheduleChanges((current) => [...current.filter((item) => item.effective_from !== term.effective_from), cancellation].sort((a, b) => a.effective_from.localeCompare(b.effective_from)));
+    setMessage('');
+  };
+
+  const saveFeeSchedule = async () => {
+    if (!supabase || !row.lease_contract_unit_id || !feeScheduleChanges.length || !feeScheduleReason.trim()) return;
+    const contractUnit = contractUnits.find((item) => item.lease_contract_unit_id === row.lease_contract_unit_id);
+    if (!contractUnit) { setMessage('対象の契約区画が見つかりません。再読み込みしてください。'); return; }
+    setFeeScheduleSaving(true);
+    setMessage('');
+    const { error } = await supabase.rpc('apply_parking_fee_schedule', {
+      p_parking_lease_contract_unit_id: row.lease_contract_unit_id,
+      p_expected_row_version: contractUnit.row_version,
+      p_changes: feeScheduleChanges,
+      p_reason: feeScheduleReason.trim(),
+    });
+    setFeeScheduleSaving(false);
+    if (error) { setMessage(`駐車料履歴を保存できませんでした: ${error.message}`); return; }
+    setFeeScheduleChanges([]);
+    setFeeScheduleReason('');
+    setMessage('駐車料履歴を保存しました。');
+    await onSaved();
+  };
+
   const contractTotals = useMemo(() => contractSnapshotUnits.reduce((totals, item) => ({
     rent: totals.rent + Number(item.monthly_rent_amount ?? 0),
     common: totals.common + Number(item.monthly_common_charge_amount ?? 0),
@@ -477,6 +586,10 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
 
   const save = async () => {
     if (!supabase || !canManage || saving) return;
+    if (feeScheduleChanges.length) {
+      setMessage('駐車料履歴の保存予定を先に保存するか、一覧から取り消してください。');
+      return;
+    }
     if (!form.space_number.trim()) {
       setMessage('枠番を入力してください。');
       return;
@@ -652,18 +765,14 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
                   {mainContractUnitChoices.map((choice) => <option key={choice.lease_contract_unit_id} value={choice.lease_contract_unit_id}>{[choice.floor_label, choice.unit_name || choice.unit_code].filter(Boolean).join(' ')}（{choice.unit_code}）</option>)}
                 </select>
               </FormField> : null}
-              <FormField label="月額駐車料" value={currency(Number(form.monthly_parking_fee || 0))} editing={editing}>
-                <input type="number" min="0" step="1" value={form.monthly_parking_fee} onChange={(event) => set('monthly_parking_fee', event.target.value)} />
-              </FormField>
+              <FormField label="月額駐車料" value={currency(Number(form.monthly_parking_fee || 0))} editing={false} />
               <FormField label="敷金" value={currency(Number(form.deposit_amount || 0))} editing={editing}>
                 <input type="number" min="0" step="1" value={form.deposit_amount} onChange={(event) => set('deposit_amount', event.target.value)} />
               </FormField>
               <FormField label="保証金" value={currency(Number(form.security_deposit_amount || 0))} editing={editing}>
                 <input type="number" min="0" step="1" value={form.security_deposit_amount} onChange={(event) => set('security_deposit_amount', event.target.value)} />
               </FormField>
-              <FormField label="駐車料適用開始日" value={displayDate(form.parking_fee_effective_from || null)} editing={editing}>
-                <input type="date" value={form.parking_fee_effective_from} onChange={(event) => set('parking_fee_effective_from', event.target.value)} />
-              </FormField>
+              <FormField label="駐車料適用開始日" value={displayDate(form.parking_fee_effective_from || null)} editing={false} />
               <FormField label="月額共益費" value={currency(contractTotals.common)} editing={false} />
               <FormField label="月額合計" value={currency(Number(form.monthly_parking_fee || 0) + contractTotals.common)} editing={false} />
               <FormField label="敷金・保証金" value={currency(contractTotals.deposit)} editing={false} />
@@ -677,6 +786,44 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
               <strong>編集範囲</strong>
               <span>区画利用開始日・終了日は選択中の「枠 {row.space_number}」だけに反映します。駐車料適用開始日は月額駐車料の履歴を切り替える日で、区画利用開始日とは別です。内部契約で主契約より前の駐車料期間は、控除しない外部扱いで保存します。契約先・契約区分・主契約は同一駐車場契約全体の情報です。</span>
             </div>
+
+            <section className="parking-fee-schedule">
+              <div className="parking-contract-subsection">
+                <strong>駐車料履歴・段階賃料</strong>
+                <span>適用開始日ごとの月額駐車料を登録します。次の開始日前日まで自動で適用します。</span>
+              </div>
+              {parkingFeeHistory.length ? <div className="parking-contract-space-table-wrap">
+                <table className="parking-fee-schedule-table">
+                  <thead><tr><th>適用期間</th><th>月額駐車料</th><th>内外</th><th>変更</th></tr></thead>
+                  <tbody>{parkingFeeHistory.map((term) => <tr key={term.parking_fee_history_id}>
+                    <td>{displayDate(term.effective_from)} ～ {displayDate(term.effective_to)}</td>
+                    <td className="numeric">{currency(Number(term.monthly_parking_fee))}</td>
+                    <td>{term.parking_scope === 'internal' ? '内部' : '外部'}</td>
+                    <td className="parking-fee-schedule-actions">
+                      {editing && canManage ? <button type="button" className="secondary-button compact" onClick={() => editFeeTerm(term)}>この条件を編集</button> : null}
+                      {editing && canManage && term.effective_from > today && !term.source_import_batch_id && !term.source_import_row_id ? <button type="button" className="text-button" onClick={() => stageFeeCancellation(term)}>予定を取消</button> : null}
+                    </td>
+                  </tr>)}</tbody>
+                </table>
+              </div> : <p className="parking-fee-schedule-empty">駐車料履歴がありません。最初の適用開始日と金額を登録してください。</p>}
+              {editing && canManage ? <>
+                <div className="parking-fee-schedule-form">
+                  <label>適用開始日<input type="date" value={feeEffectiveDate} onChange={(event) => { setFeeEffectiveDate(event.target.value); setFeeScheduleEditingTerm(null); }} /></label>
+                  <label>月額駐車料<input type="number" min="0" step="1" value={feeAmount} onChange={(event) => setFeeAmount(event.target.value)} /></label>
+                  <div className="parking-fee-schedule-context"><span>契約区分: {(feeScheduleEditingTerm?.parking_scope ?? (form.parking_scope || feeScheduleScope)) === 'internal' ? '内部' : '外部'}</span>{(feeScheduleEditingTerm?.parking_scope ?? (form.parking_scope || feeScheduleScope)) === 'internal' ? <span>主契約区画: {mainContractUnitChoices.find((item) => item.lease_contract_unit_id === (feeScheduleEditingTerm?.main_lease_contract_unit_id ?? (form.main_lease_contract_unit_id || feeScheduleMainUnitId)))?.unit_name || mainContractUnitChoices.find((item) => item.lease_contract_unit_id === (feeScheduleEditingTerm?.main_lease_contract_unit_id ?? (form.main_lease_contract_unit_id || feeScheduleMainUnitId)))?.unit_code || '登録済み区画'}</span> : null}</div>
+                  <button type="button" className="secondary-button" onClick={stageFeeChange}>変更予定に追加</button>
+                </div>
+                {feeScheduleChanges.length ? <div className="parking-fee-schedule-pending">
+                  <h4>保存予定</h4>
+                  <ul>{feeScheduleChanges.map((change) => <li key={`${change.action}:${change.effective_from}`}>
+                    <span><strong>{displayDate(change.effective_from)}適用</strong>{change.action === 'remove' ? '・予定取消' : `・月額 ${currency(Number(change.monthly_parking_fee ?? 0))}`}</span>
+                    <button type="button" className="text-button" onClick={() => setFeeScheduleChanges((current) => current.filter((item) => item.effective_from !== change.effective_from))}>削除</button>
+                  </li>)}</ul>
+                  <label>変更理由<textarea value={feeScheduleReason} onChange={(event) => setFeeScheduleReason(event.target.value)} placeholder="契約書の確認内容などを入力" /></label>
+                  <button type="button" className="primary-button" disabled={feeScheduleSaving || !feeScheduleReason.trim()} onClick={() => void saveFeeSchedule()}>{feeScheduleSaving ? '保存中…' : '駐車料履歴を保存'}</button>
+                </div> : null}
+              </> : null}
+            </section>
 
             <div className="parking-contract-subsection">
               <strong>契約対象枠</strong>
