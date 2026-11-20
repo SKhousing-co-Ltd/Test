@@ -1,4 +1,6 @@
+import { Suspense } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { RouteLoadingFallback } from './RouteLoadingFallback';
 import './AdminConsolePage.css';
 
 type AdminConsoleProfile = {
@@ -59,7 +61,7 @@ export function AdminConsoleLayout({ profile, onSignOut }: { profile: AdminConso
           <p>管理者コンソール <span>/</span> <strong>{pageTitle}</strong></p>
           <span className="admin-console-role">● 管理者権限</span>
         </header>
-        <main className="admin-console-content"><Outlet /></main>
+        <main className="admin-console-content"><Suspense fallback={<RouteLoadingFallback />}><Outlet /></Suspense></main>
       </div>
     </div>
   );
