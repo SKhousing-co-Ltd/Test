@@ -8,8 +8,9 @@ import { loadSavedTenantOrder, orderTenants, tenantComparator } from './tenantOr
 import { defaultBillingTerms, periodRange, periodText, termsDueDate, termsPeriod, termsPeriodLabel, type BillingTerms } from './billingDates.ts';
 import { loadMeterInvoiceData } from './meterReadingStore.ts';
 import type { MeterInvoiceLine } from './meterReading';
+import { prorateFixedCharge } from './fixedChargeProration.ts';
 
-type RentRollSource = { unit_id: string | null; unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string | null; lease_contract_id: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number | null; monthly_common_charge_amount: number | null; monthly_parking_amount: number | null; other_monthly_amount: number | null; };
+type RentRollSource = { unit_id: string | null; lease_contract_unit_id: string | null; unit_code: string; unit_name: string | null; floor_label: string | null; unit_type: string | null; lease_contract_id: string | null; contract_start_date: string | null; contract_end_date: string | null; actual_end_date: string | null; lease_start_date: string | null; lease_end_date: string | null; tenant_id: string | null; tenant_name: string | null; monthly_rent_amount: number | null; monthly_common_charge_amount: number | null; monthly_parking_amount: number | null; other_monthly_amount: number | null; };
 type BillingCode = { billing_code_id: string; tenant_id: string | null; issue_code: string; is_primary: boolean; invoice_display_name: string | null; invoice_subject: string | null };
 export type DuePattern = { billing_due_date_pattern_id: string; pattern_number: number; month_offset: number; day_of_month: number; holiday_adjustment: 'previous' | 'next' };
 type ContractAllocation = { lease_contract_unit_id: string; billing_code_id: string };
@@ -223,13 +224,19 @@ const periodKey = (terms: BillingTerms) => `${terms.period_month_offset}:${terms
 // レントロールの固定費と検針データから、請求書作成の内容を組み立てます（保存した内容は使いません）。
 export async function buildInvoiceSheet(client: SupabaseClient, propertyId: string, propertyName: string, calendarYear: number, month: number): Promise<BuiltInvoiceSheet> {
   const referenceDate = `${calendarYear}-${String(month).padStart(2, '0')}-01`;
+  const lastDate = new Date(Date.UTC(calendarYear, month, 0)).toISOString().slice(0, 10);
+  const previousMonthEnd = new Date(Date.UTC(calendarYear, month - 1, 0)).toISOString().slice(0, 10);
+  const nextMonthEnd = new Date(Date.UTC(calendarYear, month + 1, 0)).toISOString().slice(0, 10);
   // 検針データは開くたびに保存済みの内容から計算し直すため、検針データ画面で保存した変更がそのまま反映されます。
   // 読み込めなくても固定費の請求書は作れるよう、失敗はお知らせだけにします。
   const meterPromise = loadMeterInvoiceData(client, propertyId, calendarYear, month)
     .then((data) => ({ data, error: '' }))
     .catch((meterError: unknown) => ({ data: null, error: meterError instanceof Error ? meterError.message : '検針データを読み込めませんでした' }));
-  const [rentRollResult, codeResult, allocationResult, unitResult, billingUnitMemberResult, meterContractResult, lineAllocationResult, typeResult, assetItemResult, splitResult, splitAssignmentResult, splitUnitAssignmentResult, periodResult, savedOrder, meterResult] = await Promise.all([
+  const [rentRollResult, monthEndRentRollResult, previousRentRollResult, nextRentRollResult, codeResult, allocationResult, unitResult, billingUnitMemberResult, meterContractResult, lineAllocationResult, typeResult, assetItemResult, splitResult, splitAssignmentResult, splitUnitAssignmentResult, periodResult, savedOrder, meterResult] = await Promise.all([
     client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: referenceDate }),
+    client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: lastDate }),
+    client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: previousMonthEnd }),
+    client.rpc('rent_roll_list_with_terms_at_date', { p_property_id: propertyId, p_as_of_date: nextMonthEnd }),
     client.from('billing_code').select('billing_code_id, tenant_id, issue_code, is_primary, invoice_display_name, invoice_subject').eq('property_id', propertyId).eq('is_active', true),
     client.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
     client.from('lease_contract_unit').select('lease_contract_unit_id, lease_contract_id, unit:unit_master!inner(unit_id, property_id, unit_code, unit_name)').eq('unit.property_id', propertyId),
@@ -246,6 +253,12 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
     meterPromise,
   ]);
   if (rentRollResult.error || codeResult.error) throw new Error(`請求データを読み込めませんでした: ${rentRollResult.error?.message ?? codeResult.error?.message}`);
+  if (monthEndRentRollResult.error || previousRentRollResult.error || nextRentRollResult.error) throw new Error(`請求期間の契約を読み込めませんでした: ${monthEndRentRollResult.error?.message ?? previousRentRollResult.error?.message ?? nextRentRollResult.error?.message}`);
+  const rentRollSources = new Map<string, RentRollSource>();
+  for (const source of [...(rentRollResult.data ?? []), ...(monthEndRentRollResult.data ?? []), ...(previousRentRollResult.data ?? []), ...(nextRentRollResult.data ?? [])] as RentRollSource[]) {
+    const key = source.lease_contract_unit_id ?? `${source.lease_contract_id}:${source.unit_id}`;
+    if (!rentRollSources.has(key)) rentRollSources.set(key, source);
+  }
   if (splitResult.error || splitAssignmentResult.error || splitUnitAssignmentResult.error) throw new Error(`請求書分割設定を読み込めませんでした: ${splitResult.error?.message ?? splitAssignmentResult.error?.message ?? splitUnitAssignmentResult.error?.message}`);
   const codes = (codeResult.data ?? []) as BillingCode[]; const codeById = new Map(codes.map((code) => [code.billing_code_id, code])); const primaryCodeByTenant = new Map<string, BillingCode>();
   // 請求先コードが1件だけのテナントで is_primary が未設定でも、そのコードを使います。
@@ -253,7 +266,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   for (const code of codes) if (code.tenant_id && !primaryCodeByTenant.has(code.tenant_id)) primaryCodeByTenant.set(code.tenant_id, code);
   for (const code of codes) if (code.tenant_id && code.is_primary) primaryCodeByTenant.set(code.tenant_id, code);
   // 入金期日・請求期間は契約の請求条件から決めます。契約に紐づかない明細（検針データなど）は既定値です。
-  const contractIds = [...new Set(((rentRollResult.data ?? []) as RentRollSource[]).map((source) => source.lease_contract_id).filter((id): id is string => Boolean(id)))];
+  const contractIds = [...new Set([...rentRollSources.values()].map((source) => source.lease_contract_id).filter((id): id is string => Boolean(id)))];
   const termsResult = contractIds.length ? await client.from('lease_contract').select(termsColumns).in('lease_contract_id', contractIds) : { data: [], error: null };
   if (termsResult.error) throw new Error(`契約の請求条件を読み込めませんでした: ${termsResult.error.message}`);
   const termsByContract = new Map(((termsResult.data ?? []) as Array<BillingTerms & { lease_contract_id: string }>).map((row) => [row.lease_contract_id, row as BillingTerms]));
@@ -312,10 +325,16 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   };
   type Invoice = { contractTerms: BillingTerms[]; lineTerms: Map<string, BillingTerms>; lineNotes: Map<string, string>; code: string; tenantName: string; floor: string; displayName: string | null; subject: string | null; unitNames: Set<string>; lines: Map<string, number>; counts: Map<string, number>; meterLines: MeterLine[] };
   const invoices = new Map<string, Invoice>();
-  for (const source of (rentRollResult.data ?? []) as RentRollSource[]) {
+  for (const source of rentRollSources.values()) {
     if (!source.tenant_id || !source.tenant_name) continue;
     for (const item of fixedItems) {
-      const amount = Number(source[item.field] ?? 0); if (!amount) continue;
+      const monthlyAmount = Number(source[item.field] ?? 0); if (!monthlyAmount) continue;
+      const billingPeriod = termsPeriod(month, termsOf(source.lease_contract_id));
+      const serviceDate = new Date(Date.UTC(calendarYear, month - 1 + billingPeriod.startOffset, 1)).toISOString().slice(0, 10);
+      const amount = billingPeriod.monthsCovered === 1
+        ? prorateFixedCharge(monthlyAmount, serviceDate, source.contract_start_date, source.lease_start_date, source.actual_end_date ?? source.contract_end_date, source.lease_end_date)
+        : monthlyAmount;
+      if (!amount) continue;
       const itemName = lineItemName(source, item);
       const target = codeByTenantItem.get(`${source.tenant_id}:${itemName}`) ?? (source.lease_contract_id ? codeByContract.get(source.lease_contract_id) : undefined) ?? primaryCodeByTenant.get(source.tenant_id);
       const split = target ? splitByCode.get(target.billing_code_id) : undefined; const lineItemId = lineItemIdByChargeName.get(itemName); const splitAssignment = split?.assignments?.find((assignment) => assignment.asset_billing_line_item_id === lineItemId); const sourceUnitId = source.lease_contract_id ? unitIdBySource.get(`${source.lease_contract_id}:${source.unit_code}`) : undefined; const splitKey = split?.split_mode === 'unit' ? `invoice:${unitInvoiceNumber(split, [sourceUnitId])}` : split?.split_mode === 'line_item' ? `invoice:${splitAssignment?.invoice_number ?? 1}` : split?.split_mode === 'line_item_unit' ? `invoice:${splitAssignment?.invoice_number ?? unitInvoiceNumber(split, [sourceUnitId])}` : 'single';
@@ -429,6 +448,21 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
 // ---- 保存 ----
 const monthStart = (calendarYear: number, month: number) => `${calendarYear}-${String(month).padStart(2, '0')}-01`;
 export type SavedInvoiceSheet = { sheet: InvoiceSheet; savedAt: string };
+
+// 保存済みの請求書でも、テナント請求画面の名称は現在のコード設定を使う。
+export async function applyCurrentBillingDisplayNames(client: SupabaseClient, propertyId: string, rows: InvoiceRow[]): Promise<InvoiceRow[]> {
+  const { data, error } = await client.from('billing_code')
+    .select('issue_code, invoice_display_name, recipient_name').eq('property_id', propertyId);
+  if (error) throw new Error(`請求書表示名を読み込めませんでした: ${error.message}`);
+  const names = new Map((data ?? []).map((code) => [code.issue_code, code.invoice_display_name?.trim() || code.recipient_name]));
+  return rows.map((row) => {
+    const displayName = names.get(row.values[1]);
+    if (!displayName || row.values[2] === displayName) return row;
+    const values = [...row.values];
+    values[2] = displayName;
+    return { ...row, values };
+  });
+}
 
 export async function loadSavedInvoiceSheet(client: SupabaseClient, propertyId: string, calendarYear: number, month: number): Promise<SavedInvoiceSheet | null> {
   const { data, error } = await client.from('tenant_invoice_sheet').select('sheet, saved_at').eq('asset_id', propertyId).eq('billing_month', monthStart(calendarYear, month)).maybeSingle();

@@ -162,6 +162,7 @@ export function BillingCodePage({
   period: BillingPeriod;
 }) {
   const [codes, setCodes] = useState<BillingCode[]>([]);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [assetCode, setAssetCode] = useState("");
   const [visibleChargeTypes, setVisibleChargeTypes] = useState<
@@ -170,6 +171,8 @@ export function BillingCodePage({
   const [contractAllocations, setContractAllocations] = useState<ContractCodeAllocation[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState("");
   const [editingCode, setEditingCode] = useState<BillingCode | null>(null);
+  const [creatingCode, setCreatingCode] = useState(false);
+  const [newIssueCode, setNewIssueCode] = useState("");
   const [editingTenantId, setEditingTenantId] = useState("");
   const [editingDisplayName, setEditingDisplayName] = useState("");
   const [editingSubject, setEditingSubject] = useState("");
@@ -186,7 +189,7 @@ export function BillingCodePage({
     }
     setLoading(true);
     setError("");
-    const [codeResult, unitResult, assetResult, settingResult, typeResult, contractAllocationResult] =
+    const [codeResult, unitResult, assetResult, settingResult, typeResult, contractAllocationResult, tenantResult] =
       await Promise.all([
         supabase
           .from("billing_code")
@@ -218,6 +221,7 @@ export function BillingCodePage({
           .eq("is_active", true)
           .order("sort_order"),
         supabase.from('billing_code_contract_allocation').select('lease_contract_unit_id, billing_code_id'),
+        supabase.from('tenant_master').select('tenant_id, tenant_name, external_tenant_code').order('tenant_name'),
       ]);
     if (codeResult.error || unitResult.error)
       setError(
@@ -225,6 +229,7 @@ export function BillingCodePage({
       );
     // テナントコード一覧は、請求設定のテナント並び順ではなく発行コード順で並べます。
     setCodes((codeResult.data ?? []) as unknown as BillingCode[]);
+    setTenants((tenantResult.data ?? []) as Tenant[]);
     setUnits((unitResult.data ?? []) as unknown as Unit[]);
     setAssetCode(String(assetResult.data?.asset_code ?? ""));
     if (settingResult.error || typeResult.error)
@@ -248,16 +253,59 @@ export function BillingCodePage({
   const isDepositCode = (code: BillingCode) =>
     Boolean(assetCode && code.issue_code === `${assetCode}00`);
   const tenantOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const unit of units)
-      for (const allocation of unit.allocations ?? []) {
-        const tenant = firstOf(firstOf(allocation.contract)?.tenant);
-        if (tenant?.tenant_id) map.set(tenant.tenant_id, tenant.tenant_name);
-      }
-    return [...map.entries()].sort((left, right) =>
-      left[1].localeCompare(right[1], "ja"),
-    );
-  }, [units]);
+    const ids = new Set<string>();
+    for (const unit of units) for (const allocation of unit.allocations ?? []) {
+      const tenant = firstOf(firstOf(allocation.contract)?.tenant);
+      if (tenant?.tenant_id) ids.add(tenant.tenant_id);
+    }
+    for (const code of codes) if (code.tenant_id) ids.add(code.tenant_id);
+    return tenants.filter((tenant) => ids.has(tenant.tenant_id))
+      .map((tenant) => [tenant.tenant_id, tenant.tenant_name] as const);
+  }, [codes, tenants, units]);
+  const tenantsNeedingCode = useMemo(() => {
+    const active = new Map<string, string>();
+    for (const unit of units) for (const allocation of unit.allocations ?? []) {
+      if (!isCurrent(allocation, referenceDate)) continue;
+      const tenant = firstOf(firstOf(allocation.contract)?.tenant);
+      if (tenant) active.set(tenant.tenant_id, tenant.tenant_name);
+    }
+    return [...active].filter(([id]) => !codes.some((code) => code.tenant_id === id && code.is_active));
+  }, [codes, referenceDate, units]);
+  const startCreating = (tenantId = "") => {
+    setEditingCode(null);
+    setCreatingCode(true);
+    setEditingTenantId(tenantId);
+    setNewIssueCode("");
+    setEditingDisplayName(tenants.find((tenant) => tenant.tenant_id === tenantId)?.tenant_name ?? "");
+    setEditingSubject("");
+    setError("");
+  };
+  const saveNewCode = async () => {
+    if (!supabase || !canEdit) return;
+    const issueCode = newIssueCode.trim();
+    const displayName = editingDisplayName.trim();
+    if (!issueCode || !editingTenantId || !displayName) {
+      setError("コード、紐づけるテナント、表示名を入力してください。"); return;
+    }
+    if (codes.some((code) => code.issue_code === issueCode)) {
+      setError("この物件には同じコードが登録されています。"); return;
+    }
+    setSavingKey('new');
+    const { error: saveError } = await supabase.from('billing_code').insert({
+      property_id: propertyId,
+      tenant_id: editingTenantId,
+      issue_code: issueCode,
+      recipient_name: displayName,
+      invoice_display_name: displayName,
+      invoice_subject: editingSubject.trim() || null,
+      is_primary: !codes.some((code) => code.tenant_id === editingTenantId && code.is_primary),
+      match_status: 'matched',
+    });
+    setSavingKey('');
+    if (saveError) { setError(`コードを追加できませんでした: ${saveError.message}`); return; }
+    setCreatingCode(false);
+    void load();
+  };
   const saveTenant = async () => {
     if (!supabase || !editingCode) return;
     const { error: saveError } = await supabase
@@ -519,6 +567,8 @@ export function BillingCodePage({
   return (
     <section className="billing-code-page">
       {error && <p className="billing-code-notice">{error}</p>}
+      {tenantsNeedingCode.length > 0 && <div className="billing-code-notice">請求先コード未登録の入居テナント: {tenantsNeedingCode.map(([id, name]) => <button key={id} type="button" className="text-button" disabled={!canEdit} onClick={() => startCreating(id)}>{name}（登録する）</button>)}</div>}
+      {canEdit && <button type="button" className="secondary-button" onClick={() => startCreating()}>新規コードを追加</button>}
       <div className="billing-code-panel">
         <div className="billing-code-table-wrap">
           <table className="billing-code-table">
@@ -568,7 +618,7 @@ export function BillingCodePage({
                         if (!deposit) {
                           setEditingCode(code);
                           setEditingTenantId(code.tenant_id ?? "");
-                          setEditingDisplayName(code.invoice_display_name ?? "");
+                          setEditingDisplayName(code.invoice_display_name || code.recipient_name);
                           setEditingSubject(code.invoice_subject ?? "");
                         }
                       }}
@@ -700,25 +750,26 @@ export function BillingCodePage({
           </div>
         </section>
       )}
-      {editingCode && (
+      {(editingCode || creatingCode) && (
         <div
           className="billing-code-modal-backdrop"
-          onClick={() => setEditingCode(null)}
+          onClick={() => { setEditingCode(null); setCreatingCode(false); }}
         >
           <section
             className="billing-code-modal"
             onClick={(event) => event.stopPropagation()}
           >
             <header>
-              <h3>テナントコードを編集</h3>
-              <button type="button" onClick={() => setEditingCode(null)}>
+              <h3>{creatingCode ? 'テナントコードを追加' : 'テナントコードを編集'}</h3>
+              <button type="button" onClick={() => { setEditingCode(null); setCreatingCode(false); }}>
                 ×
               </button>
             </header>
-            <p>
+            {editingCode && <p>
               <strong>{editingCode.issue_code}</strong>　
               {editingCode.recipient_name}
-            </p>
+            </p>}
+            {creatingCode && <label>請求先コード<input value={newIssueCode} maxLength={30} onChange={(event) => setNewIssueCode(event.target.value)} /></label>}
             <label>
               紐づけるテナント
               <select
@@ -733,20 +784,21 @@ export function BillingCodePage({
                 ))}
               </select>
             </label>
-            <label>請求書表示名<input value={editingDisplayName} onChange={(event) => setEditingDisplayName(event.target.value)} /></label>
+            <label>表示名<input value={editingDisplayName} maxLength={200} onChange={(event) => setEditingDisplayName(event.target.value)} /></label>
             <label>請求書表示件名<input value={editingSubject} onChange={(event) => setEditingSubject(event.target.value)} /></label>
             <footer>
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => setEditingCode(null)}
+                onClick={() => { setEditingCode(null); setCreatingCode(false); }}
               >
                 キャンセル
               </button>
               <button
                 type="button"
                 className="primary-button"
-                onClick={() => void saveTenant()}
+                disabled={!canEdit || savingKey === 'new'}
+                onClick={() => void (creatingCode ? saveNewCode() : saveTenant())}
               >
                 保存
               </button>

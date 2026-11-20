@@ -63,3 +63,9 @@
 .invoice-csv-table td.invoice-unit-price-rank-3 { color: #765d00; background: #fff8c7; }
 .invoice-csv-table td.invoice-unit-price-unset { color: #7b8581; background: #eef1f0; }
 .invoice-csv-table td.invoice-unit-price-cell input { color: inherit; font-weight: inherit; }
+.invoice-name-subject { position: relative; }
+.invoice-name-subject .invoice-company-name { display: block; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; padding: 4px; }
+.invoice-name-subject .invoice-company-name:hover { text-decoration: underline; }
+.invoice-subject-editor { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 280px; padding: 12px; background: #fff; border: 1px solid #b8c5d0; border-radius: 6px; box-shadow: 0 4px 14px #0002; }
+.invoice-subject-editor label { display: block; white-space: nowrap; }
+.invoice-subject-editor input { display: block; width: 100%; box-sizing: border-box; }

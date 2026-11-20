@@ -783,13 +783,14 @@ export type ConfirmedAmount = {
   sourceKind: 'subItem' | 'surcharge'; sourceId: string; sourceName: string; lineItemId: string | null; lineItemName: string | null;
   usage: number; usageUnit: string; unitPrice: number | null; amount: number;
   showUnitPriceOnInvoice: boolean; showUsageOnInvoice: boolean;
+  serviceMonth: string | null; lineSequence: number;
 };
 
 export async function loadConfirmedAmounts(client: SupabaseClient, assetId: string, year: number, month: number): Promise<ConfirmedAmount[]> {
   const { data, error } = await client.from('meter_reading_confirmed_amount')
-    .select('meter_reading_contract_id, tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_id, source_name, asset_billing_line_item_id, line_item_name, usage_amount, usage_unit, unit_price, show_unit_price_on_invoice, show_usage_on_invoice, amount')
+    .select('meter_reading_contract_id, tenant_id, tenant_name, row_no, invoice_number, category, source_kind, source_id, source_name, asset_billing_line_item_id, line_item_name, usage_amount, usage_unit, unit_price, show_unit_price_on_invoice, show_usage_on_invoice, amount, service_month, line_sequence')
     .eq('asset_id', assetId).eq('billing_month', monthStart(year, month))
-    .order('tenant_name').order('row_no');
+    .order('tenant_name').order('row_no').order('line_sequence').order('service_month');
   if (error) throw new Error(`確定した金額を読み込めませんでした: ${error.message}`);
   return (data ?? []).map((row) => ({
     meterReadingContractId: row.meter_reading_contract_id,
@@ -798,6 +799,8 @@ export async function loadConfirmedAmounts(client: SupabaseClient, assetId: stri
     usage: Number(row.usage_amount), usageUnit: row.usage_unit ?? '', unitPrice: numberOrNull(row.unit_price), amount: Number(row.amount),
     showUnitPriceOnInvoice: row.show_unit_price_on_invoice !== false,
     showUsageOnInvoice: row.show_usage_on_invoice !== false,
+    serviceMonth: row.service_month ?? null,
+    lineSequence: Number(row.line_sequence ?? 1),
   }));
 }
 
