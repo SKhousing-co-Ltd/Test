@@ -1,0 +1,21 @@
+.feedback-fab{position:fixed;right:24px;bottom:22px;z-index:800;min-height:48px;padding:0 20px;border:0;border-radius:999px;background:linear-gradient(135deg,#147b83,#205bb0);box-shadow:0 8px 24px rgb(5 29 57 / 28%);color:#fff;font-size:13px;font-weight:750;cursor:pointer}
+.feedback-fab:hover{transform:translateY(-2px);box-shadow:0 11px 28px rgb(5 29 57 / 34%)}
+.feedback-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:rgb(7 18 35 / 58%);backdrop-filter:blur(3px)}
+.feedback-dialog{width:min(100%,560px);max-height:min(90vh,760px);overflow:auto;border:1px solid #d7e0e9;border-radius:14px;background:#fff;color:#213348;box-shadow:0 24px 80px rgb(0 0 0 / 28%)}
+.feedback-dialog-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px 24px 17px;border-bottom:1px solid #e9eef3}
+.feedback-dialog-header p{margin:0 0 5px;color:#178288;font-size:9px;font-weight:800;letter-spacing:.16em}
+.feedback-dialog-header h2{margin:0;color:#18314b;font-size:18px}
+.feedback-dialog-header>button{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:50%;background:#f1f5f8;color:#53697e;font-size:22px;cursor:pointer}
+.feedback-dialog form{padding:20px 24px 22px}
+.feedback-body-label{display:block;margin-bottom:8px;color:#30475d;font-size:12px;font-weight:700}
+.feedback-dialog textarea{width:100%;min-height:155px;resize:vertical;padding:12px;border:1px solid #cad5df;border-radius:8px;outline:none;color:#23384d;font:inherit;font-size:13px;line-height:1.7}
+.feedback-dialog textarea:focus{border-color:#258999;box-shadow:0 0 0 3px rgb(37 137 153 / 13%)}
+.feedback-attachment-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding:13px;border:1px dashed #cbd7e2;border-radius:8px;background:#f8fafc}
+.feedback-attachment-row>div{display:grid;gap:4px}.feedback-attachment-row strong{color:#30475d;font-size:11px}.feedback-attachment-row small{color:#728397;font-size:10px}
+.feedback-file-button{position:relative;flex:0 0 auto;padding:8px 11px;border:1px solid #c4d1dc;border-radius:6px;background:#fff;color:#38536d;font-size:10px;font-weight:700;cursor:pointer}.feedback-file-button input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.feedback-file-button:has(input:disabled){opacity:.5;cursor:not-allowed}
+.feedback-file-list{display:grid;gap:6px;margin:9px 0 0;padding:0;list-style:none}.feedback-file-list li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 9px;border-radius:5px;background:#f3f6f9;color:#475d72;font-size:10px}.feedback-file-list li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.feedback-file-list button{border:0;background:none;color:#9b4350;font-size:10px;cursor:pointer}
+.feedback-error{margin:12px 0 0;color:#b42332;font-size:11px}
+.feedback-dialog form footer{display:flex;justify-content:flex-end;gap:9px;margin-top:20px;padding-top:15px;border-top:1px solid #e9eef3}
+.feedback-cancel,.feedback-submit{min-height:37px;padding:0 15px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer}.feedback-cancel{border:1px solid #ccd7e1;background:#fff;color:#51677c}.feedback-submit{border:0;background:#176e86;color:#fff}.feedback-submit:disabled,.feedback-cancel:disabled{opacity:.55;cursor:not-allowed}
+.feedback-success{display:grid;justify-items:center;padding:38px 24px 25px;text-align:center}.feedback-success>span{display:grid;width:42px;height:42px;place-items:center;border-radius:50%;background:#e1f5ec;color:#238957;font-size:22px}.feedback-success h3{margin:14px 0 0;color:#20374c;font-size:17px}.feedback-success p{margin:7px 0 20px;color:#6d7f91;font-size:12px}.feedback-success .feedback-submit{min-width:112px}
+@media(max-width:600px){.feedback-fab{right:14px;bottom:14px;min-height:44px;padding:0 16px}.feedback-backdrop{align-items:end;padding:0}.feedback-dialog{width:100%;max-height:92dvh;border-radius:14px 14px 0 0}.feedback-dialog-header{padding:18px 18px 14px}.feedback-dialog form{padding:17px 18px 20px}.feedback-attachment-row{align-items:flex-start;flex-direction:column}.feedback-file-button{align-self:flex-end}}
