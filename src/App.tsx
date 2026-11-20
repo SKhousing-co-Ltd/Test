@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   BrowserRouter,
@@ -11,34 +11,36 @@ import {
   useNavigate,
 } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
-import { FinancialPage } from './FinancialPage';
-import { RentRollPage } from './RentRollPage';
-import { LeasingMapPage } from './LeasingMapPage';
-import { ContractDocumentPage } from './ContractDocumentPage';
-import { AppsuiteSyncPage } from './AppsuiteSyncPage';
-import { ApprovalInventoryPage } from './ApprovalInventoryPage';
-import { ContractWorkflowPage } from './ContractWorkflowPage';
-import { ChangeRequestWorkbenchPage } from './ChangeRequestWorkbenchPage';
-import { ProcurementPage } from './ProcurementPage';
-import { OperationsDashboard } from './OperationsDashboard';
-import { TenantBillingPage } from './TenantBillingPage';
-import { ParkingPage } from './ParkingPage';
-import { ParkingFeeCleanupPage } from './ParkingFeeCleanupPage';
-import { ContractBillingBulkPage } from './ContractBillingBulkPage';
-import { SchemaExplorerPage } from './SchemaExplorerPage';
-import { AssetManagementPage } from './AssetManagementPage';
-import { AssetRegistrationPage } from './AssetRegistrationPage';
-import { TenantBillingSettingsPage } from './TenantBillingSettingsPage';
-import { ContractInformationPage } from './ContractInformationPage';
-import { CaseProgressMigrationPage } from './CaseProgressMigrationPage';
-import { ContractAdminPage } from './ContractAdminPage';
-import { PropertyProfitabilityPage } from './PropertyProfitabilityPage';
-import { PropertyAcquisitionPlanPage } from './PropertyAcquisitionPlanPage';
-import { RentRollReconciliationPage } from './RentRollReconciliationPage';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 import { AdminConsoleHomePage, AdminConsoleLayout } from './AdminConsolePage';
 import { UserFeedbackWidget } from './UserFeedbackWidget';
-import { UserFeedbackAdminPage } from './UserFeedbackAdminPage';
+import { RouteLoadingFallback } from './RouteLoadingFallback';
+
+const FinancialPage = lazy(() => import('./FinancialPage').then((module) => ({ default: module.FinancialPage })));
+const RentRollPage = lazy(() => import('./RentRollPage').then((module) => ({ default: module.RentRollPage })));
+const LeasingMapPage = lazy(() => import('./LeasingMapPage').then((module) => ({ default: module.LeasingMapPage })));
+const ContractDocumentPage = lazy(() => import('./ContractDocumentPage').then((module) => ({ default: module.ContractDocumentPage })));
+const AppsuiteSyncPage = lazy(() => import('./AppsuiteSyncPage').then((module) => ({ default: module.AppsuiteSyncPage })));
+const ApprovalInventoryPage = lazy(() => import('./ApprovalInventoryPage').then((module) => ({ default: module.ApprovalInventoryPage })));
+const ContractWorkflowPage = lazy(() => import('./ContractWorkflowPage').then((module) => ({ default: module.ContractWorkflowPage })));
+const ChangeRequestWorkbenchPage = lazy(() => import('./ChangeRequestWorkbenchPage').then((module) => ({ default: module.ChangeRequestWorkbenchPage })));
+const ProcurementPage = lazy(() => import('./ProcurementPage').then((module) => ({ default: module.ProcurementPage })));
+const OperationsDashboard = lazy(() => import('./OperationsDashboard').then((module) => ({ default: module.OperationsDashboard })));
+const TenantBillingPage = lazy(() => import('./TenantBillingPage').then((module) => ({ default: module.TenantBillingPage })));
+const ParkingPage = lazy(() => import('./ParkingPage').then((module) => ({ default: module.ParkingPage })));
+const ParkingFeeCleanupPage = lazy(() => import('./ParkingFeeCleanupPage').then((module) => ({ default: module.ParkingFeeCleanupPage })));
+const ContractBillingBulkPage = lazy(() => import('./ContractBillingBulkPage').then((module) => ({ default: module.ContractBillingBulkPage })));
+const SchemaExplorerPage = lazy(() => import('./SchemaExplorerPage').then((module) => ({ default: module.SchemaExplorerPage })));
+const AssetManagementPage = lazy(() => import('./AssetManagementPage').then((module) => ({ default: module.AssetManagementPage })));
+const AssetRegistrationPage = lazy(() => import('./AssetRegistrationPage').then((module) => ({ default: module.AssetRegistrationPage })));
+const TenantBillingSettingsPage = lazy(() => import('./TenantBillingSettingsPage').then((module) => ({ default: module.TenantBillingSettingsPage })));
+const ContractInformationPage = lazy(() => import('./ContractInformationPage').then((module) => ({ default: module.ContractInformationPage })));
+const CaseProgressMigrationPage = lazy(() => import('./CaseProgressMigrationPage').then((module) => ({ default: module.CaseProgressMigrationPage })));
+const ContractAdminPage = lazy(() => import('./ContractAdminPage').then((module) => ({ default: module.ContractAdminPage })));
+const PropertyProfitabilityPage = lazy(() => import('./PropertyProfitabilityPage').then((module) => ({ default: module.PropertyProfitabilityPage })));
+const PropertyAcquisitionPlanPage = lazy(() => import('./PropertyAcquisitionPlanPage').then((module) => ({ default: module.PropertyAcquisitionPlanPage })));
+const RentRollReconciliationPage = lazy(() => import('./RentRollReconciliationPage').then((module) => ({ default: module.RentRollReconciliationPage })));
+const UserFeedbackAdminPage = lazy(() => import('./UserFeedbackAdminPage').then((module) => ({ default: module.UserFeedbackAdminPage })));
 
 type ContractStatus = '起案' | '審査' | '契約書作成' | '締結' | '完了';
 type ContractType = '新規' | '更新';
@@ -299,7 +301,7 @@ function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut:
       {(profile.role === 'admin' || canEditContractBillingTerms) && <><p className="workspace-label">管理者メニュー</p><nav>{profile.role === 'admin' && <><NavLink to="/case-progress-migration" className="nav-item"><span>⇄</span>案件移行検証</NavLink><NavLink to="/appsuite-sync" className="nav-item"><span>⇄</span>AppSuite同期</NavLink></>}{canEditContractBillingTerms && <NavLink to="/admin/contract-billing-bulk" className="nav-item"><span>¥</span>請求条件一括設定</NavLink>}</nav></>}
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
     </aside>
-    <main className="portal-main"><header className="topbar"><div><p className="breadcrumb">ホーム / {pageTitle}</p><h1>{pageTitle}</h1></div><div className="user-menu"><div className="avatar">{userName.slice(0, 1)}</div><div className="user-name"><strong>{userName}</strong><small>{roleLabel(profile.role)}</small></div><button className="logout-button" onClick={() => void logout()}>ログアウト</button></div></header><div className="page-content"><Outlet /></div></main><UserFeedbackWidget />
+    <main className="portal-main"><header className="topbar"><div><p className="breadcrumb">ホーム / {pageTitle}</p><h1>{pageTitle}</h1></div><div className="user-menu"><div className="avatar">{userName.slice(0, 1)}</div><div className="user-name"><strong>{userName}</strong><small>{roleLabel(profile.role)}</small></div><button className="logout-button" onClick={() => void logout()}>ログアウト</button></div></header><div className="page-content"><Suspense fallback={<RouteLoadingFallback />}><Outlet /></Suspense></div></main><UserFeedbackWidget />
   </div>;
 }
 

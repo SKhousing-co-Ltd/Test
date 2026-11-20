@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { supabase } from './lib/supabase';
 import './leasing-map.css';
 import { centerFor, fileKind, pathFor, scopeKey, toMultiPolygon, type GeoJSONMultiPolygon, type Point } from './lib/leasing-map';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export type FloorPlanSummary = { floorPlanId: string | null; propertyId: string; propertyName: string; floorLabel: string };
 export type FloorPlanRevision = { id: string; floorPlanId: string; revisionNo: number; previewPath: string; originalPath: string; fileType: string; pdfPage: number | null; createdAt: string };
@@ -120,7 +116,7 @@ export function LeasingMapPage() {
     setUploading(true); setNotice('');
     try {
       let previewBlob: Blob = file;
-      if (type === 'pdf') { const pdfDocument = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; if (pdfPage < 1 || pdfPage > pdfDocument.numPages) throw new Error(`PDFは1〜${pdfDocument.numPages}ページから選択してください。`); const page = await pdfDocument.getPage(pdfPage); const viewport = page.getViewport({ scale: 2 }); const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height); await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise; previewBlob = await new Promise<Blob>((resolve) => canvas.toBlob((blob: Blob | null) => resolve(blob!), 'image/png')); }
+      if (type === 'pdf') { const [{ default: pdfjsLib }, { default: pdfWorker }] = await Promise.all([import('pdfjs-dist'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')]); pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker; const pdfDocument = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; if (pdfPage < 1 || pdfPage > pdfDocument.numPages) throw new Error(`PDFは1〜${pdfDocument.numPages}ページから選択してください。`); const page = await pdfDocument.getPage(pdfPage); const viewport = page.getViewport({ scale: 2 }); const canvas = document.createElement('canvas'); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height); await page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport }).promise; previewBlob = await new Promise<Blob>((resolve) => canvas.toBlob((blob: Blob | null) => resolve(blob!), 'image/png')); }
       // Storageのobject keyには元ファイル名を使わない（日本語・記号を含む名前を安全に扱うため）。
       const scope = crypto.randomUUID(); const extension = type === 'jpeg' ? 'jpg' : type; const originalPath = `${scope}/original.${extension}`; const previewPath = `${scope}/preview.${type === 'pdf' ? 'png' : extension}`;
       const [{ error: originalError }, { error: previewError }] = await Promise.all([supabase.storage.from('floor-plans').upload(originalPath, file), supabase.storage.from('floor-plans').upload(previewPath, previewBlob, { contentType: type === 'pdf' ? 'image/png' : file.type })]);

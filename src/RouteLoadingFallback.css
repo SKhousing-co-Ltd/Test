@@ -1,0 +1,2 @@
+.route-loading{display:flex;min-height:220px;align-items:center;justify-content:center;gap:11px;color:#718097;font-size:12px}
+.route-loading .loading-mark{width:23px;height:23px;margin:0;border-width:3px}
