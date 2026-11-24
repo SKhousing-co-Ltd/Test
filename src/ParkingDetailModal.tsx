@@ -157,7 +157,7 @@ type FormState = {
   vehicle_effective_to: string;
 };
 
-const today = new Date().toISOString().slice(0, 10);
+const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo' }).format(new Date());
 const collator = new Intl.Collator('ja-JP', { numeric: true, sensitivity: 'base' });
 const contractStatusLabels: Record<string, string> = {
   draft: '下書き',
@@ -795,13 +795,13 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
               {parkingFeeHistory.length ? <div className="parking-contract-space-table-wrap">
                 <table className="parking-fee-schedule-table">
                   <thead><tr><th>適用期間</th><th>月額駐車料</th><th>内外</th><th>変更</th></tr></thead>
-                  <tbody>{parkingFeeHistory.map((term) => <tr key={term.parking_fee_history_id}>
+                  <tbody>{parkingFeeHistory.map((term, index) => <tr key={term.parking_fee_history_id}>
                     <td>{displayDate(term.effective_from)} ～ {displayDate(term.effective_to)}</td>
                     <td className="numeric">{currency(Number(term.monthly_parking_fee))}</td>
                     <td>{term.parking_scope === 'internal' ? '内部' : '外部'}</td>
                     <td className="parking-fee-schedule-actions">
                       {editing && canManage ? <button type="button" className="secondary-button compact" onClick={() => editFeeTerm(term)}>この条件を編集</button> : null}
-                      {editing && canManage && term.effective_from > today && !term.source_import_batch_id && !term.source_import_row_id ? <button type="button" className="text-button" onClick={() => stageFeeCancellation(term)}>予定を取消</button> : null}
+                      {editing && canManage && index > 0 && !term.source_import_batch_id && !term.source_import_row_id ? <button type="button" className="text-button" onClick={() => stageFeeCancellation(term)}>履歴を削除</button> : null}
                     </td>
                   </tr>)}</tbody>
                 </table>
@@ -816,7 +816,7 @@ export function ParkingDetailModal({ row, canManage, onClose, onSaved }: {
                 {feeScheduleChanges.length ? <div className="parking-fee-schedule-pending">
                   <h4>保存予定</h4>
                   <ul>{feeScheduleChanges.map((change) => <li key={`${change.action}:${change.effective_from}`}>
-                    <span><strong>{displayDate(change.effective_from)}適用</strong>{change.action === 'remove' ? '・予定取消' : `・月額 ${currency(Number(change.monthly_parking_fee ?? 0))}`}</span>
+                    <span><strong>{displayDate(change.effective_from)}適用</strong>{change.action === 'remove' ? '・履歴削除' : `・月額 ${currency(Number(change.monthly_parking_fee ?? 0))}`}</span>
                     <button type="button" className="text-button" onClick={() => setFeeScheduleChanges((current) => current.filter((item) => item.effective_from !== change.effective_from))}>削除</button>
                   </li>)}</ul>
                   <label>変更理由<textarea value={feeScheduleReason} onChange={(event) => setFeeScheduleReason(event.target.value)} placeholder="契約書の確認内容などを入力" /></label>
