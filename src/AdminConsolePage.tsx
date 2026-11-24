@@ -9,6 +9,7 @@ type AdminConsoleProfile = {
 };
 
 const adminItems = [
+  { to: '/admin/development', icon: '◇', title: '開発中の機能', description: '仕様確認中の業務機能を管理者コンソール内で確認します。', category: '開発・検証' },
   { to: '/appsuite-sync', icon: '⇄', title: 'AppSuite同期', description: 'AppSuiteのアプリ情報を確認し、取得内容を確認してから同期します。', category: '外部サービス連携' },
   { to: '/accounts', icon: '♙', title: 'アカウント管理', description: '利用者、担当者、権限、利用状態を管理します。', category: 'ユーザー・権限' },
   { to: '/admin/user-feedback', icon: '✉', title: '利用者の意見', description: '利用者から寄せられた意見と添付画像を確認します。', category: '利用者サポート' },
@@ -21,7 +22,11 @@ const adminItems = [
   { to: '/rent-roll/reconciliation', icon: '◎', title: 'レントロール整合性確認', description: '取込データとレントロールの整合性を確認します。', category: 'データ整備' },
 ];
 
-const routeTitles = new Map(adminItems.map((item) => [item.to, item.title]));
+const routeTitles = new Map([
+  ...adminItems.map((item) => [item.to, item.title] as const),
+  ['/admin/development/deposits', '敷金管理'],
+  ['/admin/development/brokerage-fees', '仲介料管理'],
+]);
 
 export function AdminConsoleLayout({ profile, onSignOut }: { profile: AdminConsoleProfile; onSignOut: () => Promise<void> }) {
   const location = useLocation();

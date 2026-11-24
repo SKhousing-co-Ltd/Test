@@ -13,6 +13,8 @@ import {
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 import { AdminConsoleHomePage, AdminConsoleLayout } from './AdminConsolePage';
+import { AdminDevelopmentHomePage, AdminDevelopmentFeaturePage } from './AdminDevelopmentPage';
+import { DepositManagementPage } from './DepositManagementPage';
 import { UserFeedbackWidget } from './UserFeedbackWidget';
 import { RouteLoadingFallback } from './RouteLoadingFallback';
 
@@ -183,6 +185,9 @@ function App() {
           </Route>
           <Route element={<AdminConsoleOnly role={profile?.role ?? 'viewer'}><AdminConsoleLayout profile={profile!} onSignOut={signOut} /></AdminConsoleOnly>}>
             <Route path="/admin-console" element={<AdminConsoleHomePage />} />
+            <Route path="/admin/development" element={<AdminDevelopmentHomePage />} />
+            <Route path="/admin/development/deposits" element={<DepositManagementPage />} />
+            <Route path="/admin/development/brokerage-fees" element={<AdminDevelopmentFeaturePage feature="brokerage-fees" />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
             <Route path="/admin/assets" element={<AssetRegistrationPage />} />
             <Route path="/settings/assets" element={<AssetManagementPage />} />
@@ -298,7 +303,7 @@ function PortalLayout({ profile, onSignOut }: { profile: UserProfile; onSignOut:
       <p className="workspace-label">請求支払業務</p><nav><NavLink to="/procurement" className="nav-item"><span>◫</span>発注・請求・支払</NavLink><NavLink to="/financial" className="nav-item"><span>¥</span>収支管理</NavLink></nav>
       <p className="workspace-label">契約管理</p><nav>{(profile.role === 'admin' || profile.role === 'manager') && <NavLink to="/admin/contracts" className="nav-item"><span>◇</span>契約台帳管理</NavLink>}<NavLink to="/contract-information" className="nav-item"><span>◈</span>契約情報</NavLink><NavLink to="/parking" className="nav-item"><span>Ⓟ</span>駐車場・駐輪場台帳</NavLink></nav>
 
-      {(profile.role === 'admin' || canEditContractBillingTerms) && <><p className="workspace-label">管理者メニュー</p><nav>{profile.role === 'admin' && <><NavLink to="/case-progress-migration" className="nav-item"><span>⇄</span>案件移行検証</NavLink><NavLink to="/appsuite-sync" className="nav-item"><span>⇄</span>AppSuite同期</NavLink></>}{canEditContractBillingTerms && <NavLink to="/admin/contract-billing-bulk" className="nav-item"><span>¥</span>請求条件一括設定</NavLink>}</nav></>}
+      {(profile.role === 'admin' || canEditContractBillingTerms) && <><p className="workspace-label">管理者メニュー</p><nav>{profile.role === 'admin' && <><NavLink to="/admin-console" className="nav-item admin-console-entry"><span>⚙</span>管理者コンソール</NavLink><NavLink to="/case-progress-migration" className="nav-item"><span>⇄</span>案件移行検証</NavLink><NavLink to="/appsuite-sync" className="nav-item"><span>⇄</span>AppSuite同期</NavLink></>}{canEditContractBillingTerms && <NavLink to="/admin/contract-billing-bulk" className="nav-item"><span>¥</span>請求条件一括設定</NavLink>}</nav></>}
       <div className="sidebar-footer"><div className="help-card"><span>?</span><div><strong>お困りですか？</strong><small>ヘルプセンターを見る</small></div></div></div>
     </aside>
     <main className="portal-main"><header className="topbar"><div><p className="breadcrumb">ホーム / {pageTitle}</p><h1>{pageTitle}</h1></div><div className="user-menu"><div className="avatar">{userName.slice(0, 1)}</div><div className="user-name"><strong>{userName}</strong><small>{roleLabel(profile.role)}</small></div><button className="logout-button" onClick={() => void logout()}>ログアウト</button></div></header><div className="page-content"><Suspense fallback={<RouteLoadingFallback />}><Outlet /></Suspense></div></main><UserFeedbackWidget />

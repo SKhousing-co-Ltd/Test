@@ -27,3 +27,8 @@
 .billing-statement-page tr.statement-drop-before td { box-shadow: inset 0 3px 0 #2f6fb0; }
 .billing-statement-page tr.statement-drop-after td { box-shadow: inset 0 -3px 0 #2f6fb0; }
 @media (max-width: 760px) { .billing-statement-heading { align-items: flex-start; flex-direction: column; }.billing-statement-dates { flex-direction: column; gap: 4px; } }
+.statement-added-line { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: #627589; font-size: 11px; }
+.statement-added-line button { border: 0; color: #b34b4b; background: transparent; font: inherit; cursor: pointer; }
+.billing-statement-dates label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.statement-spot-label { display: inline-block; margin-left: 7px; padding: 2px 5px; border-radius: 4px; background: #e8f2fc; color: #27639a; font-size: 10px; }
+.billing-statement-page tr.statement-spot-row td { background: #f8fbff; }

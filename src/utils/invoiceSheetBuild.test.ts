@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { aggregateMeterLines, buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet, type MeterLine } from './invoiceSheet.ts';
+import { aggregateMeterLines, applyCurrentBillingDisplayNames, buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet, type MeterLine } from './invoiceSheet.ts';
 
 const meterLine = (patch: Partial<MeterLine> = {}): MeterLine => ({ lineItemId: 'electricity', name: '電気代', chargeType: '電気代', invoiceNo: 1, usage: 0, unit: 'kWh', unitPrice: 30, amount: 0, periodPatternId: 'monthly', note: '', isMeterCalculated: true, ...patch });
 
@@ -106,6 +106,14 @@ function fakeClient(tables: Record<string, unknown[]>, rentRoll: unknown[]): Sup
   return { from: (table: string) => query(tables[table] ?? []), rpc: (name: string) => query(name === 'rent_roll_list_with_terms_at_date' ? rentRoll : []) } as unknown as SupabaseClient;
 }
 
+test('保存済み請求書の件名はテナントコード一覧の設定を優先する', async () => {
+  const row = invoiceRow('a', 'A', '賃料', '1'); row.values[1] = '1001'; row.values[2] = '旧表示名'; row.values[3] = '旧件名';
+  const client = fakeClient({ billing_code: [{ issue_code: '1001', invoice_display_name: '新表示名', recipient_name: '元の名称', invoice_subject: '新件名' }] }, []);
+  const [updated] = await applyCurrentBillingDisplayNames(client, 'property', [row]);
+  assert.equal(updated.values[2], '新表示名');
+  assert.equal(updated.values[3], '新件名');
+});
+
 const source = (contractId: string, tenantId: string, rent: number) => ({ unit_id: `u-${contractId}`, unit_code: `10${contractId}`, unit_name: null, floor_label: '1F', unit_type: 'office', lease_contract_id: contractId, tenant_id: tenantId, tenant_name: `テナント${tenantId}`, monthly_rent_amount: rent, monthly_common_charge_amount: null, monthly_parking_amount: null, other_monthly_amount: null });
 const terms = (contractId: string, overrides: Record<string, unknown> = {}) => ({ lease_contract_id: contractId, due_month_offset: 0, due_day_of_month: 0, due_holiday_adjustment: 'previous', period_month_offset: 1, is_annual_billing: false, annual_billing_month: null, annual_start_offset: null, ...overrides });
 const code = (tenantId: string, issue: string) => ({ billing_code_id: `bc-${tenantId}`, tenant_id: tenantId, issue_code: issue, is_primary: true, invoice_display_name: null, invoice_subject: null });
@@ -137,6 +145,13 @@ test('看板契約のその他月額は請求書で看板料として表示す�
   assert.equal(sheet.rows[0].values[11], '看板料');
   assert.equal(sheet.rows[0].values[15], '30,000');
   assert.equal(sheet.rows[0].chargeType, '看板料');
+});
+
+test('同じ請求書の賃料を看板料より先に表示する', async () => {
+  const signage = { ...source('c2', 'A', 0), unit_type: 'signage', monthly_rent_amount: null, other_monthly_amount: 30000 };
+  const client = fakeClient({ billing_code: [code('A', '1001')], lease_contract: [terms('c1'), terms('c2')] }, [signage, source('c1', 'A', 100000)]);
+  const { sheet } = await buildInvoiceSheet(client, 'p', '物件', 2026, 10);
+  assert.deepEqual(sheet.rows.map((row) => row.values[11]), ['賃料', '看板料']);
 });
 
 test('分割した固定費は明細項目順を優先し、同じ項目内は分割行順にする', async () => {
