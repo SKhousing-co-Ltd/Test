@@ -1328,7 +1328,7 @@ td small {
   font-size: 11px;
 }
 .account-table {
-  min-width: 850px;
+  min-width: 950px;
 }
 .role-pill {
   padding: 4px 7px;
@@ -1337,6 +1337,26 @@ td small {
   background: #eff3f7;
   font-size: 10px;
   font-weight: 700;
+}
+.google-identity-status {
+  display: inline-block;
+  padding: 4px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.google-identity-status.linked {
+  color: #368461;
+  background: #e3f5eb;
+}
+.google-identity-status.not-linked {
+  color: #a9761c;
+  background: #fff1d9;
+}
+.google-identity-status.unknown {
+  color: #68758a;
+  background: #eff3f7;
 }
 .unlinked {
   color: #a57a2a;
