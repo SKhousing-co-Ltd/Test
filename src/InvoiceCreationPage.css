@@ -66,6 +66,53 @@
 .invoice-name-subject { position: relative; }
 .invoice-name-subject .invoice-company-name { display: block; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; padding: 4px; }
 .invoice-name-subject .invoice-company-name:hover { text-decoration: underline; }
+.invoice-issue-mode { display: flex; gap: 8px; margin: 0 0 12px; }
+.invoice-issue-mode button { padding: 8px 18px; border: 1px solid #c9d8e6; border-radius: 6px; background: #fff; color: #4b6680; cursor: pointer; }
+.invoice-issue-mode button.active { border-color: #2870b7; background: #eaf4ff; color: #145899; font-weight: 700; }
+.spot-invoice-panel { padding: 20px; border: 1px solid #dce5ee; border-radius: 10px; background: #fff; color: #38516a; }
+.spot-invoice-panel > header, .spot-invoice-toolbar, .spot-invoice-create { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.spot-invoice-panel h3 { margin: 4px 0; }
+.spot-invoice-panel button, .spot-invoice-panel select, .spot-invoice-panel input { min-height: 34px; padding: 5px 8px; border: 1px solid #c9d8e6; border-radius: 5px; font: inherit; }
+.spot-invoice-panel button { background: #f5f9fd; color: #245b8f; cursor: pointer; }
+.spot-invoice-panel button:disabled { opacity: .55; cursor: default; }
+.spot-invoice-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; margin-top: 20px; }
+.spot-invoice-layout nav { display: grid; align-content: start; gap: 7px; }
+.spot-invoice-layout nav button { text-align: left; }
+.spot-invoice-layout nav button.selected { border-color: #2870b7; background: #eaf4ff; }
+.spot-invoice-layout nav small { display: block; margin-top: 4px; color: #66798c; }
+.spot-invoice-detail { min-width: 0; }
+.spot-invoice-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 14px 0; }
+.spot-invoice-fields label, .spot-invoice-toolbar label { display: grid; gap: 5px; font-size: 12px; font-weight: 700; }
+.spot-invoice-fields input, .spot-invoice-fields select { width: 100%; box-sizing: border-box; font-weight: 400; }
+.spot-invoice-line { margin: 14px 0; padding: 14px; border: 1px solid #e0e7ef; border-radius: 7px; }
+@media (max-width: 850px) { .spot-invoice-layout { grid-template-columns: 1fr; } .spot-invoice-panel > header { align-items: stretch; flex-direction: column; } }
+.invoice-name-subject .invoice-company-name:disabled { cursor: default; text-decoration: none; }
+.invoice-csv-table col.invoice-status-column { width: 124px; }
+.invoice-csv-table td.invoice-status-cell { width: 124px !important; vertical-align: middle; text-align: center; }
+.invoice-issue-state { display: grid; justify-items: center; gap: 6px; padding: 4px; color: #657586; font-size: 11px; white-space: nowrap; }
+.invoice-csv-table tbody tr.invoice-issued-row td { background: #f2f4f6; color: #81909e; }
+.invoice-csv-table tbody tr.invoice-issued-row td.invoice-drag-cell { background: #eceff2; }
+.invoice-csv-table tbody tr.invoice-issued-row input:disabled, .invoice-csv-table tbody tr.invoice-issued-row select:disabled { background: transparent; color: #81909e; opacity: 1; }
+.invoice-issue-state button { border: 1px solid #9eb4c3; border-radius: 4px; background: #fff; color: #1262a3; padding: 2px 6px; cursor: pointer; font-size: 11px; }
 .invoice-subject-editor { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 280px; padding: 12px; background: #fff; border: 1px solid #b8c5d0; border-radius: 6px; box-shadow: 0 4px 14px #0002; }
 .invoice-subject-editor label { display: block; white-space: nowrap; }
 .invoice-subject-editor input { display: block; width: 100%; box-sizing: border-box; }
+.invoice-row-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgb(26 43 56 / 45%); }
+.invoice-row-modal { width: min(650px, 100%); max-height: calc(100vh - 40px); overflow: auto; padding: 28px; border-radius: 9px; background: #fff; box-shadow: 0 14px 45px rgb(0 0 0 / 20%); box-sizing: border-box; }
+.invoice-row-modal header { display: flex; align-items: start; justify-content: space-between; margin-bottom: 24px; }.invoice-row-modal header h3 { margin: 4px 0 0; color: #263b45; font-size: 19px; }.invoice-row-modal header button { border: 0; border-radius: 50%; width: 32px; height: 32px; color: #5b6b70; background: #edf2f1; font-size: 22px; cursor: pointer; }
+.invoice-row-modal-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }.invoice-row-modal-fields label { display: grid; gap: 7px; color: #526a65; font-size: 12px; font-weight: 700; }.invoice-row-modal-wide { grid-column: 1 / -1; }.invoice-row-modal-fields input, .invoice-row-modal-fields select { width: 100%; height: 39px; padding: 7px 10px; border: 1px solid #b9ccc6; border-radius: 5px; color: #263b45; background: #fff; font: inherit; font-size: 14px; box-sizing: border-box; }.invoice-row-modal-fields input:focus, .invoice-row-modal-fields select:focus { outline: 2px solid #a6d5f8; border-color: #298ac4; }
+.invoice-row-modal footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
+.invoice-row-modal-fields .invoice-row-repeat { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.invoice-row-modal-fields .invoice-row-repeat input { width: 16px; height: 16px; accent-color: #267d63; }
+.invoice-manual-line-cell { display: flex; align-items: center; gap: 3px; }
+.invoice-manual-line-cell input { min-width: 0; }
+.invoice-manual-line-cell button { flex: 0 0 auto; padding: 3px; border: 0; color: #b34b4b; background: transparent; font: inherit; font-size: 10px; cursor: pointer; }
+.spot-monthly-layout .spot-invoice-create { display:flex;align-items:center;gap:8px;flex-wrap:wrap }
+.spot-monthly-layout .spot-invoice-create select { min-width:240px;min-height:36px;padding:6px 9px;border:1px solid #c9d8e6;border-radius:5px }
+.spot-invoice-table { min-width:2100px }
+.spot-invoice-table td:nth-child(3),.spot-invoice-table th:nth-child(3){min-width:210px}
+.spot-invoice-table td:nth-child(8),.spot-invoice-table th:nth-child(8){min-width:190px}
+.spot-invoice-table td:nth-child(9),.spot-invoice-table th:nth-child(9){min-width:170px}
+.spot-invoice-table td:last-child,.spot-invoice-table th:last-child{min-width:125px}
+.spot-invoice-table .invoice-issue-state label{display:grid;gap:3px;font-size:10px}
+.spot-invoice-table .invoice-issue-state input{width:105px;padding:3px;border:1px solid #c9d8e6;border-radius:4px}

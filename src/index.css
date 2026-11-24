@@ -353,6 +353,17 @@ a {
 .nav-item.active span {
   color: #fff;
 }
+.nav-item.admin-console-entry {
+  border: 1px solid rgba(104, 155, 226, 0.28);
+  background: rgba(42, 111, 205, 0.1);
+  color: #dbeaff;
+}
+.nav-item.admin-console-entry:hover,
+.nav-item.admin-console-entry.active {
+  border-color: rgba(129, 177, 242, 0.58);
+  background: rgba(42, 111, 205, 0.24);
+  color: #fff;
+}
 .disabled-nav span {
   color: #607fad;
 }

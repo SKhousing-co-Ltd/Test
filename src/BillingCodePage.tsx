@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import type { BillingPeriod } from "./TenantBillingControls";
+import { loadSavedInvoiceSheet } from "./utils/invoiceSheet";
 
 type ChargeType =
   | "meeting_room"
@@ -176,6 +177,7 @@ export function BillingCodePage({
   const [editingTenantId, setEditingTenantId] = useState("");
   const [editingDisplayName, setEditingDisplayName] = useState("");
   const [editingSubject, setEditingSubject] = useState("");
+  const [savedSubjectsByCode, setSavedSubjectsByCode] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState("");
   const [error, setError] = useState("");
@@ -229,6 +231,9 @@ export function BillingCodePage({
       );
     // テナントコード一覧は、請求設定のテナント並び順ではなく発行コード順で並べます。
     setCodes((codeResult.data ?? []) as unknown as BillingCode[]);
+    const calendarYear = period.fiscalYear + (period.month <= 3 ? 1 : 0);
+    const savedSheet = await loadSavedInvoiceSheet(supabase, propertyId, calendarYear, period.month).catch(() => null);
+    setSavedSubjectsByCode(new Map((savedSheet?.sheet.rows ?? []).filter((row) => row.values[1] && row.values[3]).map((row) => [row.values[1], row.values[3]])));
     setTenants((tenantResult.data ?? []) as Tenant[]);
     setUnits((unitResult.data ?? []) as unknown as Unit[]);
     setAssetCode(String(assetResult.data?.asset_code ?? ""));
@@ -314,7 +319,7 @@ export function BillingCodePage({
         tenant_id: editingTenantId || null,
         match_status: editingTenantId ? "matched" : "unmatched",
         invoice_display_name: editingDisplayName.trim() || null,
-        invoice_subject: editingSubject.trim() || null,
+        invoice_subject: editingSubject.trim(),
       })
       .eq("billing_code_id", editingCode.billing_code_id);
     if (saveError) {
@@ -619,7 +624,7 @@ export function BillingCodePage({
                           setEditingCode(code);
                           setEditingTenantId(code.tenant_id ?? "");
                           setEditingDisplayName(code.invoice_display_name || code.recipient_name);
-                          setEditingSubject(code.invoice_subject ?? "");
+                          setEditingSubject(code.invoice_subject ?? savedSubjectsByCode.get(code.issue_code) ?? "");
                         }
                       }}
                     >
@@ -634,7 +639,7 @@ export function BillingCodePage({
                         <strong>{code.issue_code}</strong>
                       </td>
                       <td>{code.invoice_display_name || code.recipient_name}</td>
-                      <td>{code.invoice_subject ?? "—"}</td>
+                      <td>{code.invoice_subject ?? savedSubjectsByCode.get(code.issue_code) ?? "—"}</td>
                       <td className="billing-code-actions">
                         {!deposit && (
                           <button
