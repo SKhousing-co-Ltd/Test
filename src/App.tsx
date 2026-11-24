@@ -94,6 +94,8 @@ type UserProfile = {
   employee?: Pick<Employee, 'employee_name'> & { department?: { department_name: string } | null } | null;
 };
 
+type GoogleIdentityStatus = 'linked' | 'not-linked' | 'unknown';
+
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -348,13 +350,15 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
   const [filter, setFilter] = useState<AccountStatus | 'all'>('all');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [googleIdentityByUserId, setGoogleIdentityByUserId] = useState<Record<string, boolean> | null>(null);
 
   const loadData = async () => {
     if (!supabase) return;
     setIsLoading(true);
-    const [profileResult, employeeResult] = await Promise.all([
+    const [profileResult, employeeResult, identityResult] = await Promise.all([
       supabase.from('user_profiles').select('user_id, employee_id, email, role, account_status, approved_at, created_at, employee:employee_master(employee_name)').order('created_at', { ascending: false }),
       supabase.from('employee_master').select('employee_id, employee_name, email, employment_status, department:department_master(department_name)').order('employee_name'),
+      supabase.functions.invoke('admin-google-identity-status', { body: {} }),
     ]);
     if (profileResult.error || employeeResult.error) {
       setMessage(`アカウント情報を読み込めませんでした: ${profileResult.error?.message ?? employeeResult.error?.message}`);
@@ -362,7 +366,16 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
       return;
     }
     if (profileResult.error || employeeResult.error) setMessage('アカウント情報を読み込めませんでした。権限とRLS設定を確認してください。');
-    else { setProfiles(profileResult.data as unknown as UserProfile[]); setEmployees(employeeResult.data as unknown as Employee[]); }
+    else {
+      setProfiles(profileResult.data as unknown as UserProfile[]);
+      setEmployees(employeeResult.data as unknown as Employee[]);
+      if (identityResult.error || !identityResult.data?.statusByUserId) {
+        setGoogleIdentityByUserId(null);
+        setMessage(`Google連携状態を取得できませんでした${identityResult.error ? `: ${identityResult.error.message}` : '。管理者へお問い合わせください。'}`);
+      } else {
+        setGoogleIdentityByUserId(identityResult.data.statusByUserId as Record<string, boolean>);
+      }
+    }
     setIsLoading(false);
   };
 
@@ -391,7 +404,7 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
     {message && <div className="account-message">{message}<button onClick={() => setMessage('')}>×</button></div>}
     <section className="account-summary"><SummaryCard label="承認待ち" value={profiles.filter((profile) => profile.account_status === 'pending').length} tone="orange" /><SummaryCard label="有効なアカウント" value={profiles.filter((profile) => profile.account_status === 'active').length} tone="green" /><SummaryCard label="利用停止中" value={profiles.filter((profile) => profile.account_status === 'suspended').length} tone="gray" /></section>
     <section className="account-panel"><header><div><h3>アカウント一覧</h3><p>未照合アカウントは、担当者を設定して承認してください。</p></div><select value={filter} onChange={(event) => setFilter(event.target.value as AccountStatus | 'all')}><option value="all">すべての状態</option><option value="pending">承認待ち</option><option value="active">有効</option><option value="suspended">利用停止</option></select></header>
-      {isLoading ? <div className="empty-state"><strong>読み込み中です…</strong></div> : <div className="table-wrap"><table className="account-table"><thead><tr><th>メールアドレス</th><th>担当者・部門</th><th>ロール</th><th>状態</th><th>登録日時</th><th /></tr></thead><tbody>{filteredProfiles.map((profile) => { const employee = employees.find((item) => item.employee_id === profile.employee_id); return <tr key={profile.user_id}><td><strong>{profile.email}</strong></td><td>{employee ? <><strong>{employee.employee_name}</strong><small>{employee.department?.department_name ?? '部門未設定'}</small></> : <span className="unlinked">未紐づけ</span>}</td><td><span className="role-pill">{roleLabel(profile.role)}</span></td><td><AccountStatusBadge status={profile.account_status} /></td><td>{new Date(profile.created_at).toLocaleDateString('ja-JP')}</td><td><button className="row-action" onClick={() => setSelected(profile)}>{profile.account_status === 'pending' ? '承認・設定' : '編集'}</button></td></tr>; })}</tbody></table></div>}
+      {isLoading ? <div className="empty-state"><strong>読み込み中です…</strong></div> : <div className="table-wrap"><table className="account-table"><thead><tr><th>メールアドレス</th><th>担当者・部門</th><th>ロール</th><th>状態</th><th>Google連携</th><th>登録日時</th><th /></tr></thead><tbody>{filteredProfiles.map((profile) => { const employee = employees.find((item) => item.employee_id === profile.employee_id); const googleStatus: GoogleIdentityStatus = googleIdentityByUserId === null ? 'unknown' : googleIdentityByUserId[profile.user_id] ? 'linked' : 'not-linked'; return <tr key={profile.user_id}><td><strong>{profile.email}</strong></td><td>{employee ? <><strong>{employee.employee_name}</strong><small>{employee.department?.department_name ?? '部門未設定'}</small></> : <span className="unlinked">未紐づけ</span>}</td><td><span className="role-pill">{roleLabel(profile.role)}</span></td><td><AccountStatusBadge status={profile.account_status} /></td><td><GoogleIdentityBadge status={googleStatus} /></td><td>{new Date(profile.created_at).toLocaleDateString('ja-JP')}</td><td><button className="row-action" onClick={() => setSelected(profile)}>{profile.account_status === 'pending' ? '承認・設定' : '編集'}</button></td></tr>; })}</tbody></table></div>}
     </section>
     {showCreateModal && <CreateAccountModal employees={employees} profiles={profiles} onClose={() => setShowCreateModal(false)} onCreate={createAccount} />}
     {selected && <AccountModal profile={selected} employees={employees} profiles={profiles} onClose={() => setSelected(null)} onSave={save} />}
@@ -400,6 +413,10 @@ function AccountManagementPage({ currentUserId }: { currentUserId: string }) {
 
 function SummaryCard({ label, value, tone }: { label: string; value: number; tone: string }) { return <article className={`summary-card ${tone}`}><p>{label}</p><strong>{value}<small>件</small></strong></article>; }
 function AccountStatusBadge({ status }: { status: AccountStatus }) { const label = status === 'pending' ? '承認待ち' : status === 'active' ? '有効' : '利用停止'; return <span className={`account-status ${status}`}>{label}</span>; }
+function GoogleIdentityBadge({ status }: { status: GoogleIdentityStatus }) {
+  const label = status === 'linked' ? '連携済' : status === 'not-linked' ? '未連携' : '確認不可';
+  return <span className={`google-identity-status ${status}`}>{label}</span>;
+}
 function roleLabel(role: AccountRole) { return role === 'admin' ? 'システム管理者' : role === 'manager' ? '業務管理者' : role === 'staff' ? '担当者' : '参照専用'; }
 
 function CreateAccountModal({ employees, profiles, onClose, onCreate }: { employees: Employee[]; profiles: UserProfile[]; onClose: () => void; onCreate: (draft: { email: string; employee_id: string; role: AccountRole }) => Promise<void> }) {

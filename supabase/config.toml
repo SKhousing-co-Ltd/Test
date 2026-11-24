@@ -7,6 +7,9 @@ verify_jwt = false
 [functions.admin-create-user]
 verify_jwt = true
 
+[functions.admin-google-identity-status]
+verify_jwt = true
+
 [functions.complete-initial-password-change]
 verify_jwt = true
 
