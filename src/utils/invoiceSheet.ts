@@ -70,7 +70,7 @@ export type AnnualBillingRow = {
   monthlyNetAmount: number;
   accountingNetAmount: number;
 };
-export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string; depositId?: string; recurring?: { id: string; startMonth: string }; annualBilling?: AnnualBillingRow };
+export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string; depositId?: string; postingAccountCode?: string; postingSubaccountCode?: string; recurring?: { id: string; startMonth: string }; annualBilling?: AnnualBillingRow };
 
 export type AnnualBillingAllocation = {
   invoiceKey: string;

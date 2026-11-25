@@ -4,6 +4,8 @@ import './AdminDevelopmentPage.css';
 const features = [
   { key: 'deposits', title: '敷金管理', description: '新規入居時の敷金管理と請求に関する画面', path: '/admin/development/deposits' },
   { key: 'brokerage-fees', title: '仲介料管理', description: '仲介料の管理に関する画面', path: '/admin/development/brokerage-fees' },
+  { key: 'garage-certificates', title: '車庫証明発行管理', description: '発行・請求履歴を登録します。', path: '/admin/development/garage-certificates' },
+  { key: 'security-cards', title: 'セキュリティカード発注管理', description: '発注履歴と物件別の請求単価を管理します。', path: '/admin/development/security-cards' },
 ] as const;
 
 export function AdminDevelopmentHomePage() {

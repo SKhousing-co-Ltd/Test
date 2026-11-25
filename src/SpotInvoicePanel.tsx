@@ -6,6 +6,7 @@ import { buildBtobInvoiceCsv } from './utils/btobInvoiceCsv';
 import { csvHeaders, emptyValues, loadSavedInvoiceSheet, recalcInvoices, saveInvoiceSheet, taxCategories, type InvoiceRow, type InvoiceSheet, type SpotInvoice } from './utils/invoiceSheet';
 import { beginSpotReissue, changeSpotPostingMonth, issueSpot, monthStart } from './utils/spotInvoices';
 import { markDepositInvoicesIssued } from './utils/depositInvoice';
+import { assertRevenuePostingReleased } from './utils/revenuePostingLock';
 
 type LineItem = { line_item_name: string; display_name: string | null; billing_charge_type_id: string | null };
 const columns = [0, 1, 2, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 18, 19, 20] as const;
@@ -79,12 +80,20 @@ export function SpotInvoicePanel({ propertyId, propertyName, period }: { propert
   };
   const changePosting = async (spot: SpotInvoice, value: string) => {
     if (dirty || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
-    const next = spots.map((item) => item.id === spot.id ? changeSpotPostingMonth(item, `${value}-01`) : item);
-    if (await persist(next)) setNotice('計上月を変更しました。請求明細・入金明細にも反映されます。');
+    try {
+      if (!supabase) return;
+      await assertRevenuePostingReleased(supabase, propertyId, 'spot', spot.id);
+      const next = spots.map((item) => item.id === spot.id ? changeSpotPostingMonth(item, `${value}-01`) : item);
+      if (await persist(next)) setNotice('計上月を変更しました。請求明細・入金明細にも反映されます。');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '計上月を変更できませんでした。'); }
   };
   const startReissue = async (spot: SpotInvoice) => {
-    if (dirty) return; const next = spots.map((item) => item.id === spot.id ? beginSpotReissue(item) : item);
-    if (await persist(next)) setNotice('再発行の編集を開始しました。');
+    if (dirty || !supabase) return;
+    try {
+      await assertRevenuePostingReleased(supabase, propertyId, 'spot', spot.id);
+      const next = spots.map((item) => item.id === spot.id ? beginSpotReissue(item) : item);
+      if (await persist(next)) setNotice('再発行の編集を開始しました。');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '再発行を開始できませんでした。'); }
   };
   const exportCsv = async (spot: SpotInvoice) => {
     if (!supabase || busy || dirty || spot.state === 'issued') return;

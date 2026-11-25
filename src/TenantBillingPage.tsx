@@ -41,7 +41,7 @@ export function TenantBillingPage({ canEdit, canManageSettings }: { canEdit: boo
     {activeMenu === 0
       ? <BillingCodePage canEdit={canEdit} propertyId={propertyId} period={period} />
       : activeMenu === 1 || activeMenu === 2
-        ? <BillingStatementPage kind={activeMenu === 1 ? 'payment' : 'invoice'} propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} />
+        ? <BillingStatementPage kind={activeMenu === 1 ? 'payment' : 'invoice'} propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} canEdit={canEdit} />
       : activeMenu === 3
         ? <InvoiceCreationPage propertyId={propertyId} propertyName={properties.find((item) => item.asset_id === propertyId)?.short_name || properties.find((item) => item.asset_id === propertyId)?.asset_name || ''} period={period} />
       : activeMenu === 4

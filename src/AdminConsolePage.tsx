@@ -26,6 +26,8 @@ const routeTitles = new Map([
   ...adminItems.map((item) => [item.to, item.title] as const),
   ['/admin/development/deposits', '敷金管理'],
   ['/admin/development/brokerage-fees', '仲介料管理'],
+  ['/admin/development/garage-certificates', '車庫証明発行管理'],
+  ['/admin/development/security-cards', 'セキュリティカード発注管理'],
 ]);
 
 export function AdminConsoleLayout({ profile, onSignOut }: { profile: AdminConsoleProfile; onSignOut: () => Promise<void> }) {

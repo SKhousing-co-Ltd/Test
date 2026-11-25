@@ -31,10 +31,11 @@ export function lateContractFixedCharges(input: Input): LateContractFixedCharge[
   });
 }
 
-export function depositInvoiceDetail(amount: number, contractStart: string, label = '敷金'): string[] {
+export function depositInvoiceDetail(amount: number, contractStart: string, label = '敷金', item1 = 'その他', item2 = '敷金'): string[] {
   const values = emptyValues();
   const date = contractStart ? `${Number(contractStart.slice(0, 4))}/${Number(contractStart.slice(5, 7))}/${Number(contractStart.slice(8, 10))}` : '';
-  values[11] = 'その他';
+  values[10] = item1;
+  values[11] = item2;
   values[15] = amount.toLocaleString('ja-JP');
   values[18] = '非課税';
   values[20] = `${label}　※${date}～契約`;
