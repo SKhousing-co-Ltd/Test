@@ -1,7 +1,9 @@
 .billing-statement-page { overflow: hidden; border: 1px solid #e0e7f0; border-radius: 10px; background: #fff; }
 .billing-statement-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px; border-bottom: 1px solid #e7edf4; }
 .billing-statement-heading h3 { margin: 3px 0 0; color: #2b405d; font-size: 17px; }
-.billing-statement-dates { display: flex; gap: 14px; color: #617187; font-size: 12px; font-weight: 700; }
+.billing-statement-dates { display: flex; align-items: center; gap: 14px; color: #617187; font-size: 12px; font-weight: 700; }
+.billing-statement-dates .revenue-posting-export-button { border: 0; border-radius: 5px; padding: 8px 12px; background: #1767bb; color: white; font: inherit; cursor: pointer; }
+.billing-statement-dates .revenue-posting-export-button:disabled { opacity: .5; cursor: default; }
 .billing-statement-notice { margin: 12px 16px; padding: 9px 11px; border: 1px solid #efd7aa; border-radius: 7px; color: #846123; background: #fff9ec; font-size: 12px; }
 .billing-statement-table-wrap { overflow: auto; max-height: calc(100vh - 270px); }
 .billing-statement-page table { width: 100%; min-width: 940px; border-collapse: collapse; table-layout: fixed; }

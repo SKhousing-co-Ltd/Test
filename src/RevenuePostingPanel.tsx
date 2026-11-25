@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Encoding from 'encoding-japanese';
 import { supabase } from './lib/supabase';
 import type { BillingPeriod } from './TenantBillingControls';
@@ -114,10 +115,10 @@ export function RevenuePostingPanel({ propertyId, propertyName, period }: { prop
     setBusy(false);
   };
   const monthConfirmed = confirmed.filter((row) => row.billing_month === billingMonth && !row.released_at);
-  return <section className="revenue-posting-panel"><header><div><h4>売上計上用 CSV</h4><p>請求済みの明細を科目別に出力します。出力した明細は確定し、次回の出力から除外します。</p></div><button type="button" disabled={loading || busy || (!candidates.length && !dueEntries.length)} onClick={() => void exportCsv()}>{busy ? '処理中…' : '未確定分を確定して CSV 出力'}</button></header>
-    <p>今回の対象：請求明細 {candidates.length}件／年払いの月次振替 {dueEntries.length}行</p>
+  const toolbar = document.getElementById('revenue-posting-toolbar');
+  return <>{toolbar && createPortal(<button className="revenue-posting-export-button" type="button" disabled={loading || busy || (!candidates.length && !dueEntries.length)} onClick={() => void exportCsv()}>{busy ? '処理中…' : '未確定分を確定して CSV 出力'}</button>, toolbar)}<section className="revenue-posting-panel">
     {error && <p role="alert" className="revenue-posting-error">{error}</p>}{notice && <p role="status" className="revenue-posting-notice">{notice}</p>}
     {monthConfirmed.length > 0 && <details><summary>確定済みの請求明細（{monthConfirmed.length}件）</summary><ul>{monthConfirmed.map((source) => <li key={source.id}><span>{source.source_kind === 'spot' ? 'スポット' : '月次'}・{source.invoice_snapshot?.label || source.source_key.slice(0, 18)}・第{source.version}版</span><button type="button" disabled={busy} onClick={() => void release(source)}>確定解除</button></li>)}</ul></details>}
     {batches.length > 0 && <details><summary>CSV 出力履歴（{batches.length}件）</summary><ul>{batches.map((batch) => <li key={batch.id}><span>{new Date(batch.created_at).toLocaleString('ja-JP')}・{batch.id.slice(0, 8)}</span><button type="button" disabled={busy} onClick={() => void redownload(batch)}>再取得</button></li>)}</ul></details>}
-  </section>;
+  </section></>;
 }

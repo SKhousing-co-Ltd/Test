@@ -128,8 +128,9 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period, c
       <div><p className="section-kicker">{monthKey(period)}</p><h3>{title}（{propertyName || '物件未選択'}）</h3></div>
       <div className="billing-statement-dates">
         <label><input type="checkbox" checked={includeSpots} onChange={(event) => setIncludeSpots(event.target.checked)} />スポット発行分を含む</label>
-        <span>{savedAt ? `請求書作成の保存内容（${savedAtText(savedAt)}）` : '請求書作成は未保存のため、最新データから作成した内容です'}</span>
+        {savedAt && <span>請求書作成の保存内容（{savedAtText(savedAt)}）</span>}
         {kind === 'invoice' && <span>支払期日：{dueDates.length ? dueDates.join('・') : '未設定'}</span>}
+        {kind === 'invoice' && canEdit && <span id="revenue-posting-toolbar" />}
       </div>
     </header>
     {kind === 'invoice' && canEdit && <RevenuePostingPanel propertyId={propertyId} propertyName={propertyName} period={period} />}
@@ -137,7 +138,7 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period, c
     {error && <p className="billing-statement-notice">{error}</p>}
     <div className="billing-statement-table-wrap"><table>
       <colgroup><col className="statement-handle" /><col className="statement-code" /><col className="statement-floor" /><col className="statement-tenant" />{columns.map((column) => <col className="statement-money" key={column.key} />)}<col className="statement-money" /><col className="statement-money" /><col className="statement-money" />{kind === 'payment' && <><col className="statement-money" /><col className="statement-money" /><col className="statement-date" /></>}</colgroup>
-      <thead><tr><th aria-label="並べ替え" /><th>コード</th><th>階</th><th>テナント名</th>{columns.map((column) => <th key={column.key}>{column.label}</th>)}<th>小計</th><th>消費税</th><th>合計</th>{kind === 'payment' && <><th>未入金額</th><th>入金額</th><th>入金日</th></>}</tr></thead>
+      <thead><tr><th aria-label="並べ替え" /><th>コード</th><th>階</th><th>テナント名</th>{columns.map((column) => <th className="numeric" key={column.key}>{column.label}</th>)}<th className="numeric">小計</th><th className="numeric">消費税</th><th className="numeric">合計</th>{kind === 'payment' && <><th className="numeric">未入金額</th><th className="numeric">入金額</th><th>入金日</th></>}</tr></thead>
       <tbody>{loading ? <tr><td colSpan={columnCount + 1}>読み込み中…</td></tr> : visibleRows.map((row, index) => <tr key={row.key} className={[spotKeys.has(row.key) ? 'statement-spot-row' : '', dragIndex === index ? 'statement-dragging' : '', dropBefore === index ? 'statement-drop-before' : '', dropBefore === index + 1 && index === visibleRows.length - 1 ? 'statement-drop-after' : ''].filter(Boolean).join(' ') || undefined} onDragOver={(event) => dragOver(event, index)} onDrop={(event) => void drop(event)}>
         <td className="statement-handle-cell">{!includeSpots && <span className="statement-drag-handle" draggable title="ドラッグして並べ替え" aria-label={`${row.tenantName}を並べ替え`} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', row.key); setDragIndex(index); }} onDragEnd={endDrag}>⋮⋮</span>}</td>
         <td><strong>{row.code || '—'}</strong></td><td>{row.floor || '—'}</td><td>{row.tenantName}{spotKeys.has(row.key) && <small className="statement-spot-label">スポット</small>}{kind === 'invoice' && invoiceSheet?.rows.filter((item) => item.invoiceKey === row.key && item.id.includes(':manual:')).map((item) => <div className="statement-added-line" key={item.id}><span>追加：{item.values[11]}（{item.values[15]}円）</span><button type="button" disabled={Boolean(deletingRowId) || invoiceSheet.invoiceStatuses?.[item.invoiceKey]?.state === 'issued'} onClick={() => void deleteAddedLine(item.id)}>削除</button></div>)}</td>
