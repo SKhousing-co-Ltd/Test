@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { aggregateMeterLines, applyCurrentBillingDisplayNames, buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, type InvoiceRow, type InvoiceSheet, type MeterLine } from './invoiceSheet.ts';
+import { aggregateMeterLines, applyCurrentBillingDisplayNames, buildInvoiceSheet, invoiceNumberForUnitAssignments, leaseContractUnitIdsForPhysicalUnits, mergeMissingZeroSurchargeRows, orderInvoiceCardsByTenants, reorderInvoiceCards, splitAnnualBillingTotals, type InvoiceRow, type InvoiceSheet, type MeterLine } from './invoiceSheet.ts';
 
 const meterLine = (patch: Partial<MeterLine> = {}): MeterLine => ({ lineItemId: 'electricity', name: '電気代', chargeType: '電気代', invoiceNo: 1, usage: 0, unit: 'kWh', unitPrice: 30, amount: 0, periodPatternId: 'monthly', note: '', isMeterCalculated: true, ...patch });
 
@@ -206,19 +206,45 @@ test('明細項目で独立させた請求書を優先し、その他の明細�
   ]);
 });
 
-test('年払い（10月請求・翌月～1年分）：10月は月額×12で1年分、他の月は0円・明細項目1は空白', async () => {
+test('年払い（10月請求・翌月～1年分）：10月は通常1カ月と年払い11カ月に分け、他の月は年払い0円行を出す', async () => {
   const tables = { billing_code: [code('A', '1001')], lease_contract: [terms('c1', { is_annual_billing: true, annual_billing_month: 10, annual_start_offset: 1 })] };
-  const october = (await buildInvoiceSheet(fakeClient(tables, [source('c1', 'A', 100000)]), 'p', '物件', 2026, 10)).sheet.rows[0];
-  assert.equal(october.values[10], '2026/11/1～2027/10/31分');
-  assert.equal(october.values[15], '1,200,000');
+  const octoberSheet = (await buildInvoiceSheet(fakeClient(tables, [source('c1', 'A', 100000)]), 'p', '物件', 2026, 10)).sheet;
+  assert.equal(octoberSheet.rows.length, 2);
+  assert.equal(octoberSheet.rows[0].values[10], '2026/11/1～2026/11/30分');
+  assert.equal(octoberSheet.rows[0].values[11], '賃料');
+  assert.equal(octoberSheet.rows[0].values[15], '100,000');
+  assert.equal(octoberSheet.rows[1].values[10], '2026/12/1～2027/10/31分');
+  assert.equal(octoberSheet.rows[1].values[11], '賃料 ※年払い');
+  assert.equal(octoberSheet.rows[1].values[15], '1,100,000');
+  assert.equal(octoberSheet.rows[0].values[5], '1,200,000');
+  assert.deepEqual(octoberSheet.annualBillingAllocations?.[0], {
+    invoiceKey: octoberSheet.rows[0].invoiceKey,
+    currentMonth: { net: 100000, tax: 10000, total: 110000 },
+    prepaid: { net: 1100000, tax: 110000, total: 1210000 },
+    monthlyRecognition: { net: 100000, tax: 10000, total: 110000 },
+  });
   const november = (await buildInvoiceSheet(fakeClient(tables, [source('c1', 'A', 100000)]), 'p', '物件', 2026, 11)).sheet.rows[0];
   assert.equal(november.values[10], '');
+  assert.equal(november.values[11], '賃料 ※年払い');
   assert.equal(november.values[15], '0');
+  assert.deepEqual(november.annualBilling, { role: 'recognition', monthlyNetAmount: 100000, accountingNetAmount: 100000 });
+});
+
+test('年払いの11カ月分は税抜・消費税・税込のすべてを11で割り切れ、最初の1カ月で端数を調整する', () => {
+  const split = splitAnnualBillingTotals(1200013);
+  assert.equal(split.prepaid.net % 11, 0);
+  assert.equal(split.prepaid.tax % 11, 0);
+  assert.equal(split.prepaid.total % 11, 0);
+  assert.equal(split.currentMonth.net + split.prepaid.net, 1200013);
+  assert.equal(split.currentMonth.tax + split.prepaid.tax, Math.floor(1200013 * 0.1));
+  assert.equal(split.currentMonth.total + split.prepaid.total, 1200013 + Math.floor(1200013 * 0.1));
 });
 
 test('翌々月～1年分・前月分・翌月の入金期日', async () => {
   const annual = { billing_code: [code('A', '1001')], lease_contract: [terms('c1', { is_annual_billing: true, annual_billing_month: 10, annual_start_offset: 2 })] };
-  assert.equal((await buildInvoiceSheet(fakeClient(annual, [source('c1', 'A', 1)]), 'p', '物件', 2026, 10)).sheet.rows[0].values[10], '2026/12/1～2027/11/30分');
+  const annualRows = (await buildInvoiceSheet(fakeClient(annual, [source('c1', 'A', 1)]), 'p', '物件', 2026, 10)).sheet.rows;
+  assert.equal(annualRows[0].values[10], '2026/12/1～2026/12/31分');
+  assert.equal(annualRows[1].values[10], '2027/1/1～2027/11/30分');
   const previous = { billing_code: [code('A', '1001')], lease_contract: [terms('c1', { period_month_offset: -1, due_month_offset: 1, due_day_of_month: 5, due_holiday_adjustment: 'next' })] };
   const row = (await buildInvoiceSheet(fakeClient(previous, [source('c1', 'A', 1)]), 'p', '物件', 2026, 10)).sheet.rows[0];
   assert.equal(row.values[10], '2026/9/1～2026/9/30分');
