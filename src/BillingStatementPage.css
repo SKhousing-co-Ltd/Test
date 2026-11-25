@@ -25,6 +25,7 @@
 .billing-statement-empty { padding: 28px !important; color: #8190a3 !important; text-align: center !important; }
 .statement-handle-cell { padding-right: 0 !important; text-align: center !important; }
 .statement-drag-handle { display: inline-block; padding: 3px 4px; color: #91a2b5; font-weight: 800; letter-spacing: -2px; cursor: grab; user-select: none; }
+.statement-drag-handle-hidden { visibility: hidden; cursor: default; }
 .statement-drag-handle:active { cursor: grabbing; }
 .billing-statement-page tr.statement-dragging td { opacity: .45; }
 .billing-statement-page tr.statement-drop-before td { box-shadow: inset 0 3px 0 #2f6fb0; }
