@@ -26,5 +26,6 @@
 .drag-handle { border: 0; padding: 3px 6px; color: #8b9bb0; background: transparent; cursor: grab; font-size: 18px; line-height: 1; }
 .drag-handle:active { cursor: grabbing; }
 .tenant-billing-delete { border: 0; padding: 4px; color: #b8545b; background: transparent; font-size: 11px; }
+.tenant-billing-account-input{width:75px;padding:6px;border:1px solid #d7e0eb;border-radius:5px}.tenant-billing-save{border:0;border-radius:5px;padding:5px 8px;background:#1767bb;color:white;cursor:pointer;margin-right:6px}.tenant-billing-settings-table{min-width:800px}
 .tenant-billing-settings-empty { padding: 26px !important; color: #8390a1 !important; text-align: center !important; }
 @media (max-width: 800px) { .tenant-billing-settings-grid, .line-item-form { grid-template-columns: 1fr; }.tenant-billing-settings-form .primary-button { width: 100%; } }

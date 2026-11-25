@@ -65,7 +65,7 @@ export type PeriodPattern = { billing_period_pattern_id: string; pattern_name: s
 
 // 請求書の1行（明細1行）です。values はCSVの列順の値です。
 // chargeType は入金明細・請求明細でどの請求種別の列に入れるか、tenantId・tenantName・floor は明細の行の見出しに使います。
-export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string; depositId?: string; recurring?: { id: string; startMonth: string } };
+export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string; depositId?: string; postingAccountCode?: string; postingSubaccountCode?: string; recurring?: { id: string; startMonth: string } };
 
 export function invoiceNumberForUnitAssignments(
   assignments: InvoiceSplitUnitAssignment[],

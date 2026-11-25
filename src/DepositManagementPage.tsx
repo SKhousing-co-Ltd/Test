@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from './lib/supabase';
+import { ManagedSpecialBillingSettings } from './ManagedSpecialBillingSettings';
 import './AdminDevelopmentPage.css';
 
 type Deposit = {
@@ -51,6 +52,7 @@ export function DepositManagementPage() {
 
   return <section className="admin-development-page">
     <header className="admin-console-page-heading"><p className="section-kicker">DEVELOPMENT / DEPOSITS</p><h1>敷金管理</h1><p>新規オフィス契約の対応依頼確定後、営業部の期日設定と総務経理部の請求を管理します。</p></header>
+    <ManagedSpecialBillingSettings kind="deposit" />
     <div className="deposit-task-summary"><span>営業部・期日回答待ち <strong>{items.filter((item) => !item.payment_due_date).length}</strong></span><span>総務経理部・請求待ち <strong>{items.filter((item) => !item.invoiced_at).length}</strong></span></div>
     {error && <p role="alert" className="deposit-error">{error}</p>}{notice && <p role="status" className="deposit-notice">{notice}</p>}
     <div className="deposit-table-scroll"><table className="deposit-table"><thead><tr><th>ビル</th><th>階</th><th>区画</th><th>テナント名</th><th>稟議番号</th><th>敷金額</th><th>支払期日・営業部タスク</th><th>総務経理部タスク</th></tr></thead><tbody>

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from './lib/supabase';
+import { ManagedSpecialBillingSettings } from './ManagedSpecialBillingSettings';
 import './AdminOperationalRecordsPage.css';
 
 type Kind = 'garage' | 'card';
@@ -63,6 +64,7 @@ export function AdminOperationalRecordsPage({ kind, userId, userName }: { kind: 
   };
   return <section className="admin-development-page operational-page">
     <header className="admin-console-page-heading"><p className="section-kicker">DEVELOPMENT</p><h1>{garage ? '車庫証明発行管理' : 'セキュリティカード発注管理'}</h1><p>{garage ? 'H29 の管理票に沿って発行記録を管理します。' : '発注履歴と物件別の請求単価を管理します。'}</p></header>
+    <ManagedSpecialBillingSettings kind={garage ? 'garage_certificate' : 'security_card'} />
     <div className="operational-actions"><Link to="/admin/development">← 開発中の機能</Link><button type="button" onClick={() => { setDraft(empty(kind)); setError(''); }}>＋ {garage ? '発行記録' : '発注履歴'}を追加</button></div>
     {error && <p className="operational-error" role="alert">{error}</p>}
     {!garage && <details className="operational-prices"><summary>カード料金一覧（税抜）</summary><div className="operational-price-grid">{prices.map((price) => <div key={price.building_name}><strong>{price.building_name}</strong><span>発行 {price.issue_unit_price?.toLocaleString() ?? '未設定'} 円</span><span>抹消 {price.cancellation_unit_price?.toLocaleString() ?? '未設定'} 円</span></div>)}</div></details>}

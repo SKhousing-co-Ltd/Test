@@ -17,9 +17,10 @@ test('契約確定後に月次発行した場合はスポット固定費を作�
   assert.deepEqual(lateContractFixedCharges({ workflowCreatedAt: '2026-10-15T03:00:00Z', issuedAt: ['2026-10-16T03:00:00Z'], contractStart: '2026-10-20', leaseStart: '2026-10-20', monthlyRent: 100000, monthlyCommonCharge: 20000 }), []);
 });
 
-test('敷金行は参考CSVと同じく「その他」・非課税・契約開始日の備考にする', () => {
-  const values = depositInvoiceDetail(75000, '2026-09-01', '駐車場敷金');
-  assert.equal(values[11], 'その他');
+test('敷金行に管理表の明細項目と非課税・契約開始日を反映する', () => {
+  const values = depositInvoiceDetail(75000, '2026-09-01', '駐車場敷金', 'その他', '敷金');
+  assert.equal(values[10], 'その他');
+  assert.equal(values[11], '敷金');
   assert.equal(values[15], '75,000');
   assert.equal(values[18], '非課税');
   assert.equal(values[20], '駐車場敷金　※2026/9/1～契約');
