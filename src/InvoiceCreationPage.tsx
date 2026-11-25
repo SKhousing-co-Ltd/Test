@@ -14,6 +14,7 @@ import Encoding from 'encoding-japanese';
 import './InvoiceCreationPage.css';
 import { SpotInvoicePanel } from './SpotInvoicePanel';
 import { markDepositInvoicesIssued } from './utils/depositInvoice';
+import { assertRevenuePostingReleased } from './utils/revenuePostingLock';
 
 const screenHeaders = csvHeaders.map((header, index) => index === 5 ? '請求金額（税抜）' : index === 6 ? '消費税額' : index === 7 ? '請求金額（税込）' : index === 9 ? '請求書備考' : header);
 // 幅の狭い列は見出しを2行に分けて表示します。
@@ -323,6 +324,7 @@ function MonthlyInvoicePage({ propertyId, propertyName, period }: { propertyId: 
     if (next.invoiceStatuses?.[invoiceKey]?.state !== 'reissuing') return;
     setSaving(true); setError('');
     try {
+      await assertRevenuePostingReleased(supabase, propertyId, 'monthly', invoiceKey);
       const at = await saveInvoiceSheet(supabase, propertyId, calendarYear, period.month, next);
       applySheet(next); setSavedAt(at); setDirty(false);
       setNotice('再発行の編集を開始しました。件名に【再発行】を付けました。編集後、CSVを出力してください。');

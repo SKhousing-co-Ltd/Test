@@ -5,6 +5,7 @@ import { mergeRecurringInvoiceRows, removeManualInvoiceRow } from './utils/recur
 import type { BillingPeriod } from './TenantBillingControls';
 import { loadSavedTenantOrder, moveBefore, saveTenantOrder } from './utils/tenantOrder';
 import { monthStart, spotInvoicesForMonth } from './utils/spotInvoices';
+import { RevenuePostingPanel } from './RevenuePostingPanel';
 import './BillingStatementPage.css';
 
 // 入金明細表・請求明細表です。中身はすべて請求書作成の内容から作ります。
@@ -21,7 +22,7 @@ const amount = (value: number) => value ? currency.format(value) : '—';
 const monthKey = (period: BillingPeriod) => `${period.fiscalYear + (period.month <= 3 ? 1 : 0)}${String(period.month).padStart(2, '0')}`;
 const savedAtText = (value: string) => { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`; };
 
-export function BillingStatementPage({ kind, propertyId, propertyName, period }: { kind: StatementKind; propertyId: string; propertyName: string; period: BillingPeriod }) {
+export function BillingStatementPage({ kind, propertyId, propertyName, period, canEdit }: { kind: StatementKind; propertyId: string; propertyName: string; period: BillingPeriod; canEdit: boolean }) {
   const [rows, setRows] = useState<StatementRow[]>([]);
   const [spotRows, setSpotRows] = useState<StatementRow[]>([]);
   const [includeSpots, setIncludeSpots] = useState(false);
@@ -131,6 +132,7 @@ export function BillingStatementPage({ kind, propertyId, propertyName, period }:
         {kind === 'invoice' && <span>支払期日：{dueDates.length ? dueDates.join('・') : '未設定'}</span>}
       </div>
     </header>
+    {kind === 'invoice' && canEdit && <RevenuePostingPanel propertyId={propertyId} propertyName={propertyName} period={period} />}
     {notice && <p className="billing-statement-notice">{notice}</p>}
     {error && <p className="billing-statement-notice">{error}</p>}
     <div className="billing-statement-table-wrap"><table>
