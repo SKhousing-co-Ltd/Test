@@ -65,7 +65,34 @@ export type PeriodPattern = { billing_period_pattern_id: string; pattern_name: s
 
 // 請求書の1行（明細1行）です。values はCSVの列順の値です。
 // chargeType は入金明細・請求明細でどの請求種別の列に入れるか、tenantId・tenantName・floor は明細の行の見出しに使います。
-export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string; depositId?: string; recurring?: { id: string; startMonth: string } };
+export type AnnualBillingRow = {
+  role: 'current_month' | 'prepaid' | 'recognition';
+  monthlyNetAmount: number;
+  accountingNetAmount: number;
+};
+export type InvoiceRow = { id: string; invoiceKey: string; values: string[]; chargeType: string; tenantId: string; tenantName: string; floor: string; depositId?: string; recurring?: { id: string; startMonth: string }; annualBilling?: AnnualBillingRow };
+
+export type AnnualBillingAllocation = {
+  invoiceKey: string;
+  currentMonth: { net: number; tax: number; total: number };
+  prepaid: { net: number; tax: number; total: number };
+  monthlyRecognition: { net: number; tax: number; total: number };
+};
+
+// 年払いの税抜・消費税・税込を、請求月の1カ月分と前受金の11カ月分に分けます。
+// 11カ月分は各金額を11で割り切れるようにし、端数は請求月の1カ月分へ寄せます。
+export function splitAnnualBillingTotals(annualNet: number): Omit<AnnualBillingAllocation, 'invoiceKey'> {
+  const annualTax = Math.floor(Number((annualNet * taxRate).toFixed(6)));
+  const prepaidNet = Math.floor(annualNet / 12) * 11;
+  const prepaidTax = Math.floor(annualTax / 12) * 11;
+  const currentNet = annualNet - prepaidNet;
+  const currentTax = annualTax - prepaidTax;
+  return {
+    currentMonth: { net: currentNet, tax: currentTax, total: currentNet + currentTax },
+    prepaid: { net: prepaidNet, tax: prepaidTax, total: prepaidNet + prepaidTax },
+    monthlyRecognition: { net: prepaidNet / 11, tax: prepaidTax / 11, total: (prepaidNet + prepaidTax) / 11 },
+  };
+}
 
 export function invoiceNumberForUnitAssignments(
   assignments: InvoiceSplitUnitAssignment[],
@@ -215,6 +242,7 @@ export function recalcInvoices(rows: InvoiceRow[]): InvoiceRow[] {
 // 請求書作成画面の状態です。保存・読み込みはこの形で行います。
 export type InvoiceSheet = {
   rows: InvoiceRow[];
+  annualBillingAllocations?: AnnualBillingAllocation[];
   spotInvoices?: SpotInvoice[];
   invoiceStatuses?: Record<string, { state: 'issued' | 'reissuing'; issuedAt: string }>;
   cancelledRecurringIds?: string[];
@@ -421,6 +449,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   }
   const periodPatternByRow: Record<string, string> = {};
   const rows: InvoiceRow[] = [];
+  const annualBillingAllocations: AnnualBillingAllocation[] = [];
   let invoiceNumber = 0;
   // 請求書は各明細画面で保存したテナント並び順で並べ、その順に請求書番号を振ります。同じテナントの請求書はレントロールの順のままです。
   const compareTenant = tenantComparator(orderTenants((rentRollResult.data ?? []) as RentRollSource[], savedOrder));
@@ -474,9 +503,42 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
       const itemDifference = itemRank(nameOf(left)) - itemRank(nameOf(right));
       return itemDifference || rowOf(left) - rowOf(right);
     });
-    const lineSpecs = [
-      ...fixedLineEntries.map(([key, amount]) => { const name = key.split(/::meter-split:|::service-period:/, 1)[0]; const count = invoice.counts.get(key) ?? 0; const fixedPeriod = fixedPeriodIdOf(invoice.lineTerms.get(key) ?? dueTerms, invoice.linePeriods.get(key)); return { id: key, name, chargeType: name, amount: fixedPeriod ? amount * fixedPeriod.monthsCovered : 0, quantity: count ? String(count) : '', unit: count ? '台' : '', unitPrice: '', periodPatternId: fixedPeriod?.id ?? '', blankPeriod: !fixedPeriod, note: invoice.lineNotes.get(key) ?? '' }; }),
-      ...aggregateMeterLines(invoice.meterLines).map((line, index) => ({ line, index })).sort((left, right) => left.line.invoiceNo - right.line.invoiceNo || left.index - right.index).map(({ line, index }) => ({ id: `meter${index}:${line.name}`, name: line.name, chargeType: line.chargeType, amount: line.amount, quantity: line.usage === null ? '' : usageText.format(line.usage), unit: line.unit, unitPrice: line.unitPrice === null ? '' : unitPriceText.format(line.unitPrice), periodPatternId: line.periodPatternId, blankPeriod: false, note: line.note })),
+    type LineSpec = { id: string; name: string; chargeType: string; amount: number; quantity: string; unit: string; unitPrice: string; periodPatternId: string; blankPeriod: boolean; note: string; annualBilling?: AnnualBillingRow };
+    const fixedLineSpecs: LineSpec[] = fixedLineEntries.flatMap<LineSpec>(([key, amount]) => {
+      const name = key.split(/::meter-split:|::service-period:/, 1)[0];
+      const count = invoice.counts.get(key) ?? 0;
+      const terms = invoice.lineTerms.get(key) ?? dueTerms;
+      const fixedPeriod = fixedPeriodIdOf(terms, invoice.linePeriods.get(key));
+      const common = { chargeType: name, quantity: count ? String(count) : '', unit: count ? '台' : '', unitPrice: '', note: invoice.lineNotes.get(key) ?? '' };
+      if (!terms.is_annual_billing) return [{ id: key, name, ...common, amount: fixedPeriod ? amount : 0, periodPatternId: fixedPeriod?.id ?? '', blankPeriod: !fixedPeriod, annualBilling: undefined }];
+      if (!fixedPeriod) return [{ id: `${key}:annual-recognition`, name: `${name} ※年払い`, ...common, amount: 0, periodPatternId: '', blankPeriod: true, annualBilling: { role: 'recognition' as const, monthlyNetAmount: amount, accountingNetAmount: amount } }];
+
+      const startOffset = terms.annual_start_offset ?? 1;
+      const currentId = `terms-period:${startOffset}:${startOffset}`;
+      const prepaidId = `terms-period:${startOffset + 1}:${startOffset + 11}`;
+      const ensureAnnualPattern = (id: string, label: string, start: number, end: number) => {
+        if (!periodPatterns.some((row) => row.billing_period_pattern_id === id)) {
+          const pattern = { billing_period_pattern_id: id, pattern_name: label, start_month_offset: start, start_day_type: 'first', start_meter_day_offset: 0, end_month_offset: end, end_day_type: 'last', end_meter_day_offset: 0 };
+          periodPatterns.push(pattern);
+          periodRangeByPattern[id] = periodRange(calendarYear, month, pattern);
+        }
+      };
+      ensureAnnualPattern(currentId, '年払い（請求月計上分）', startOffset, startOffset);
+      ensureAnnualPattern(prepaidId, '年払い（前受金11カ月分）', startOffset + 1, startOffset + 11);
+      return [
+        { id: `${key}:annual-current`, name, ...common, amount, periodPatternId: currentId, blankPeriod: false, annualBilling: { role: 'current_month' as const, monthlyNetAmount: amount, accountingNetAmount: amount } },
+        { id: `${key}:annual-prepaid`, name: `${name} ※年払い`, ...common, amount: amount * 11, periodPatternId: prepaidId, blankPeriod: false, annualBilling: { role: 'prepaid' as const, monthlyNetAmount: amount, accountingNetAmount: amount * 11 } },
+      ];
+    });
+    const annualNet = fixedLineSpecs.filter((line) => line.annualBilling?.role !== 'recognition' && line.annualBilling).reduce((sum, line) => sum + line.amount, 0);
+    if (annualNet > 0) annualBillingAllocations.push({ invoiceKey, ...splitAnnualBillingTotals(annualNet) });
+    else {
+      const recognitionNet = fixedLineSpecs.filter((line) => line.annualBilling?.role === 'recognition').reduce((sum, line) => sum + (line.annualBilling?.accountingNetAmount ?? 0), 0);
+      if (recognitionNet > 0) annualBillingAllocations.push({ invoiceKey, ...splitAnnualBillingTotals(recognitionNet * 12) });
+    }
+    const lineSpecs: LineSpec[] = [
+      ...fixedLineSpecs,
+      ...aggregateMeterLines(invoice.meterLines).map((line, index) => ({ line, index })).sort((left, right) => left.line.invoiceNo - right.line.invoiceNo || left.index - right.index).map(({ line, index }) => ({ id: `meter${index}:${line.name}`, name: line.name, chargeType: line.chargeType, amount: line.amount, quantity: line.usage === null ? '' : usageText.format(line.usage), unit: line.unit, unitPrice: line.unitPrice === null ? '' : unitPriceText.format(line.unitPrice), periodPatternId: line.periodPatternId, blankPeriod: false, note: line.note, annualBilling: undefined })),
     ];
     lineSpecs.forEach((line, index) => {
       const values = emptyValues();
@@ -487,7 +549,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
       if (range) periodPatternByRow[rowId] = line.periodPatternId;
       // 年払いの請求月以外は0円で、明細項目1（請求期間）は空白にします。
       values[10] = line.blankPeriod ? '' : range ? periodText(range.start, range.end) || '未設定' : '未設定'; values[11] = line.name; values[12] = line.quantity; values[13] = line.unit; values[14] = line.unitPrice; values[15] = yen.format(line.amount); values[18] = '課税'; values[20] = line.note;
-      rows.push({ id: rowId, invoiceKey, values, chargeType: line.chargeType, tenantId: tenantOfKey(invoiceKey), tenantName: invoice.tenantName, floor: invoice.floor });
+      rows.push({ id: rowId, invoiceKey, values, chargeType: line.chargeType, tenantId: tenantOfKey(invoiceKey), tenantName: invoice.tenantName, floor: invoice.floor, annualBilling: line.annualBilling });
     });
   }
   // 入金期限の欄は期日の早い順に並べます。
@@ -495,7 +557,7 @@ export async function buildInvoiceSheet(client: SupabaseClient, propertyId: stri
   duePatterns.forEach((pattern, index) => { pattern.pattern_number = index + 1; });
   return {
     sheet: {
-      rows: recalcInvoices(rows), duePatternByInvoice,
+      rows: recalcInvoices(rows), annualBillingAllocations, duePatternByInvoice,
       dueDateByPattern: Object.fromEntries(duePatterns.map((pattern) => [pattern.billing_due_date_pattern_id, termsDueDate(calendarYear, month, { due_month_offset: pattern.month_offset, due_day_of_month: pattern.day_of_month, due_holiday_adjustment: pattern.holiday_adjustment })])), periodPatternByRow, periodRangeByPattern, invoiceNote: '', showInvoiceNote: false,
     },
     duePatterns, periodPatterns, meterNotice,
