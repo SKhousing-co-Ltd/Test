@@ -14,6 +14,7 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { contractCapabilitiesForRole, type AccountRole } from './lib/contract-capabilities';
 import { AdminConsoleHomePage, AdminConsoleLayout } from './AdminConsolePage';
 import { AdminDevelopmentHomePage, AdminDevelopmentFeaturePage } from './AdminDevelopmentPage';
+import { AdminOperationalRecordsPage } from './AdminOperationalRecordsPage';
 import { DepositManagementPage } from './DepositManagementPage';
 import { UserFeedbackWidget } from './UserFeedbackWidget';
 import { RouteLoadingFallback } from './RouteLoadingFallback';
@@ -188,6 +189,8 @@ function App() {
             <Route path="/admin/development" element={<AdminDevelopmentHomePage />} />
             <Route path="/admin/development/deposits" element={<DepositManagementPage />} />
             <Route path="/admin/development/brokerage-fees" element={<AdminDevelopmentFeaturePage feature="brokerage-fees" />} />
+            <Route path="/admin/development/garage-certificates" element={<AdminOperationalRecordsPage kind="garage" userId={session?.user.id ?? ''} userName={profile?.employee?.employee_name ?? profile?.email ?? ''} />} />
+            <Route path="/admin/development/security-cards" element={<AdminOperationalRecordsPage kind="card" userId={session?.user.id ?? ''} userName={profile?.employee?.employee_name ?? profile?.email ?? ''} />} />
             <Route path="/accounts" element={<AccountManagementPage currentUserId={session?.user.id ?? ''} />} />
             <Route path="/admin/assets" element={<AssetRegistrationPage />} />
             <Route path="/settings/assets" element={<AssetManagementPage />} />
