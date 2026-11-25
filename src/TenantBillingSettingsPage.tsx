@@ -8,7 +8,7 @@ type ChargeType = {
   sort_order: number;
   is_active: boolean;
   utility_kind: "" | "electricity" | "water" | "gas" | null;
-  is_fixed_revenue: boolean;
+  is_fixed_charge: boolean;
   revenue_account_code: string | null;
   revenue_subaccount_code: string | null;
 };
@@ -26,7 +26,7 @@ const defaultChargeTypes: ChargeType[] = [
   sort_order: index + 1,
   is_active: true,
   utility_kind: "",
-  is_fixed_revenue: ["賃料", "共益費", "駐車料"].includes(name),
+  is_fixed_charge: ["賃料", "共益費", "駐車料"].includes(name),
   revenue_account_code: name === "その他" ? null : "4100",
   revenue_subaccount_code: name === "その他" ? null : "1",
 }));
@@ -82,7 +82,7 @@ export function TenantBillingSettingsPage() {
         const result = await supabase
           .from("billing_charge_type")
           .select(
-            "billing_charge_type_id, charge_type_name, sort_order, is_active, utility_kind, is_fixed_revenue, revenue_account_code, revenue_subaccount_code",
+            "billing_charge_type_id, charge_type_name, sort_order, is_active, utility_kind, is_fixed_charge, revenue_account_code, revenue_subaccount_code",
           )
           .order("sort_order");
         if (!result.error) {
@@ -113,12 +113,12 @@ export function TenantBillingSettingsPage() {
           charge_type_name: name,
           sort_order: chargeTypes.length + 1,
           utility_kind: utilityKind || null,
-          is_fixed_revenue: false,
+          is_fixed_charge: false,
           revenue_account_code: name === "その他" ? null : "4100",
           revenue_subaccount_code: name === "その他" ? null : "1",
         })
         .select(
-          "billing_charge_type_id, charge_type_name, sort_order, is_active, utility_kind, is_fixed_revenue, revenue_account_code, revenue_subaccount_code",
+          "billing_charge_type_id, charge_type_name, sort_order, is_active, utility_kind, is_fixed_charge, revenue_account_code, revenue_subaccount_code",
         )
         .single();
       if (error) {
@@ -135,7 +135,7 @@ export function TenantBillingSettingsPage() {
           sort_order: chargeTypes.length + 1,
           is_active: true,
           utility_kind: utilityKind,
-          is_fixed_revenue: false,
+          is_fixed_charge: false,
           revenue_account_code: name === "その他" ? null : "4100",
           revenue_subaccount_code: name === "その他" ? null : "1",
         },
@@ -167,7 +167,7 @@ export function TenantBillingSettingsPage() {
     if (type.charge_type_name !== "その他" && !/^\d+$/.test(type.revenue_account_code ?? "")) { setNotice("売上科目コードは数字で入力してください。"); return; }
     if (type.revenue_subaccount_code && !/^\d+$/.test(type.revenue_subaccount_code)) { setNotice("補助科目コードは数字で入力してください。"); return; }
     setSavingTypeId(type.billing_charge_type_id);
-    const { error } = await supabase.from("billing_charge_type").update({ is_fixed_revenue: type.is_fixed_revenue, revenue_account_code: type.charge_type_name === "その他" ? null : type.revenue_account_code, revenue_subaccount_code: type.charge_type_name === "その他" ? null : type.revenue_subaccount_code || null }).eq("billing_charge_type_id", type.billing_charge_type_id);
+    const { error } = await supabase.from("billing_charge_type").update({ is_fixed_charge: type.is_fixed_charge, revenue_account_code: type.charge_type_name === "その他" ? null : type.revenue_account_code, revenue_subaccount_code: type.charge_type_name === "その他" ? null : type.revenue_subaccount_code || null }).eq("billing_charge_type_id", type.billing_charge_type_id);
     setSavingTypeId("");
     setNotice(error ? `会計設定を保存できませんでした: ${error.message}` : `${type.charge_type_name}の会計設定を保存しました。`);
   };
@@ -259,7 +259,7 @@ export function TenantBillingSettingsPage() {
                   <th />
                   <th>請求種別</th>
                   <th>公共料金設定</th>
-                  <th>前月計上の固定費</th>
+                  <th>固定費</th>
                   <th>売上科目</th>
                   <th>補助科目</th>
                   <th>状態</th>
@@ -308,7 +308,7 @@ export function TenantBillingSettingsPage() {
                         <strong>{type.charge_type_name}</strong>
                       </td>
                       <td>{utilityLabels[type.utility_kind ?? ""] ?? "—"}</td>
-                      <td><input type="checkbox" aria-label={`${type.charge_type_name}を固定費として計上`} checked={type.is_fixed_revenue} onChange={(event) => updateRevenueDraft(type.billing_charge_type_id, { is_fixed_revenue: event.target.checked })} /></td>
+                      <td><input type="checkbox" aria-label={`${type.charge_type_name}を固定費に設定`} checked={type.is_fixed_charge} onChange={(event) => updateRevenueDraft(type.billing_charge_type_id, { is_fixed_charge: event.target.checked })} /></td>
                       <td>{type.charge_type_name === "その他" ? "各管理表で設定" : <input className="tenant-billing-account-input" aria-label={`${type.charge_type_name}の売上科目`} inputMode="numeric" value={type.revenue_account_code ?? ""} onChange={(event) => updateRevenueDraft(type.billing_charge_type_id, { revenue_account_code: event.target.value })} />}</td>
                       <td>{type.charge_type_name === "その他" ? "—" : <input className="tenant-billing-account-input" aria-label={`${type.charge_type_name}の売上補助科目`} inputMode="numeric" value={type.revenue_subaccount_code ?? ""} onChange={(event) => updateRevenueDraft(type.billing_charge_type_id, { revenue_subaccount_code: event.target.value })} />}</td>
                       <td>
